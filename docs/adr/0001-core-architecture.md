@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-Galley formats, validates, and converts JSON and YAML. The stack is PySide6 / Qt 6. macOS ships first; Windows is planned. The UI spec treats Galley as a cross-platform Qt app (`docs/ui-spec.md`).
+Galley formats, validates, and converts JSON and YAML. The stack is PySide6 / Qt 6. Galley targets macOS and Windows. The UI spec treats Galley as a cross-platform Qt app (`docs/ui-spec.md`).
 
 `galley.core` is pure Python. `format_json` uses the stdlib; `format_yaml` dumps with `ruamel.yaml` in safe mode. `galley.app` is the Qt shell. Convert from Python is specified in UI spec §9 and is not built yet. Format still runs on the caller.
 
@@ -27,23 +27,25 @@ Enforcement is already in the tree:
 
 ### 2. Parsing and formatting run in a worker process
 
-A child process parses and formats. The UI process owns the windows, the editor buffers, and the file commit. Use `multiprocessing` with the `spawn` start method `configure_runtime` already sets. A `QProcess` child gives the same isolation.
+A child process parses and formats. The UI process owns the windows, the editor buffers, and the file commit. The worker uses `multiprocessing.get_context("spawn")` for its `Process` and its queues, and does not set the global start method. A `QProcess` child gives the same isolation.
 
-Start one warm worker after `configure_runtime()` returns, and replace it in the background when it exits or is killed. Format sends a job to that process so the click does not pay interpreter startup.
+`set_start_method("spawn")` raises `RuntimeError` when one process calls it twice (the tests, a second window). `get_context("spawn")` leaves that global state alone. `configure_runtime` keeps `multiprocessing.freeze_support()`. Any global `set_start_method` call that remains must be guarded with `force=True` or limited to a single run. Follow-up for the worker implementation: create the process and its queues with `get_context("spawn")`. Code stays as it is until then. `configure_runtime` still calls `set_start_method("spawn")`, and `tests/app/test_main_window.py` asserts that call and that a fresh process reports `spawn`.
+
+Start one warm worker after `configure_runtime()` returns, and replace it in the background when it exits or is killed. Format sends a job to that process so the click does not pay interpreter startup. The replacement after Cancel gets new queues.
 
 The worker callable is a top-level function in `galley.core`. Under `spawn`, Python pickles it by import path, so the target has to be a module-level function.
 
-`spawn` is the default start method on macOS since Python 3.8, and the default on Windows. Galley requires Python 3.12, so the macOS build that ships now already starts children with `spawn`. A top-level picklable worker and `multiprocessing.freeze_support()` are requirements for that current macOS build, not only for a later Windows build. `configure_runtime` still sets `spawn` explicitly so a machine whose default differs uses the same method.
+`spawn` is the default start method on macOS since Python 3.8, and the default on Windows. Galley requires Python 3.12, so the macOS build that ships now already starts children with `spawn`. A top-level picklable worker and `multiprocessing.freeze_support()` are requirements for that current macOS build, not only for a later Windows build.
 
-`freeze_support()` stays on the entry path a frozen executable re-enters. `src/galley/__main__.py` calls `main()`, and `main()` calls `configure_runtime()` before `QApplication` exists. That function calls `multiprocessing.freeze_support()`. `tests/app/test_main_window.py` asserts the call, the `"spawn"` argument, and that a fresh process reports `spawn`.
+`freeze_support()` stays on the entry path a frozen executable re-enters. `src/galley/__main__.py` calls `main()`, and `main()` calls `configure_runtime()` before `QApplication` exists. That function calls `multiprocessing.freeze_support()`.
 
 CI runs the tests on macOS arm64 and on Windows. A non-importable worker fails those jobs, before packaging.
 
-Jobs and progress travel on queues. The document is sent once. Progress events carry counts.
+Jobs and progress travel on queues owned by the current worker. The document is sent once. Progress events carry counts.
 
 #### How Cancel meets the requirements
 
-Cancel kills the worker. The handler updates the window first, then kills the child, and does not join it.
+Cancel kills the worker. The handler updates the window first, then kills the child, and does not join it. Killing a worker while it uses a `multiprocessing.Queue` can corrupt that queue, so after Cancel the replacement worker gets fresh queues. Queues are never reused across a killed worker.
 
 1. **The UI answers Cancel within about 100 ms.** The handler immediately shows `Cancelled. Showing the previous result.` and restores the previous output on the UI thread. It then kills the process in the background. `Process.kill()` returns without waiting for the parser. Reaping the child and starting the next warm worker happen after that update.
 2. **Cancel during the 6d write leaves the user's text and file byte-for-byte unchanged.** The worker receives a copy of the text. It writes formatted bytes to a temporary file in the destination's directory and never opens the destination for writing. Only the UI process commits, and only after success, by calling `os.replace` on that temp. Cancel kills the worker before `os.replace` and removes the temp, so the original file is untouched. Input stays a copy, and the previously committed output is restored. The 6d pane may show lines as they arrive; Cancel discards that view (UI spec 6d). The same-directory temp keeps `os.replace` on one volume, where the replace is atomic. The worker closes the temp before reporting success, so Windows can replace the destination.
@@ -66,7 +68,7 @@ The starter depends on PySide6 and ruamel.yaml, both cross-platform, and it has 
 
 - Config and cache directories follow the platformdirs layout (`platformdirs`, or the same per-OS names). A temp file for `os.replace` is the exception and sits beside the destination. `QSettings` may store window geometry; Qt picks its per-OS location (UI spec §8).
 - Shortcuts use `QKeySequence.StandardKey` where one exists. Other bindings come from the macOS and Windows columns in UI spec §6, via the platform layer in §12 (`⌘↵` on macOS, `Ctrl+Enter` on Windows).
-- The start method is `spawn` (decision 2).
+- The worker uses `multiprocessing.get_context("spawn")` (decision 2). That context does not set the global start method.
 
 ### 6. Large-file size bands
 
@@ -82,14 +84,14 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 **ruamel round-trip (chosen) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. It is stricter and slower than a safe dump.
 
-**Explicit `spawn` (chosen) vs an unset start method.** `spawn` is the default on macOS since Python 3.8 and the default on Windows, so the current macOS build already needs a picklable worker and `freeze_support()`. Leaving the method unset uses `fork` wherever that is the default. `fork` after threads have started deadlocks. `configure_runtime` sets `spawn` once.
+**`get_context("spawn")` (chosen) vs a global `set_start_method`.** `spawn` is the default on macOS since Python 3.8 and the default on Windows, so both targets already need a picklable worker and `freeze_support()`. A global `set_start_method("spawn")` raises if it is called again, including from tests and from a second window. `get_context("spawn")` starts the child from that context and does not touch global state. A global call that remains has to pass `force=True` or run once. Leaving the method unset uses `fork` wherever that is the default, and `fork` after threads have started deadlocks.
 
 ## Consequences
 
 - The worker imports `galley.core` only. The Qt ban keeps the child from initializing a GUI.
 - Cancel updates the window before the child has exited. The update does not wait on the parser.
 - The destination file changes only inside `os.replace` on the UI process, after success.
-- The session keeps a second interpreter for the warm worker. Respawn stays off the Cancel path.
+- The session keeps a second interpreter for the warm worker. Respawn stays off the Cancel path, and the replacement gets new queues.
 - Convert from Python rewrites the current buffer from spans. It does not re-serialize the document.
 - Round-trip YAML keeps comments the safe-mode stub drops. Data-equality checks still apply; comment and order behavior becomes part of the formatter.
 
@@ -97,6 +99,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 - Pickling a multi-megabyte document copies it. A warm worker does not remove that copy. Revisit if Isaac's benchmark shows the copy rivaling the parse.
 - Cancel can leave a temp file. The UI deletes it on Cancel and on failure. A crash of the UI process can orphan one; the orphan is not the user's file.
+- Killing a worker while it uses a `multiprocessing.Queue` can corrupt that queue. After Cancel the replacement worker gets fresh queues. Queues are never reused across a killed worker.
 - `os.replace` is atomic on one volume, so the temp stays beside the destination. On Windows the worker closes the temp before the replace.
 - Round-trip mode rejects some inputs a safe loader accepts, and it uses more CPU.
 - Moving `freeze_support()` off the entry path lets a frozen spawn child relaunch the GUI. The current test guards `configure_runtime`.
