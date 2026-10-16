@@ -2,7 +2,7 @@
 
 Status: draft for review. Built from the 18 approved mock PNGs (screens 3a, 4a, 4b, 5a, 5b, 6a–6m). Text only; no images are committed. Reference placeholders like `(ref: 6k)` mark where a mock would help, pending Eric's call on whether to commit reference PNGs.
 
-Stack: Python + PySide6 (Qt 6). macOS first; Windows planned. Galley is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 11).
+Stack: Python + PySide6 (Qt 6). Galley targets macOS and Windows. It is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 12).
 
 Brand owner: Eric. Do not invent logos, taglines, icons, colors, or names beyond what is written here.
 
@@ -45,7 +45,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `accent.strong` | `#006786` | menu highlight row, info icon, link text on light bg (5.7:1) | measured |
 | `accent.ink` | `#004961` | JSON/YAML **keys** in code, text on `accent.tint` | measured |
 | `accent.tint` | `#E9F8FF` | active toolbar toggle (e.g. Find on), screen-label chip, diff "changed" chip | measured |
-| `accent.disabled` | `#86C2D4` (measured faded Format button; about the original `#0088B0` at 45% on window, not recomputed from `#0080A6`) | Format button with no input | measured |
+| `accent.disabled` | `#86BFD0` | Format button with no input. `round(0.45 × accent + 0.55 × window.bg)` per channel. Measured `#86C2D4` was that blend of `#0088B0` over `#F3F2F2`; the same blend of `#0080A6` over `#F3F2F2` is `#86BFD0` | adjusted |
 | `selection` | `#99E0FF` | text selection and current find match fill | measured |
 | `info.tint` | `#C2D6DC` | info note icon backing (6e inline note) | low |
 | `string` (magenta) | `#AA0B56` | string values in code; also the **error** hue | measured |
@@ -66,6 +66,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 - `accent.ink` keys on `editor.bg`: 8.0:1.
 - `amber.ink` on `amber.tint`: 6.5:1.
 - `accent` `#0080A6` on `window.bg`: 4.05:1 — still under 4.5:1, so use it for non-text UI (icons, borders, focus ring) or large/bold text. White on `accent` (Format, primary buttons): 4.53:1 against `#FFFFFF`. The button-face accent was `#0088B0` (white contrast 4.08:1); it is darkened along the same hue (HSL 193.6°, saturation 1) to `#0080A6`.
+- `accent.disabled` `#86BFD0` is the disabled Format face: `round(0.45 × #0080A6 + 0.55 × #F3F2F2)` per channel. White text on `#86BFD0` is 2.02:1. Disabled controls are exempt from the 4.5:1 text contrast target.
 - `pane.edge` vs `window.bg`: 3.85:1 (meets 3:1 for UI component boundaries).
 
 ### Second cue rule (color never alone)
@@ -128,7 +129,7 @@ Order, left to right: `Paste`, `Copy` | `Undo`, `Redo` (paired tray) | `Outdent`
 
 ### 5.2 Format button (ref: 6d bottom strip)
 Three states:
-- **No input**: label `{·} Format ⌘↵`, disabled at 45% opacity (`#86C2D4`-looking). Only when there is nothing to format.
+- **No input**: label `{·} Format ⌘↵`, disabled face `#86BFD0` (45% of `accent` over `window.bg`). Only when there is nothing to format.
 - **Ready**: full `accent`, white bold label, shortcut hint `⌘↵` (platform layer supplies `Ctrl+Enter` on Windows).
 - **Working**: full color, small spinner, label `Formatting…`. Never looks disabled. Cancel lives in the status bar, not on the button.
 Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
@@ -146,7 +147,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
 - Indent guides: View → Indent Guides → `Off` / `Lines` / `Coloured by depth` (default shown checked: Coloured by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
-- Word wrap toggle (⌥⌘W in View menu), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §11).
+- Word wrap toggle (⌥⌘W on macOS, Ctrl+Alt+W on Windows), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §12).
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
 
@@ -188,9 +189,9 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Windo
 
 ---
 
-## 6. Global keyboard paths (macOS; Windows mapping in §11)
+## 6. Global keyboard paths (macOS and Windows; see §12)
 
-| Action | macOS | Windows (planned) |
+| Action | macOS | Windows |
 |---|---|---|
 | Format | ⌘↵ | Ctrl+Enter |
 | Paste | ⌘V | Ctrl+V |
@@ -198,16 +199,16 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Windo
 | Find and Replace | ⌥⌘F | Ctrl+H (proposal) |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Close tab | ⌘W | Ctrl+W |
-| Close others | ⇧⌥⌘W | Ctrl+Alt+W |
+| Close others | ⇧⌥⌘W | Ctrl+Alt+Shift+W |
 | Escape / Unescape String | ⇧⌘E / ⌥⇧⌘E | Ctrl+Shift+E / Ctrl+Alt+Shift+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
-| Word wrap | ⌥⌘W | Alt+Z (proposal) |
+| Word wrap | ⌥⌘W | Ctrl+Alt+W |
 | Show whitespace | ⇧⌘8 | Ctrl+Shift+8 |
 | Full screen | ^⌘F | F11 |
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Close Others does not use ⌥⌘W; that shortcut stays Word Wrap. macOS uses ⇧⌥⌘W and Windows uses Ctrl+Alt+W. Both are swappable in the platform layer (§11). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
+Close Others does not use ⌥⌘W or Ctrl+Alt+W; those shortcuts stay Word Wrap. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap is ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Both are swappable in the platform layer (§12). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions. Ctrl+Tab cycles tabs within the focused pane (proposal).
 
@@ -395,9 +396,9 @@ Architecture:
 
 ## 12. Platform-swappable layer
 
-Isolate behind a `platform` module with a macOS implementation now and a Windows one later:
+Isolate behind a `platform` module for macOS and Windows:
 - **Menus**: macOS global menu bar with app menu (`Galley`; mocks showed `Formatter`; About/Preferences/Quit roles via `QAction.MenuRole`). Windows: in-window menu bar; same action objects.
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where possible; a table maps custom ones (§6). Display hints (`⌘↵` vs `Ctrl+Enter`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows; that binding is swappable per platform. Word Wrap keeps ⌥⌘W.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where possible; a table maps custom ones (§6). Display hints (`⌘↵` vs `Ctrl+Enter`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
@@ -431,7 +432,7 @@ Isolate behind a `platform` module with a macOS implementation now and a Windows
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#D7D3D3` is 4.53:1 (was 4.39:1).
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. Swap button (`⇆`) on the rail: swap pane positions, swap contents, or swap input/output formats?
-9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows, swappable per platform.
+9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows.
 10. File, Window, Help menu contents.
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
 12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.

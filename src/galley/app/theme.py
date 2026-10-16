@@ -22,7 +22,10 @@ ACCENT: Final = "#0080A6"
 ACCENT_STRONG: Final = "#006786"
 ACCENT_INK: Final = "#004961"
 ACCENT_TINT: Final = "#E9F8FF"
-ACCENT_DISABLED: Final = "#86C2D4"
+# 45% of accent over window.bg, nearest integer per channel.
+# round(0.45 * #0088B0 + 0.55 * #F3F2F2) reproduced measured #86C2D4.
+# The same blend of #0080A6 over #F3F2F2 is #86BFD0.
+ACCENT_DISABLED: Final = "#86BFD0"
 SELECTION: Final = "#99E0FF"
 INFO_TINT: Final = "#C2D6DC"
 STRING: Final = "#AA0B56"

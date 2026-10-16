@@ -19,7 +19,7 @@ SPEC_COLORS = {
     "accent.strong": "#006786",
     "accent.ink": "#004961",
     "accent.tint": "#E9F8FF",
-    "accent.disabled": "#86C2D4",
+    "accent.disabled": "#86BFD0",
     "selection": "#99E0FF",
     "info.tint": "#C2D6DC",
     "string": "#AA0B56",
@@ -37,6 +37,7 @@ def test_theme_constants_match_spec() -> None:
     assert COLORS == SPEC_COLORS
     assert COLORS["accent"] == "#0080A6"
     assert COLORS["text.muted"] == "#5E5B5B"
+    assert COLORS["accent.disabled"] == "#86BFD0"
 
 
 def test_button_label_on_accent_is_white() -> None:

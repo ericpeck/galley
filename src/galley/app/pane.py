@@ -163,7 +163,7 @@ class PaneWidget(QWidget):
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700;")
-        hint = QLabel("⌨  ⌘V to paste · Ctrl+V on Windows")
+        hint = QLabel("⌨ ⌘V to paste · Ctrl+V on Windows")
         hint.setObjectName("inputEmptyHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet(f"color: {TEXT_MUTED};")
