@@ -1,0 +1,14 @@
+---
+description: Galley conventions for environment, architecture, and safety
+alwaysApply: true
+---
+
+# Galley
+
+- Manage the environment with uv. Install dependencies with `uv sync`. Run tools with `uv run`.
+- Lint and format with ruff (`uv run ruff check`, `uv run ruff format`).
+- Keep `src/galley/core/` pure Python. Do not import PySide6, PyQt, shiboken, qtpy, or Qt there.
+- Do not use `eval` or `exec`. Convert from Python must parse with `ast` and must never run user code.
+- Stay cross-platform. Do not add macOS-only or Windows-only code paths.
+- Put tests in `tests/`, mirroring the module they cover (`tests/core` for `galley.core`, `tests/app` for `galley.app`). Run them with `uv run pytest`. The suite sets `QT_QPA_PLATFORM=offscreen`.
+- Do not add GitHub Actions workflows unless asked. `packaging/galley.spec` is only a placeholder for a later PyInstaller one-folder build.
