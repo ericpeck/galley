@@ -9,6 +9,7 @@ import ast
 import importlib
 import json
 import pkgutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,6 +50,82 @@ def _nested_yaml(depth: int) -> str:
     lines = [f"{'  ' * level}k:" for level in range(depth)]
     lines.append(f"{'  ' * depth}1")
     return "\n".join(lines) + "\n"
+
+
+# A fixed depth past a few hundred levels overflows the 1 MB Windows stack
+# and aborts pytest. Stay about 100 frames past the recursion limit, and run
+# that parse in a child so a stack overflow fails only this case.
+_NESTING_PROBE = r"""
+import sys
+
+from galley.core.format import format_json, format_yaml
+
+
+def line_column(exc):
+    lineno = getattr(exc, "lineno", None)
+    colno = getattr(exc, "colno", None)
+    if isinstance(lineno, int) and isinstance(colno, int):
+        return lineno, colno
+    mark = getattr(exc, "problem_mark", None)
+    if (
+        mark is not None
+        and isinstance(getattr(mark, "line", None), int)
+        and isinstance(getattr(mark, "column", None), int)
+    ):
+        return mark.line + 1, mark.column + 1
+    return None
+
+
+kind = sys.argv[1]
+depth = sys.getrecursionlimit() + 100
+if kind == "json":
+    text = "[" * depth + "0" + "]" * depth
+    format_text = format_json
+else:
+    lines = [f"{'  ' * level}k:" for level in range(depth)]
+    lines.append(f"{'  ' * depth}1")
+    text = "\n".join(lines) + "\n"
+    format_text = format_yaml
+try:
+    format_text(text)
+except RecursionError:
+    raise SystemExit(2)
+except Exception as exc:
+    located = line_column(exc)
+    if located is None:
+        raise SystemExit(3)
+    line, column = located
+    if line < 1 or column < 1:
+        raise SystemExit(3)
+    raise SystemExit(0)
+raise SystemExit(4)
+"""
+
+
+def _assert_excessive_nesting(kind: str) -> None:
+    """Format one over-deep document in a child process."""
+    formatter_name = "format_json" if kind == "json" else "format_yaml"
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", _NESTING_PROBE, kind],
+            check=False,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"{formatter_name} nesting probe timed out")
+    code = completed.returncode
+    if code == 0:
+        return
+    if code == 2:
+        pytest.fail(f"{formatter_name} raised RecursionError with no line or column")
+    if code == 4:
+        pytest.fail(f"{formatter_name} returned a document instead of a located error")
+    pytest.fail(
+        f"{formatter_name} nesting probe exited {code}; "
+        "a stack overflow stays in the child process"
+    )
 
 
 def _alias_document(levels: int, fan: int) -> str:
@@ -144,17 +221,7 @@ def test_yaml_deep_nesting_under_the_limit_round_trips() -> None:
     strict=True,
 )
 def test_json_excessive_nesting_names_line_and_column() -> None:
-    text = _nested_json(sys.getrecursionlimit() + 50)
-    try:
-        format_json(text)
-    except RecursionError:
-        pytest.fail("format_json raised RecursionError with no line or column")
-    except Exception as exc:
-        line, column = line_column(exc)
-        assert line >= 1
-        assert column >= 1
-        return
-    pytest.fail("format_json returned a document instead of a located error")
+    _assert_excessive_nesting("json")
 
 
 @pytest.mark.xfail(
@@ -165,17 +232,7 @@ def test_json_excessive_nesting_names_line_and_column() -> None:
     strict=True,
 )
 def test_yaml_excessive_nesting_names_line_and_column() -> None:
-    text = _nested_yaml(600)
-    try:
-        format_yaml(text)
-    except RecursionError:
-        pytest.fail("format_yaml raised RecursionError with no line or column")
-    except Exception as exc:
-        line, column = line_column(exc)
-        assert line >= 1
-        assert column >= 1
-        return
-    pytest.fail("format_yaml returned a document instead of a located error")
+    _assert_excessive_nesting("yaml")
 
 
 def test_yaml_alias_bomb_stays_shared() -> None:
