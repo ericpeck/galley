@@ -7,7 +7,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette
-from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QPushButton, QSplitter
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSplitter,
+    QToolButton,
+)
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
@@ -218,6 +225,18 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
     assert _portable(_action(window, "Word Wrap")) != _portable(
         _action(window, "Close others")
     )
+
+
+def test_layout_button_uses_accent(qtbot) -> None:
+    window = _show(qtbot)
+    layout_button = window.findChild(QToolButton, "layoutButton")
+    swap_button = window.findChild(QToolButton, "swapButton")
+    assert isinstance(layout_button, QToolButton)
+    assert isinstance(swap_button, QToolButton)
+    assert layout_button.text() == "▥"
+    assert f"color: {ACCENT}" in layout_button.styleSheet()
+    assert GUTTER_BG not in layout_button.styleSheet()
+    assert GUTTER_BG in swap_button.styleSheet()
 
 
 def test_splitter_starts_even(qtbot) -> None:
