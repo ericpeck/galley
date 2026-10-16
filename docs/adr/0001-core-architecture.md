@@ -33,9 +33,11 @@ Start one warm worker after `configure_runtime()` returns, and replace it in the
 
 The worker callable is a top-level function in `galley.core`. Under `spawn`, Python pickles it by import path, so the target has to be a module-level function.
 
-`spawn` is set explicitly. It is already the default on macOS and on Windows, so those platforms keep their usual method on every machine.
+`spawn` is the default start method on macOS since Python 3.8, and the default on Windows. Galley requires Python 3.12, so the macOS build that ships now already starts children with `spawn`. A top-level picklable worker and `multiprocessing.freeze_support()` are requirements for that current macOS build, not only for a later Windows build. `configure_runtime` still sets `spawn` explicitly so a machine whose default differs uses the same method.
 
-`freeze_support()` stays on the entry path PyInstaller re-enters. `src/galley/__main__.py` calls `main()`, and `main()` calls `configure_runtime()` before `QApplication` exists. That function calls `multiprocessing.freeze_support()`. `tests/app/test_main_window.py` asserts the call, the `"spawn"` argument, and that a fresh process reports `spawn`.
+`freeze_support()` stays on the entry path a frozen executable re-enters. `src/galley/__main__.py` calls `main()`, and `main()` calls `configure_runtime()` before `QApplication` exists. That function calls `multiprocessing.freeze_support()`. `tests/app/test_main_window.py` asserts the call, the `"spawn"` argument, and that a fresh process reports `spawn`.
+
+CI runs the tests on macOS arm64 and on Windows. A non-importable worker fails those jobs, before packaging.
 
 Jobs and progress travel on queues. The document is sent once. Progress events carry counts.
 
@@ -46,7 +48,7 @@ Cancel kills the worker. The handler updates the window first, then kills the ch
 1. **The UI answers Cancel within about 100 ms.** The handler immediately shows `Cancelled. Showing the previous result.` and restores the previous output on the UI thread. It then kills the process in the background. `Process.kill()` returns without waiting for the parser. Reaping the child and starting the next warm worker happen after that update.
 2. **Cancel during the 6d write leaves the user's text and file byte-for-byte unchanged.** The worker receives a copy of the text. It writes formatted bytes to a temporary file in the destination's directory and never opens the destination for writing. Only the UI process commits, and only after success, by calling `os.replace` on that temp. Cancel kills the worker before `os.replace` and removes the temp, so the original file is untouched. Input stays a copy, and the previously committed output is restored. The 6d pane may show lines as they arrive; Cancel discards that view (UI spec 6d). The same-directory temp keeps `os.replace` on one volume, where the replace is atomic. The worker closes the temp before reporting success, so Windows can replace the destination.
 3. **Queue events drive the 6d progress bar. Screen 6m is spinner-only.** During the read (6m) the worker emits no fraction: a spinner and `Formatting…`, with no bar and no percent. During the write (6d) it enqueues the amount written and the total, and the UI draws the bar and the percentage from those events. The bar exists only in this phase (UI spec §5.7, §7, §13).
-4. **Windows `spawn`.** The worker function lives at module top level in `galley.core`, so it is picklable. `multiprocessing.freeze_support()` runs on the `__main__` → `main` → `configure_runtime` path so a PyInstaller build can re-enter the frozen executable as a spawn child.
+4. **`spawn` on the current macOS build and on Windows.** The worker function lives at module top level in `galley.core`, so it is picklable, and `multiprocessing.freeze_support()` runs on the `__main__` → `main` → `configure_runtime` path. Both are required for the macOS app that ships now, because `spawn` has been the default on macOS since Python 3.8, and for Windows, where `spawn` is also the default. CI runs tests on macOS arm64 and Windows, so a non-importable worker fails there before packaging.
 
 ### 3. Convert from Python uses `ast` only
 
@@ -80,7 +82,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 **ruamel round-trip (chosen) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. It is stricter and slower than a safe dump.
 
-**Explicit `spawn` (chosen) vs an unset start method.** macOS and Windows already default to `spawn`. Leaving the method unset uses `fork` wherever that is the default. `fork` after threads have started deadlocks, and it is not the macOS or Windows method. `configure_runtime` sets `spawn` once.
+**Explicit `spawn` (chosen) vs an unset start method.** `spawn` is the default on macOS since Python 3.8 and the default on Windows, so the current macOS build already needs a picklable worker and `freeze_support()`. Leaving the method unset uses `fork` wherever that is the default. `fork` after threads have started deadlocks. `configure_runtime` sets `spawn` once.
 
 ## Consequences
 
