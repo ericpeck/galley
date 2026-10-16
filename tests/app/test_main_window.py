@@ -263,7 +263,8 @@ def test_empty_state(qtbot) -> None:
     assert input_title is not None
     assert input_title.text() == "Paste JSON or YAML, or drop a file here"
     assert input_title.isVisible()
-    assert hint is not None and "Ctrl+V on Windows" in hint.text()
+    assert hint is not None
+    assert hint.text() == "⌨ ⌘V to paste · Ctrl+V on Windows"
     assert output_title is not None
     assert output_title.text() == "Formatted output will appear here."
     assert output_title.isVisible()
@@ -272,7 +273,8 @@ def test_empty_state(qtbot) -> None:
     assert copy is not None and not copy.isEnabled()
     assert format_button is not None and not format_button.isEnabled()
     assert not _action(window, "Format").isEnabled()
-    assert "Format" in format_button.text()
+    assert format_button.text().startswith("{·} Format")
+    assert "Format  " not in format_button.text()
     sheet = format_button.styleSheet()
     assert ACCENT in sheet
     assert ACCENT_DISABLED in sheet

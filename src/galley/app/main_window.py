@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         hint = self._actions.format.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText
         )
-        button.setText(f"{{·}} Format  {hint}".rstrip())
+        button.setText(f"{{·}} Format {hint}".rstrip())
         self._actions.format.enabledChanged.connect(button.setEnabled)
         button.setEnabled(self._actions.format.isEnabled())
         button.clicked.connect(self._actions.format.trigger)

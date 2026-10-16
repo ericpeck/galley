@@ -6,15 +6,10 @@ macOS to Control on Windows and Linux.
 Other commands use portable shortcut text. In that format ``Ctrl`` means
 Command on macOS and Control on Windows and Linux.
 
-Word Wrap is portable ``Ctrl+Alt+W`` (⌥⌘W on macOS, Ctrl+Alt+W elsewhere).
+Word Wrap is portable ``Ctrl+Alt+W`` (⌥⌘W on macOS, Ctrl+Alt+W on Windows).
 Close Others is portable ``Ctrl+Alt+Shift+W`` (⇧⌥⌘W on macOS,
-Ctrl+Alt+Shift+W elsewhere). The two sequences are different.
-
-The spec also lists a Windows Close Others binding of Ctrl+Alt+W and a
-proposed Windows Word Wrap binding of Alt+Z. Those strings are a later swap
-in this module: Ctrl+Alt+W is already Word Wrap under the portable mapping,
-and Alt+Z is still marked as a proposal. One table keeps every shortcut
-distinct without a per-platform branch.
+Ctrl+Alt+Shift+W on Windows). The two sequences are different, so Word Wrap
+keeps Ctrl+Alt+W.
 """
 
 from PySide6.QtGui import QAction, QKeySequence
