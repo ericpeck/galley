@@ -14,19 +14,19 @@ Galley formats, validates, and converts JSON and YAML. Users paste text or open 
 
 Main window, top to bottom (ref: 6c):
 
-1. **Title bar** — centered window title. The mocks show the title as `Formatter` (see Open questions: product name in chrome).
+1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
 2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input 1</b>` (names the pane that has focus / is the Format target).
-3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a swap button, a layout button, and a `40 / 60` ratio readout.
+3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a swap button, a layout button, and a `50 / 50` ratio readout.
 4. Each pane: **tab strip** (tabs + `+` new tab) with a format picker (`Input as` / `Output as`) and a pop-out button on the right; the **editor** (gutter + text); a **pane footer** row.
 5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
 
-Default split shown in all mocks: 40 / 60 (Input / Output) — the rail readout literally shows `40` over `60`. In the mocks the two panes look close to equal width; treat the readout as the source of truth and confirm (Open questions).
+Default split is 50/50 (Input / Output). The rail readout shows `50` over `50`. The mocks printed `40` over `60` while the panes looked near equal; the default ratio is 50/50.
 
 ---
 
 ## 2. Color roles (Broadsheet)
 
-Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given by Eric, re-measured identical in 6c.
+Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given by Eric, re-measured identical in 6c. Two roles are adjusted from the sampled hex, same hue, so the pairs in the contrast notes meet 4.5:1: `accent` (`#0088B0` → `#0080A6`) and `text.muted` (`#605D5D` → `#5E5B5B`).
 
 | Role | Hex | Where | Confidence |
 |---|---|---|---|
@@ -40,12 +40,12 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `scrim` | result `#B5B2B2` over window | dims the window behind modals (approx. black at ~25–28%) | estimated |
 | `text` | `#201E1D` | primary UI and editor text, JSON punctuation emphasis, headings | measured |
 | `text.code.value` | `#2D2B2B` | numbers, `true`/`false`/`null` (shown bold) | measured |
-| `text.muted` | `#605D5D` | captions, line numbers, `Ready`, counts, JSON punctuation (`{ } [ ] , :`) | measured |
-| `accent` | `#0088B0` | Format button, primary buttons, focus ring (2 px), active segment, selected scope toggle, progress fill, links like `Show in input →` icons, find-match outline | measured |
+| `text.muted` | `#5E5B5B` | captions, line numbers, `Ready`, counts, JSON punctuation (`{ } [ ] , :`) | adjusted |
+| `accent` | `#0080A6` | Format button, primary buttons, focus ring (2 px), active segment, selected scope toggle, progress fill, links like `Show in input →` icons, find-match outline | adjusted |
 | `accent.strong` | `#006786` | menu highlight row, info icon, link text on light bg (5.7:1) | measured |
 | `accent.ink` | `#004961` | JSON/YAML **keys** in code, text on `accent.tint` | measured |
 | `accent.tint` | `#E9F8FF` | active toolbar toggle (e.g. Find on), screen-label chip, diff "changed" chip | measured |
-| `accent.disabled` | `#86C2D4` (≈ `accent` at 45% on window) | Format button with no input | measured |
+| `accent.disabled` | `#86C2D4` (measured faded Format button; about the original `#0088B0` at 45% on window, not recomputed from `#0080A6`) | Format button with no input | measured |
 | `selection` | `#99E0FF` | text selection and current find match fill | measured |
 | `info.tint` | `#C2D6DC` | info note icon backing (6e inline note) | low |
 | `string` (magenta) | `#AA0B56` | string values in code; also the **error** hue | measured |
@@ -61,11 +61,11 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 
 ### Contrast notes (WCAG 2.x)
 
-- `text` on `editor.bg`: 13.5:1. `text.muted` on `editor.bg`: 5.3:1; on `window.bg`: 5.8:1; on `gutter.bg` (line numbers): 4.4:1 — just under 4.5 for small text; acceptable as incidental line numbers but flag for review.
+- `text` on `editor.bg`: 13.5:1. `text.muted` `#5E5B5B` on `editor.bg`: 5.47:1; on `window.bg`: 6.02:1; on `gutter.bg` (line numbers): 4.53:1. Line numbers were `#605D5D` (4.39:1 on `#D7D3D3`); the color is darkened along the same hue (0°, saturation about 1.6%) to `#5E5B5B`.
 - `string`/`error` `#AA0B56` on `editor.bg`: 5.9:1; on `error.tint`: 6.6:1.
 - `accent.ink` keys on `editor.bg`: 8.0:1.
 - `amber.ink` on `amber.tint`: 6.5:1.
-- `accent` `#0088B0` on `window.bg`: 3.65:1 — use only for non-text UI (icons, borders, focus ring) or large/bold text. White on `accent` (Format, primary buttons): 4.08:1 — passes for bold ≥14 pt; the button labels are bold, but this is borderline (Open questions).
+- `accent` `#0080A6` on `window.bg`: 4.05:1 — still under 4.5:1, so use it for non-text UI (icons, borders, focus ring) or large/bold text. White on `accent` (Format, primary buttons): 4.53:1 against `#FFFFFF`. The button-face accent was `#0088B0` (white contrast 4.08:1); it is darkened along the same hue (HSL 193.6°, saturation 1) to `#0080A6`.
 - `pane.edge` vs `window.bg`: 3.85:1 (meets 3:1 for UI component boundaries).
 
 ### Second cue rule (color never alone)
@@ -137,7 +137,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Tab = title + close `×`. New tab `+` after the last tab.
 - File-backed tabs show the file name (`orders-2026-10.json`, `deploy.yaml`).
 - Unsaved/edited output tab: dot `●` replaces the close button.
-- Right-click menu: `Rename`, `Duplicate`, `Pop out into window` | `Close` (⌘W), `Close others` (⌥⌘W), `Close tabs to the right`.
+- Right-click menu: `Rename`, `Duplicate`, `Pop out into window` | `Close` (⌘W), `Close others` (⇧⌥⌘W), `Close tabs to the right`.
 - Rename is inline: the tab becomes a text field with accent focus ring.
 - Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`), then pop-out button (window-with-arrow icon).
 
@@ -146,7 +146,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
 - Indent guides: View → Indent Guides → `Off` / `Lines` / `Coloured by depth` (default shown checked: Coloured by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
-- Word wrap toggle (⌥⌘W in View menu), Show Whitespace (⇧⌘8). Note ⌥⌘W conflicts with `Close others` in the tab menu — see Open questions.
+- Word wrap toggle (⌥⌘W in View menu), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §11).
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
 
@@ -163,7 +163,7 @@ Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; 
 Right: direction `JSON → JSON` etc.
 
 ### 5.8 Splitter and rail
-`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (~20 px) shows: swap button (`⇆`, swaps Input/Output roles or contents — see Open questions), layout button (two-column icon, accent), ratio readout `40` / `60`. Dragging updates the readout. Double-click handle → reset to 40/60 (proposal; not in mocks — mark optional).
+`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (~20 px) shows: swap button (`⇆`, swaps Input/Output roles or contents — see Open questions), layout button (two-column icon, accent), ratio readout `50` / `50`. Dragging updates the readout. Double-click handle → reset to 50/50 (proposal; not in mocks — mark optional).
 
 ### 5.9 Pane pop-out
 See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
@@ -181,7 +181,7 @@ See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
 Anchored to the `Options` footer button. Header `Output options`, right `Output 1 · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
 
 ### 5.13 Menus (macOS layer)
-App menu `Formatter` (name per mocks), `File`, `Edit`, `View`, `Window`, `Help`.
+App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
 - View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Coloured by depth) | Enter Full Screen ^⌘F.
 - File, Window, Help contents are not shown in the mocks (Open questions). Do not invent beyond: Open file… (from 6c empty state) and pane pop-out/bring back actions which Window can reasonably host — confirm.
@@ -198,7 +198,7 @@ App menu `Formatter` (name per mocks), `File`, `Edit`, `View`, `Window`, `Help`.
 | Find and Replace | ⌥⌘F | Ctrl+H (proposal) |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Close tab | ⌘W | Ctrl+W |
-| Close others | ⌥⌘W | Ctrl+Alt+W (proposal) |
+| Close others | ⇧⌥⌘W | Ctrl+Alt+W |
 | Escape / Unescape String | ⇧⌘E / ⌥⇧⌘E | Ctrl+Shift+E / Ctrl+Alt+Shift+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
 | Word wrap | ⌥⌘W | Alt+Z (proposal) |
@@ -206,6 +206,8 @@ App menu `Formatter` (name per mocks), `File`, `Edit`, `View`, `Window`, `Help`.
 | Full screen | ^⌘F | F11 |
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
+
+Close Others does not use ⌥⌘W; that shortcut stays Word Wrap. macOS uses ⇧⌥⌘W and Windows uses Ctrl+Alt+W. Both are swappable in the platform layer (§11). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions. Ctrl+Tab cycles tabs within the focused pane (proposal).
 
@@ -238,7 +240,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ### 5a — Output in its own window (ref: 5a)
 - Main window unchanged: Output slot keeps its tabs and format picker; editor area shows placeholder card: window icon, `Output 1 is in a separate window`, `Format still sends results there.`, buttons `Show window` (primary) and `Bring back`. Footer `Detached`.
-- Second window (example on a second display): title `Output 1 — Formatter`, full title bar and window controls, the same toolbar as the main window, and its own Format button (`Editing Output 1`). Shows breadcrumb, find bar, footer, status bar.
+- Second window (example on a second display): title `Output 1 — Galley`, full title bar and window controls, the same toolbar as the main window, and its own Format button (`Editing Output 1`). Shows breadcrumb, find bar, footer, status bar. The mocks showed `Output 1 — Formatter`.
 - See §8.
 
 ### 5b — Both panes popped out (ref: 5b)
@@ -352,7 +354,7 @@ Architecture:
 - `MainWindow(QMainWindow)` central widget contains toolbar row, `QSplitter` with two **pane slots**, status bar.
 - Each pane is a `PaneWidget` (tab strip + editors + footer). Slot holds either the live `PaneWidget` or a `DetachedPlaceholder` card.
 - Pop out: create `PaneWindow(QMainWindow)`, reparent the live `PaneWidget` into it as central widget; place `DetachedPlaceholder` in the slot. No `QDockWidget` anywhere.
-- `PaneWindow`: full title bar `<Pane name> — <app name>` (mocks: `Output 1 — Formatter`), standard window controls, the same toolbar as main (shared `QAction`s), its own Format button whose caption names its pane, its own status bar.
+- `PaneWindow`: full title bar `<Pane name> — Galley` (mocks: `Output 1 — Formatter`), standard window controls, the same toolbar as main (shared `QAction`s), its own Format button whose caption names its pane, its own status bar.
 - Main window layout is unchanged when a pane pops out: slot keeps tab strip and format picker visible; footer shows `Detached`.
 - `Show window` raises and focuses the PaneWindow. `Bring back` reparents the PaneWidget into the slot and closes the PaneWindow. Closing the PaneWindow via its close control = Bring back (proposal; confirm).
 - Format from any window reads the Input pane and writes the Output pane wherever they live.
@@ -394,8 +396,8 @@ Architecture:
 ## 12. Platform-swappable layer
 
 Isolate behind a `platform` module with a macOS implementation now and a Windows one later:
-- **Menus**: macOS global menu bar with app menu (`Formatter` in mocks, About/Preferences/Quit roles via `QAction.MenuRole`). Windows: in-window menu bar; same action objects.
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where possible; a table maps custom ones (§6). Display hints (`⌘↵` vs `Ctrl+Enter`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both.
+- **Menus**: macOS global menu bar with app menu (`Galley`; mocks showed `Formatter`; About/Preferences/Quit roles via `QAction.MenuRole`). Windows: in-window menu bar; same action objects.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where possible; a table maps custom ones (§6). Display hints (`⌘↵` vs `Ctrl+Enter`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows; that binding is swappable per platform. Word Wrap keeps ⌥⌘W.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
@@ -421,15 +423,15 @@ Isolate behind a `platform` module with a macOS implementation now and a Windows
 
 ## 14. Open questions
 
-1. **Product name in chrome**: mocks show `Formatter` in the app menu and window titles; repo/product is Galley. Which goes in the UI?
+1. **Product name in chrome**: Resolved. Menus and window titles use `Galley`. The mocks showed `Formatter`.
 2. **Fonts**: exact UI serif and mono families (and licenses) are not labeled in the mocks.
 3. **Base yellow hex** that amber is mixed from; only the mixed tint `#F1E3BE` and ink `#6E4604` are visible.
 4. **Indent guide depth colors**: only blue `#62C5EE` and pink `#FF90B1` sampled confidently; full depth sequence unknown.
-5. White on `accent` is 4.08:1 — accept for bold labels or darken accent for buttons?
-6. Line numbers `#605D5D` on gutter `#D7D3D3` are 4.39:1 — accept?
-7. Default split: readout says 40/60 but panes look near-equal in mocks.
+5. **White on accent**: Resolved. Button-face `accent` is `#0080A6` (same hue as measured `#0088B0`). White on `#0080A6` is 4.53:1 against `#FFFFFF` (was 4.08:1).
+6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#D7D3D3` is 4.53:1 (was 4.39:1).
+7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. Swap button (`⇆`) on the rail: swap pane positions, swap contents, or swap input/output formats?
-9. ⌥⌘W is both Word Wrap (View) and Close others (tab menu) in the mocks — pick one.
+9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows, swappable per platform.
 10. File, Window, Help menu contents.
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
 12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.
