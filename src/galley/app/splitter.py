@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.style import muted_text_style
-from galley.app.theme import GUTTER_BG, WINDOW_BG
+from galley.app.theme import ACCENT, GUTTER_BG, WINDOW_BG
 
 RAIL_WIDTH = 32
 
@@ -25,7 +25,13 @@ class SplitterRail(QSplitterHandle):
         self.setStyleSheet(f"background: {WINDOW_BG};")
 
         self.swap_button = _rail_button("⇆", "Swap", "swapButton")
-        self.layout_button = _rail_button("▥", "Layout", "layoutButton")
+        self.layout_button = _rail_button(
+            "▥",
+            "Layout",
+            "layoutButton",
+            background=WINDOW_BG,
+            foreground=ACCENT,
+        )
         self.ratio_label = QLabel("50\n50")
         self.ratio_label.setObjectName("splitRatio")
         self.ratio_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -83,7 +89,14 @@ class PaneSplitter(QSplitter):
             self.rail.refresh_ratio()
 
 
-def _rail_button(text: str, name: str, object_name: str) -> QToolButton:
+def _rail_button(
+    text: str,
+    name: str,
+    object_name: str,
+    *,
+    background: str = GUTTER_BG,
+    foreground: str | None = None,
+) -> QToolButton:
     button = QToolButton()
     button.setText(text)
     button.setAccessibleName(name)
@@ -91,7 +104,8 @@ def _rail_button(text: str, name: str, object_name: str) -> QToolButton:
     button.setObjectName(object_name)
     button.setAutoRaise(True)
     button.setFixedSize(24, 24)
+    color = f" color: {foreground};" if foreground is not None else ""
     button.setStyleSheet(
-        f"QToolButton {{ background: {GUTTER_BG}; border-radius: 4px; }}"
+        f"QToolButton {{ background: {background};{color} border-radius: 4px; }}"
     )
     return button
