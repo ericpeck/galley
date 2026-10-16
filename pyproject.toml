@@ -1,0 +1,52 @@
+[project]
+name = "galley"
+version = "0.1.0"
+description = "Desktop app for formatting, validating, and converting JSON and YAML."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.8",
+    "ruamel.yaml>=0.18",
+]
+
+[project.scripts]
+galley = "galley.app.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-qt>=4.4",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "S102", "S307", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"PySide6".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PySide6.QtCore".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PySide6.QtGui".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PySide6.QtWidgets".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PySide2".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PyQt6".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"PyQt5".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"shiboken6".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"shiboken2".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+"qtpy".msg = "Import Qt only from galley.app. galley.core must stay free of Qt."
+
+[tool.ruff.lint.per-file-ignores]
+"src/galley/app/**/*.py" = ["TID251"]
+"tests/**/*.py" = ["TID251"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"

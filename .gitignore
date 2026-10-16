@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# uv
+.uv/
+
+# PyInstaller
+build/
+dist/
+*.manifest
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Project Vault
+Project Vault/
