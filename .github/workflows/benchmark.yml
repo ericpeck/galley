@@ -15,10 +15,6 @@ jobs:
     name: Size benchmark (macOS arm64)
     runs-on: macos-14
     timeout-minutes: 120
-    # Artifact upload needs actions: write. The workflow default stays contents: read.
-    permissions:
-      contents: read
-      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,6 +28,10 @@ jobs:
 
       - name: Sync dependencies
         run: uv sync
+
+      # Not a project dependency. Tests stay on ruamel's pure-Python parser.
+      - name: Install ruamel.yaml.clib for the safe+C comparison
+        run: uv pip install ruamel.yaml.clib
 
       - name: Run file-size benchmark
         run: uv run python benchmarks/size_bench.py

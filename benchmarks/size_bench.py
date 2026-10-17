@@ -6,7 +6,11 @@ markdown table plus JSON. Generated inputs are deleted with the temp directory.
 
 YAML round-trip (``typ="rt"``) is timed here, including 0.05, 0.1, 0.25, and
 0.5 MB. A labeled comparison times ``typ="safe"`` with ``ruamel.yaml.clib``
-at 1, 5, and 10 MB. Neither path changes ``galley.core``.
+at 1, 5, and 10 MB. That extension is not a project dependency; the benchmark
+workflow installs it in its own step. Without it, the comparison raises.
+Neither path changes ``galley.core``.
+
+Each timed call reports wall-clock load (parse) and dump (write) separately.
 
     uv run python benchmarks/size_bench.py
 """
@@ -20,7 +24,6 @@ import json
 import math
 import os
 import platform
-import resource
 import statistics
 import subprocess
 import sys
@@ -99,12 +102,18 @@ OPERATION_SPECS: tuple[dict[str, Any], ...] = (
 )
 
 
+# result, total seconds, load seconds, dump seconds
+PhaseResult = tuple[object, float, float, float]
+PhaseFn = Callable[[str], PhaseResult]
+
+
 @dataclass(frozen=True)
 class Operation:
     operation_id: str
     group: str
     source_format: str
     fn: Callable[..., object]
+    phases: PhaseFn
     yaml_typ: str | None = None
     # "ui" sizes feed the spinner / progress-bar bands. "comparison" is reported
     # beside them and is not the product cutoff.
@@ -163,6 +172,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 group=spec["group"],
                 source_format=spec["source_format"],
                 fn=fn,
+                phases=_phases_for(spec["operation_id"], fn),
                 yaml_typ=yaml_typ,
                 cutoff_role=cutoff_role,
             )
@@ -172,6 +182,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         group="format",
         source_format="yaml",
         fn=format_yaml_round_trip,
+        phases=_round_trip_phases,
         yaml_typ="rt",
         cutoff_role="ui",
     )
@@ -193,6 +204,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         group="format",
         source_format="yaml",
         fn=format_yaml_safe_c,
+        phases=_safe_c_phases,
         yaml_typ="safe-c",
         cutoff_role="comparison",
     )
@@ -211,6 +223,83 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
     return scheduled, skipped
 
 
+def _phases_for(operation_id: str, fn: Callable[..., object]) -> PhaseFn:
+    if operation_id == "format_json":
+        return _json_phases
+    return _whole_phases(fn)
+
+
+def _whole_phases(fn: Callable[..., object]) -> PhaseFn:
+    def phases(text: str) -> PhaseResult:
+        started = time.perf_counter()
+        result = fn(text)
+        total = time.perf_counter() - started
+        return result, total, total, 0.0
+
+    return phases
+
+
+def _json_phases(text: str) -> PhaseResult:
+    """Time ``format_json`` and split the parse from the write.
+
+    Load runs from the start of the call through ``json.loads``, so the
+    checks in front of the parser are included. Dump is the rest of the call,
+    which is the write. Load plus dump is the whole call.
+    """
+    load_end: float | None = None
+    real_loads = json.loads
+
+    def timed_loads(*args: Any, **kwargs: Any) -> Any:
+        nonlocal load_end
+        try:
+            return real_loads(*args, **kwargs)
+        finally:
+            load_end = time.perf_counter()
+
+    json.loads = timed_loads
+    try:
+        started = time.perf_counter()
+        result = core_format.format_json(text)
+        total = time.perf_counter() - started
+    finally:
+        json.loads = real_loads
+    load_s = 0.0 if load_end is None else load_end - started
+    return result, total, load_s, total - load_s
+
+
+def _require_yaml_clib() -> None:
+    if CParser is None or CEmitter is None:
+        message = "ruamel.yaml.clib is not installed; the safe+C comparison needs it."
+        raise RuntimeError(message)
+
+
+def _yaml_phases(text: str, *, typ: str, require_c: bool) -> PhaseResult:
+    started = time.perf_counter()
+    if require_c:
+        _require_yaml_clib()
+        yaml = YAML(typ="safe", pure=False)
+        if yaml.Parser is not CParser or yaml.Emitter is not CEmitter:
+            message = "safe mode did not select the C parser and emitter."
+            raise RuntimeError(message)
+    else:
+        yaml = YAML(typ=typ)
+    yaml.default_flow_style = False
+    parsed = yaml.load(text)
+    loaded = time.perf_counter()
+    buffer = StringIO()
+    yaml.dump(parsed, buffer)
+    dumped = time.perf_counter()
+    return buffer.getvalue(), dumped - started, loaded - started, dumped - loaded
+
+
+def _round_trip_phases(text: str) -> PhaseResult:
+    return _yaml_phases(text, typ="rt", require_c=False)
+
+
+def _safe_c_phases(text: str) -> PhaseResult:
+    return _yaml_phases(text, typ="safe", require_c=True)
+
+
 def format_yaml_safe_c(text: str) -> str:
     """Load and dump YAML with ruamel safe mode and the C extension.
 
@@ -218,18 +307,11 @@ def format_yaml_safe_c(text: str) -> str:
     ``ruamel.yaml.clib`` is installed. Round-trip mode never uses that
     extension. This function is benchmark-only.
     """
-    if CParser is None or CEmitter is None:
-        message = "ruamel.yaml.clib is not installed; the safe+C comparison needs it."
+    result, _total, _load, _dump = _safe_c_phases(text)
+    if not isinstance(result, str):
+        message = "YAML dump did not return text."
         raise RuntimeError(message)
-    yaml = YAML(typ="safe", pure=False)
-    if yaml.Parser is not CParser or yaml.Emitter is not CEmitter:
-        message = "safe mode did not select the C parser and emitter."
-        raise RuntimeError(message)
-    yaml.default_flow_style = False
-    parsed = yaml.load(text)
-    buffer = StringIO()
-    yaml.dump(parsed, buffer)
-    return buffer.getvalue()
+    return result
 
 
 def format_yaml_round_trip(text: str) -> str:
@@ -239,12 +321,11 @@ def format_yaml_round_trip(text: str) -> str:
     order. The benchmark owns this path so ``galley.core.format_yaml`` can stay
     on ``typ="safe"``.
     """
-    yaml = YAML(typ="rt")
-    yaml.default_flow_style = False
-    parsed = yaml.load(text)
-    buffer = StringIO()
-    yaml.dump(parsed, buffer)
-    return buffer.getvalue()
+    result, _total, _load, _dump = _round_trip_phases(text)
+    if not isinstance(result, str):
+        message = "YAML dump did not return text."
+        raise RuntimeError(message)
+    return result
 
 
 def _record(index: int) -> dict[str, Any]:
@@ -435,25 +516,48 @@ def _validate_sample(path: Path, source_format: str) -> None:
     del parsed, text
 
 
-def current_rss_bytes() -> int:
+def current_rss_bytes() -> int | None:
+    """Resident set, or None when this platform cannot report it."""
     try:
         with open("/proc/self/status", encoding="ascii") as handle:
             for line in handle:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1]) * 1024
-    except FileNotFoundError:
+    except OSError:
         pass
-    completed = subprocess.run(
-        ["ps", "-o", "rss=", "-p", str(os.getpid())],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return int(completed.stdout.split()[0]) * 1024
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    text = completed.stdout.strip()
+    if not text:
+        return None
+    try:
+        return int(text.split()[0]) * 1024
+    except (ValueError, IndexError):
+        return None
 
 
-def process_ru_maxrss_bytes() -> int:
-    raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+def process_ru_maxrss_bytes() -> int | None:
+    """Process high-water RSS, or None where ``resource`` is unavailable.
+
+    Imported here so this module loads on Windows, which has no ``resource``.
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except (AttributeError, OSError, ValueError):
+        return None
     if sys.platform == "darwin":
         return int(raw)
     return int(raw) * 1024
@@ -471,7 +575,9 @@ class RssSampler:
 
     def _observe(self) -> None:
         rss = current_rss_bytes()
-        if rss > self.peak_bytes:
+        if rss is None:
+            return
+        if self.peak_bytes is None or rss > self.peak_bytes:
             self.peak_bytes = rss
 
     def _sample(self) -> None:
@@ -482,7 +588,7 @@ class RssSampler:
         self._observe()
         self._thread.start()
 
-    def stop(self) -> int:
+    def stop(self) -> int | None:
         self._stop.set()
         self._thread.join(timeout=1)
         self._observe()
@@ -513,25 +619,25 @@ def _touch(result: object) -> None:
     repr(type(result))
 
 
-def _time_once(fn: Callable[..., object], text: str) -> tuple[float, int]:
+def _time_once(
+    operation: Operation, text: str
+) -> tuple[float, float, float, int | None]:
     sampler = RssSampler()
     sampler.start()
     try:
-        started = time.perf_counter()
-        result = fn(text)
-        elapsed = time.perf_counter() - started
+        result, elapsed, load_s, dump_s = operation.phases(text)
         _touch(result)
         peak = sampler.stop()
     except Exception:
         sampler.stop()
         raise
     del result
-    return elapsed, peak
+    return elapsed, load_s, dump_s, peak
 
 
 def _warmup(operation: Operation) -> None:
     sample = '{"warmup":1}\n' if operation.source_format == "json" else "warmup: 1\n"
-    operation.fn(sample)
+    operation.phases(sample)
 
 
 def _measure_loaded(
@@ -542,22 +648,37 @@ def _measure_loaded(
     item_count: int,
 ) -> dict[str, Any]:
     _warmup(operation)
-    samples: list[dict[str, float | int]] = []
+    samples: list[dict[str, float | int | None]] = []
     before_rss = process_ru_maxrss_bytes()
     for run_index in range(runs):
         release_memory()
-        elapsed, peak = _time_once(operation.fn, text)
-        samples.append({"seconds": round(elapsed, 6), "peak_rss_bytes": peak})
+        elapsed, load_s, dump_s, peak = _time_once(operation, text)
+        samples.append(
+            {
+                "seconds": round(elapsed, 6),
+                "load_s": round(load_s, 6),
+                "dump_s": round(dump_s, 6),
+                "peak_rss_bytes": peak,
+            }
+        )
         print(
             f"{operation.operation_id} {_format_mb(size_mb)} MB "
-            f"run {run_index + 1}/{runs}: {elapsed:.4f} s",
+            f"run {run_index + 1}/{runs}: {elapsed:.4f} s "
+            f"(load {load_s:.4f} s, dump {dump_s:.4f} s)",
             file=sys.stderr,
         )
     after_rss = process_ru_maxrss_bytes()
     seconds = [float(sample["seconds"]) for sample in samples]
-    peak_bytes = max(int(sample["peak_rss_bytes"]) for sample in samples)
-    if after_rss > before_rss:
-        peak_bytes = max(peak_bytes, after_rss)
+    load_seconds = [float(sample["load_s"]) for sample in samples]
+    dump_seconds = [float(sample["dump_s"]) for sample in samples]
+    peaks = [
+        int(sample["peak_rss_bytes"])
+        for sample in samples
+        if sample["peak_rss_bytes"] is not None
+    ]
+    peak_bytes: int | None = max(peaks) if peaks else None
+    if after_rss is not None and before_rss is not None and after_rss > before_rss:
+        peak_bytes = after_rss if peak_bytes is None else max(peak_bytes, after_rss)
     return {
         "operation_id": operation.operation_id,
         "group": operation.group,
@@ -567,6 +688,8 @@ def _measure_loaded(
         "item_count": item_count,
         "runs": samples,
         "median_s": round(statistics.median(seconds), 6),
+        "median_load_s": round(statistics.median(load_seconds), 6),
+        "median_dump_s": round(statistics.median(dump_seconds), 6),
         "min_s": round(min(seconds), 6),
         "max_s": round(max(seconds), 6),
         "peak_rss_bytes": peak_bytes,
@@ -649,9 +772,12 @@ def _measure_in_subprocess(
         elif payload and payload.get("error"):
             reason = str(payload["error"])
         return _error_row(operation, size_mb, item_count, reason)
+    detail = ""
+    if payload and payload.get("error"):
+        detail = f": {payload['error']}"
     message = (
         f"{operation.operation_id} {_format_mb(size_mb)} MB "
-        f"worker exited {completed.returncode}"
+        f"worker exited {completed.returncode}{detail}"
     )
     raise RuntimeError(message)
 
@@ -704,6 +830,9 @@ def run_worker(
     except MemoryError:
         print(json.dumps({"error": "MemoryError"}))
         return 2
+    except RuntimeError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 1
     print(json.dumps(row))
     return 0
 
@@ -939,8 +1068,10 @@ def _basis(point: dict[str, Any]) -> str:
     return f"{method} interpolation"
 
 
-def _mb(num_bytes: int) -> str:
-    return f"{num_bytes / BYTES_PER_MB:.1f}"
+def _mb(num_bytes: object) -> str:
+    if num_bytes is None:
+        return "n/a"
+    return f"{int(num_bytes) / BYTES_PER_MB:.1f}"
 
 
 def _cell_mb(value: object) -> str:
@@ -977,9 +1108,10 @@ def render_markdown(report: dict[str, Any]) -> str:
             (
                 "Each size is exact "
                 f"({report['bytes_per_mb']} bytes = 1 MB). "
-                "Each size runs in a fresh process. Times are wall time of one "
-                "load-and-dump after the text is already in memory. "
-                f"The median is {report['runs']} runs. Peak RSS is the high "
+                "Each size runs in a fresh process. Median is the whole call. "
+                "Load is the parse. Dump is the write. "
+                f"Each figure is the median of {report['runs']} runs. "
+                "Peak RSS is the high "
                 "resident set during those runs (sampled from the process, and "
                 "`resource` ru_maxrss when the run sets a new high-water mark). "
                 "`format_json` is galley.core. "
@@ -1003,6 +1135,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "YAML mode",
         "Size (MB)",
         "Median (s)",
+        "Load (s)",
+        "Dump (s)",
         "Min (s)",
         "Max (s)",
         "Peak RSS (MB)",
@@ -1158,12 +1292,14 @@ def _measurement_cells(row: dict[str, Any]) -> list[str]:
     mode = _yaml_mode(row)
     size = _format_mb(row["size_mb"])
     if "median_s" not in row:
-        return [row["operation_id"], mode, size, "n/a", "n/a", "n/a", "n/a"]
+        return [row["operation_id"], mode, size, *["n/a"] * 6]
     return [
         row["operation_id"],
         mode,
         size,
         f"{row['median_s']:.4f}",
+        f"{row['median_load_s']:.4f}",
+        f"{row['median_dump_s']:.4f}",
         f"{row['min_s']:.4f}",
         f"{row['max_s']:.4f}",
         _mb(row["peak_rss_bytes"]),
