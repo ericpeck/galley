@@ -4,26 +4,26 @@ Generates nested documents in a temporary directory, times the format,
 validate, and convert callables that exist on this checkout, and writes a
 markdown table plus JSON. Generated inputs are deleted with the temp directory.
 
-YAML round-trip (``typ="rt"``) is timed here, including 0.05, 0.1, 0.25, and
-0.5 MB. A labeled comparison times ``typ="safe"`` with ``ruamel.yaml.clib``
-at 1, 5, and 10 MB. That extension is not a project dependency; the benchmark
-workflow installs it in its own step. Without it, the comparison raises.
-Neither path changes ``galley.core``.
-
-Each timed call reports wall-clock load (parse) and dump (write) separately.
+``format_yaml`` is timed as shipped: ruamel ``typ="safe"``, pure Python, in a
+process where ``ruamel.yaml.clib`` is not importable. YAML UI cutoffs use that
+row. Round-trip and safe+C are labeled comparisons. Each call reports load and
+dump wall time. Nothing here changes ``galley.core``.
 
     uv run python benchmarks/size_bench.py
+    uv run --with ruamel.yaml.clib==0.2.15 python benchmarks/size_bench.py
 """
 
 import argparse
 import ctypes
 import gc
 import importlib.metadata
+import importlib.util
 import inspect
 import json
 import math
 import os
 import platform
+import shutil
 import statistics
 import subprocess
 import sys
@@ -44,10 +44,13 @@ from galley.core import format as core_format
 
 BYTES_PER_MB = 1024 * 1024
 DEFAULT_SIZES_MB = (1, 5, 10, 50, 100, 200)
-# Extra round-trip sizes so the 0.5 s and 2 s YAML bands can be interpolated.
+# Fine sizes so shipped format_yaml can interpolate the 0.5 s and 2 s bands.
+# Round-trip uses the same grid and stays a comparison.
 YAML_RT_EXTRA_SIZES_MB = (0.05, 0.1, 0.25, 0.5)
 # Benchmark-local safe+C comparison. Not galley.core.
 SAFE_C_SIZES_MB = frozenset({1, 5, 10})
+# Pinned so later safe+C runs stay comparable. Not a project dependency.
+RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
 SAMPLE_INTERVAL_S = 0.01
@@ -165,7 +168,6 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             )
             continue
         yaml_typ = "safe" if spec["operation_id"] == "format_yaml" else None
-        cutoff_role = "comparison" if yaml_typ == "safe" else "ui"
         found.append(
             Operation(
                 operation_id=spec["operation_id"],
@@ -174,7 +176,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 fn=fn,
                 phases=_phases_for(spec["operation_id"], fn),
                 yaml_typ=yaml_typ,
-                cutoff_role=cutoff_role,
+                cutoff_role="ui",
             )
         )
     round_trip = Operation(
@@ -184,21 +186,8 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         fn=format_yaml_round_trip,
         phases=_round_trip_phases,
         yaml_typ="rt",
-        cutoff_role="ui",
+        cutoff_role="comparison",
     )
-    ordered: list[Operation] = []
-    safe_yaml: list[Operation] = []
-    for operation in found:
-        if operation.yaml_typ == "safe":
-            safe_yaml.append(operation)
-        else:
-            ordered.append(operation)
-    # Round-trip is the product path, so time it before the safe-mode comparison.
-    insert_at = len(ordered)
-    for index, operation in enumerate(ordered):
-        if operation.group == "format" and operation.source_format != "yaml":
-            insert_at = index + 1
-    ordered[insert_at:insert_at] = [round_trip, *safe_yaml]
     safe_c = Operation(
         operation_id="yaml_safe_c",
         group="format",
@@ -208,24 +197,32 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         yaml_typ="safe-c",
         cutoff_role="comparison",
     )
-    # format_yaml stays in galley.core (typ="safe"). The timed comparison is
-    # the benchmark-local safe loader with the C extension, not that function.
-    timed = [
-        operation for operation in ordered if operation.operation_id != "format_yaml"
+    # Shipped format_yaml is the YAML UI path. Round-trip and safe+C follow it
+    # as labeled comparisons.
+    scheduled = [
+        operation for operation in found if operation.operation_id != "format_yaml"
     ]
-    scheduled: list[Operation] = []
-    for operation in timed:
-        if operation.operation_id == "yaml_round_trip":
-            scheduled.append(safe_c)
-        scheduled.append(operation)
-    if all(operation.operation_id != "yaml_safe_c" for operation in scheduled):
-        scheduled.append(safe_c)
+    shipped = next(
+        (operation for operation in found if operation.operation_id == "format_yaml"),
+        None,
+    )
+    insert_at = len(scheduled)
+    for index, operation in enumerate(scheduled):
+        if operation.group == "format" and operation.source_format != "yaml":
+            insert_at = index + 1
+    block: list[Operation] = []
+    if shipped is not None:
+        block.append(shipped)
+    block.extend((round_trip, safe_c))
+    scheduled[insert_at:insert_at] = block
     return scheduled, skipped
 
 
 def _phases_for(operation_id: str, fn: Callable[..., object]) -> PhaseFn:
     if operation_id == "format_json":
         return _json_phases
+    if operation_id == "format_yaml":
+        return _format_yaml_phases
     return _whole_phases(fn)
 
 
@@ -264,6 +261,60 @@ def _json_phases(text: str) -> PhaseResult:
     finally:
         json.loads = real_loads
     load_s = 0.0 if load_end is None else load_end - started
+    return result, total, load_s, total - load_s
+
+
+def _assert_shipped_yaml_environment() -> None:
+    """Fail when this process can see the ruamel C extension.
+
+    Shipped ``format_yaml`` uses ``YAML(typ="safe")``, which selects the C
+    parser whenever ``ruamel.yaml.clib`` imports. The timing process must not
+    be able to import it.
+    """
+    clib_spec = importlib.util.find_spec("ruamel.yaml.clib")
+    extension_spec = importlib.util.find_spec("_ruamel_yaml")
+    if clib_spec is not None or extension_spec is not None:
+        message = (
+            "format_yaml must run where ruamel.yaml.clib is not importable. "
+            "This process can import the C extension."
+        )
+        raise RuntimeError(message)
+    if CParser is not None or CEmitter is not None:
+        message = (
+            "format_yaml must run where ruamel.yaml.clib is not importable. "
+            "This process already loaded the C parser."
+        )
+        raise RuntimeError(message)
+
+
+def _format_yaml_phases(text: str) -> PhaseResult:
+    """Time ``galley.core.format_yaml`` and split the parse from the write.
+
+    Load runs from the start of the call through ``YAML.load``, so the checks
+    in front of the parser are included. Dump is the rest of the call.
+    """
+    _assert_shipped_yaml_environment()
+    load_end: float | None = None
+    real_load = YAML.load
+
+    def timed_load(self: YAML, stream: Any) -> Any:
+        nonlocal load_end
+        try:
+            return real_load(self, stream)
+        finally:
+            load_end = time.perf_counter()
+
+    YAML.load = timed_load  # type: ignore[method-assign]
+    try:
+        started = time.perf_counter()
+        result = core_format.format_yaml(text)
+        total = time.perf_counter() - started
+    finally:
+        YAML.load = real_load
+    if load_end is None:
+        message = "format_yaml did not call YAML.load; load time was not measured."
+        raise RuntimeError(message)
+    load_s = max(0.0, load_end - started)
     return result, total, load_s, total - load_s
 
 
@@ -442,10 +493,11 @@ def ruamel_environment() -> dict[str, Any]:
 def _sizes_for_operation(operation: Operation, requested: list[float]) -> list[float]:
     """Sizes to time for one operation.
 
-    Round-trip adds the sub-megabyte grid so the 0.5 s and 2 s bands can be
-    interpolated. The safe+C comparison stays at 1, 5, and 10 MB.
+    Shipped ``format_yaml`` and round-trip share the sub-megabyte grid so the
+    0.5 s and 2 s bands can be interpolated from the shipped row. The safe+C
+    comparison stays at 1, 5, and 10 MB.
     """
-    if operation.operation_id == "yaml_round_trip":
+    if operation.operation_id in {"format_yaml", "yaml_round_trip"}:
         return sorted({float(size) for size in (*requested, *YAML_RT_EXTRA_SIZES_MB)})
     if operation.yaml_typ == "safe-c":
         return sorted(
@@ -723,6 +775,57 @@ def _error_row(
     }
 
 
+def _uv_executable() -> str:
+    uv = shutil.which("uv")
+    if uv is None:
+        message = "uv is required to launch the YAML benchmark workers."
+        raise RuntimeError(message)
+    return uv
+
+
+def _worker_command(
+    operation: Operation,
+    path: Path,
+    size_mb: float,
+    runs: int,
+    item_count: int,
+) -> list[str]:
+    """Command for one size.
+
+    Shipped ``format_yaml`` uses ``uv run --isolated`` so an ambient
+    ``ruamel.yaml.clib`` install is not importable. Safe+C uses
+    ``uv run --with`` at the pinned version.
+    """
+    script = str(Path(__file__).resolve())
+    worker = [
+        "python",
+        script,
+        "--worker",
+        "--operation",
+        operation.operation_id,
+        "--input-file",
+        str(path),
+        "--size-mb",
+        _format_mb(size_mb),
+        "--runs",
+        str(runs),
+        "--item-count",
+        str(item_count),
+    ]
+    if operation.operation_id == "format_yaml":
+        return [_uv_executable(), "run", "--isolated", "--", *worker]
+    if operation.operation_id == "yaml_safe_c":
+        return [
+            _uv_executable(),
+            "run",
+            "--with",
+            RUAMEL_CLIB_SPEC,
+            "--",
+            *worker,
+        ]
+    return [sys.executable, *worker[1:]]
+
+
 def _measure_in_subprocess(
     operation: Operation,
     path: Path,
@@ -731,22 +834,9 @@ def _measure_in_subprocess(
     item_count: int,
 ) -> dict[str, Any]:
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--worker",
-            "--operation",
-            operation.operation_id,
-            "--input-file",
-            str(path),
-            "--size-mb",
-            _format_mb(size_mb),
-            "--runs",
-            str(runs),
-            "--item-count",
-            str(item_count),
-        ],
+        _worker_command(operation, path, size_mb, runs, item_count),
         check=False,
+        cwd=Path(__file__).resolve().parents[1],
         stdout=subprocess.PIPE,
         text=True,
     )
@@ -1114,16 +1204,17 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "Peak RSS is the high "
                 "resident set during those runs (sampled from the process, and "
                 "`resource` ru_maxrss when the run sets a new high-water mark). "
-                "`format_json` is galley.core. "
-                '`galley.core.format_yaml` uses ruamel `typ="safe"`, '
-                "not round-trip. This script does not time that function. "
-                '`yaml_round_trip` is benchmark-local `YAML(typ="rt")`. '
-                "Round-trip is always pure Python. "
-                "It also times 0.05, 0.1, 0.25, and 0.5 MB. "
-                '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` '
-                "with the C extension, at 1, 5, and 10 MB. "
-                f"ruamel.yaml.clib is {clib_state}. "
-                "YAML UI cutoffs use round-trip."
+                "`format_json` and `format_yaml` are galley.core. "
+                '`format_yaml` is ruamel `typ="safe"` as shipped, pure Python, '
+                "in a process where `ruamel.yaml.clib` is not importable. "
+                "YAML UI cutoffs use that row. "
+                "It uses the same sizes as round-trip, "
+                "including 0.05, 0.1, 0.25, and 0.5 MB. "
+                '`yaml_round_trip` is benchmark-local `YAML(typ="rt")`, '
+                "always pure Python, and is a comparison. "
+                '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` with '
+                f"`{RUAMEL_CLIB_SPEC}`, at 1, 5, and 10 MB, and is a comparison. "
+                f"In this parent process ruamel.yaml.clib is {clib_state}."
             ),
             "",
             "## Results",
@@ -1158,7 +1249,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(
         "Formatting time bands: under 0.5 s no indicator, "
         "0.5 s to 2 s spinner only, over 2 s progress bar with Cancel. "
-        'YAML bands use round-trip (`typ="rt"`).'
+        'YAML bands use shipped `format_yaml` (`typ="safe"`, no C extension).'
     )
     lines.extend(
         _cutoff_section(
@@ -1174,11 +1265,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         cutoff for cutoff in report["cutoffs"] if cutoff.get("role") == "comparison"
     ]
     if comparisons:
-        lines.extend(["", "## Safe mode with the C extension", ""])
+        lines.extend(["", "## Comparisons", ""])
         lines.append(
-            '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` using '
-            "ruamel's C parser and emitter. These sizes are not the UI bands. "
-            "Round-trip does not use the C extension."
+            "`yaml_round_trip` and `yaml_safe_c` are not the UI bands. "
+            'Round-trip is benchmark-local `YAML(typ="rt")` and stays pure '
+            "Python. "
+            '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` with the '
+            f"C extension (`{RUAMEL_CLIB_SPEC}`)."
         )
         lines.extend(_cutoff_section(comparisons, lead_in=False))
         ratio_rows = _rt_vs_safe_c_rows(report["measurements"])
@@ -1234,6 +1327,8 @@ def _rt_vs_safe_c_rows(measurements: list[dict[str, Any]]) -> list[list[str]]:
 
 
 def _yaml_mode(row: dict[str, Any]) -> str:
+    if row.get("operation_id") == "format_yaml":
+        return "safe, shipped"
     if row.get("yaml_typ") == "safe":
         return "safe"
     if row.get("yaml_typ") == "safe-c":
