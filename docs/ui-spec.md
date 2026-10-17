@@ -2,7 +2,7 @@
 
 Status: draft for review. Built from the 18 approved mock PNGs (screens 3a, 4a, 4b, 5a, 5b, 6a–6m). Text only; no images are committed. Reference placeholders like `(ref: 6k)` mark where a mock would help, pending Eric's call on whether to commit reference PNGs.
 
-Stack: Python + PySide6 (Qt 6). macOS first; Windows planned. Galley is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 11).
+Stack: Python + PySide6 (Qt 6). Galley targets macOS and Windows. It is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 12).
 
 Brand owner: Eric. Do not invent logos, taglines, icons, colors, or names beyond what is written here.
 
@@ -45,7 +45,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `accent.strong` | `#006786` | menu highlight row, info icon, link text on light bg (5.7:1) | measured |
 | `accent.ink` | `#004961` | JSON/YAML **keys** in code, text on `accent.tint` | measured |
 | `accent.tint` | `#E9F8FF` | active toolbar toggle (e.g. Find on), screen-label chip, diff "changed" chip | measured |
-| `accent.disabled` | `#86C2D4` (measured faded Format button; about the original `#0088B0` at 45% on window, not recomputed from `#0080A6`) | Format button with no input | measured |
+| `accent.disabled` | `#86BFD0` | Format button with no input. `round(0.45 × accent + 0.55 × window.bg)` per channel. Measured `#86C2D4` was that blend of `#0088B0` over `#F3F2F2`; the same blend of `#0080A6` over `#F3F2F2` is `#86BFD0` | adjusted |
 | `selection` | `#99E0FF` | text selection and current find match fill | measured |
 | `info.tint` | `#C2D6DC` | info note icon backing (6e inline note) | low |
 | `string` (magenta) | `#AA0B56` | string values in code; also the **error** hue | measured |
@@ -66,6 +66,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 - `accent.ink` keys on `editor.bg`: 8.0:1.
 - `amber.ink` on `amber.tint`: 6.5:1.
 - `accent` `#0080A6` on `window.bg`: 4.05:1 — still under 4.5:1, so use it for non-text UI (icons, borders, focus ring) or large/bold text. White on `accent` (Format, primary buttons): 4.53:1 against `#FFFFFF`. The button-face accent was `#0088B0` (white contrast 4.08:1); it is darkened along the same hue (HSL 193.6°, saturation 1) to `#0080A6`.
+- `accent.disabled` `#86BFD0` is the disabled Format face: `round(0.45 × #0080A6 + 0.55 × #F3F2F2)` per channel. White text on `#86BFD0` is 2.02:1. Disabled controls are exempt from the 4.5:1 text contrast target.
 - `pane.edge` vs `window.bg`: 3.85:1 (meets 3:1 for UI component boundaries).
 
 ### Second cue rule (color never alone)
@@ -113,7 +114,7 @@ Measured at 1x, approximate:
 - Editor: ~10 px left text inset; indent guides 1 px.
 - Pane footer: ~24 px; status bar: ~24 px.
 - Dialogs: ~16 px padding; rows inside dialogs ~8 px padding on `card.bg`, 6–8 px gap between rows; buttons bottom-right, ~32 px tall.
-- Splitter rail: ~20 px wide, centered controls.
+- Splitter rail: 32 px wide, centered controls. Swap and layout buttons are 24 px.
 - Corner radii: small (2–4 px) on buttons, fields, tabs; dialogs ~4–6 px. Print style: minimal shadows; dialogs have a soft shadow.
 
 ---
@@ -128,8 +129,8 @@ Order, left to right: `Paste`, `Copy` | `Undo`, `Redo` (paired tray) | `Outdent`
 
 ### 5.2 Format button (ref: 6d bottom strip)
 Three states:
-- **No input**: label `{·} Format ⌘↵`, disabled at 45% opacity (`#86C2D4`-looking). Only when there is nothing to format.
-- **Ready**: full `accent`, white bold label, shortcut hint `⌘↵` (platform layer supplies `Ctrl+Enter` on Windows).
+- **No input**: label `{·} Format ⌘↵`, disabled face `#86BFD0` (45% of `accent` over `window.bg`). Only when there is nothing to format.
+- **Ready**: full `accent`, white bold label, shortcut hint `⌘↵` (platform layer supplies `Ctrl+Return` on Windows; §12).
 - **Working**: full color, small spinner, label `Formatting…`. Never looks disabled. Cancel lives in the status bar, not on the button.
 Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 
@@ -146,7 +147,8 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
 - Indent guides: View → Indent Guides → `Off` / `Lines` / `Coloured by depth` (default shown checked: Coloured by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
-- Word wrap toggle (⌥⌘W in View menu), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §11).
+- Word wrap toggle (⌥⌘W on macOS, Ctrl+Alt+W on Windows), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §12).
+- Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`.
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
 
@@ -163,7 +165,7 @@ Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; 
 Right: direction `JSON → JSON` etc.
 
 ### 5.8 Splitter and rail
-`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (~20 px) shows: swap button (`⇆`, swaps Input/Output roles or contents — see Open questions), layout button (two-column icon, accent), ratio readout `50` / `50`. Dragging updates the readout. Double-click handle → reset to 50/50 (proposal; not in mocks — mark optional).
+`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: swap button (`⇆`, swaps Input/Output roles or contents — see Open questions), layout button (two-column icon `▥`, drawn in `accent`), ratio readout `50` / `50`. Dragging updates the readout. Double-click handle → reset to 50/50 (proposal; not in mocks — mark optional).
 
 ### 5.9 Pane pop-out
 See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
@@ -180,34 +182,34 @@ See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
 ### 5.12 Output options popover (6h)
 Anchored to the `Options` footer button. Header `Output options`, right `Output 1 · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
 
-### 5.13 Menus (macOS layer)
-App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`.
+### 5.13 Menus
+App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
 - View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Coloured by depth) | Enter Full Screen ^⌘F.
-- File, Window, Help contents are not shown in the mocks (Open questions). Do not invent beyond: Open file… (from 6c empty state) and pane pop-out/bring back actions which Window can reasonably host — confirm.
+- `File` includes `Open file…` (6c). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
 ---
 
-## 6. Global keyboard paths (macOS; Windows mapping in §11)
+## 6. Global keyboard paths (macOS and Windows; see §12)
 
-| Action | macOS | Windows (planned) |
+| Action | macOS | Windows |
 |---|---|---|
-| Format | ⌘↵ | Ctrl+Enter |
+| Format | ⌘↵ | Ctrl+Return |
 | Paste | ⌘V | Ctrl+V |
 | Find | ⌘F | Ctrl+F |
-| Find and Replace | ⌥⌘F | Ctrl+H (proposal) |
+| Find and Replace | ⌥⌘F | standard Replace |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Close tab | ⌘W | Ctrl+W |
-| Close others | ⇧⌥⌘W | Ctrl+Alt+W |
+| Close others | ⇧⌥⌘W | Ctrl+Alt+Shift+W |
 | Escape / Unescape String | ⇧⌘E / ⌥⇧⌘E | Ctrl+Shift+E / Ctrl+Alt+Shift+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
-| Word wrap | ⌥⌘W | Alt+Z (proposal) |
+| Word wrap | ⌥⌘W | Ctrl+Alt+W |
 | Show whitespace | ⇧⌘8 | Ctrl+Shift+8 |
 | Full screen | ^⌘F | F11 |
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Close Others does not use ⌥⌘W; that shortcut stays Word Wrap. macOS uses ⇧⌥⌘W and Windows uses Ctrl+Alt+W. Both are swappable in the platform layer (§11). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). Close Others does not use ⌥⌘W or Ctrl+Alt+W; those shortcuts stay Word Wrap. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap is ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Both are swappable in the platform layer (§12). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions. Ctrl+Tab cycles tabs within the focused pane (proposal).
 
@@ -270,7 +272,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ### 6c — Empty state (ref: 6c)
 - Input editor has keyboard focus (accent focus ring, caret on line 1).
-- Center: file-download icon, `Paste JSON or YAML, or drop a file here`, `⌨ ⌘V to paste · Ctrl+V on Windows`, primary `Paste`, secondary `Open file…`.
+- Center: `Paste JSON or YAML, or drop a file here`, `⌨ ⌘V to paste · Ctrl+V on Windows`, primary `Paste`, secondary `Open file…`.
 - Output: `Formatted output will appear here.`
 - Format disabled (only state where it is). `Clear` and output `Copy` disabled. Input footer `Empty`. Status `Ready`. Direction `JSON → JSON`.
 - Drag-over (not in mocks): accent outline on the input pane; drop loads the file into a new or the current empty tab (confirm).
@@ -359,7 +361,7 @@ Architecture:
 - `Show window` raises and focuses the PaneWindow. `Bring back` reparents the PaneWidget into the slot and closes the PaneWindow. Closing the PaneWindow via its close control = Bring back (proposal; confirm).
 - Format from any window reads the Input pane and writes the Output pane wherever they live.
 - Splitter ratio is preserved across pop-out/bring back. Persist window geometry and splitter ratio per session (QSettings).
-- Triggers: pane pop-out button (tab strip right), tab context menu `Pop out into window`, Window menu (TBD).
+- Triggers: pane pop-out button (tab strip right), tab context menu `Pop out into window`, Window menu `Pop out into window` (§12).
 - Splitter: min pane width ~240 px (proposal); readout updates live, rounded to whole percent; swap button behavior TBD.
 
 ---
@@ -395,9 +397,9 @@ Architecture:
 
 ## 12. Platform-swappable layer
 
-Isolate behind a `platform` module with a macOS implementation now and a Windows one later:
-- **Menus**: macOS global menu bar with app menu (`Galley`; mocks showed `Formatter`; About/Preferences/Quit roles via `QAction.MenuRole`). Windows: in-window menu bar; same action objects.
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where possible; a table maps custom ones (§6). Display hints (`⌘↵` vs `Ctrl+Enter`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows; that binding is swappable per platform. Word Wrap keeps ⌥⌘W.
+Isolate behind a `platform` module for macOS and Windows:
+- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About, Preferences, and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All` (§5.4).
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
@@ -407,7 +409,7 @@ Isolate behind a `platform` module with a macOS implementation now and a Windows
 
 ## 13. What NOT to invent
 
-- No new brand elements: no logo, icon set, mascot, tagline, or extra colors beyond §2.
+- No new brand elements: no logo, icon set, mascot, tagline, or extra colors beyond §2. The empty state (6c) has no download icon.
 - Do not call the app macOS-native.
 - No `QDockWidget`; no tabs dragging into docks.
 - No percentage bar during the parse/read step (6m). Progress bar only while writing (6d).
@@ -416,7 +418,7 @@ Isolate behind a `platform` module with a macOS implementation now and a Windows
 - No re-indentation or custom JSON writer for Convert from Python; no code execution.
 - No guessing missing data in Repair (cut-off input, missing comma stay in Needs you).
 - No hard file-size limit; don't invent numeric performance bands.
-- Don't add File/Window/Help menu items, settings screens, onboarding, or themes (dark mode) not shown.
+- Don't add File or Help menu items, extra Window commands, settings screens, onboarding, or themes (dark mode) beyond this spec. The Window menu is only `Pop out into window`, `Show window`, and `Bring back`.
 - Don't rely on the older written summary (it is wrong about 6k, 6m, and docks).
 
 ---
@@ -431,8 +433,8 @@ Isolate behind a `platform` module with a macOS implementation now and a Windows
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#D7D3D3` is 4.53:1 (was 4.39:1).
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. Swap button (`⇆`) on the rail: swap pane positions, swap contents, or swap input/output formats?
-9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+W on Windows, swappable per platform.
-10. File, Window, Help menu contents.
+9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows.
+10. File and Help menu contents. Window is resolved: `Pop out into window`, `Show window`, `Bring back` (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
 12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.
 13. Performance bands and thresholds (wrap-off line length, colors-off size, when to show 6m) — TBD by benchmarks.

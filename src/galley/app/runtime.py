@@ -4,10 +4,10 @@ import multiprocessing
 
 
 def configure_runtime() -> None:
-    """Prepare a frozen spawn child for a future parser subprocess.
+    """Let a frozen executable re-enter this process.
 
-    ``freeze_support`` lets a PyInstaller build re-enter this process, and
-    ``spawn`` is the start method on every platform Galley will ship to.
+    Spawn children are created from ``multiprocessing.get_context("spawn")``.
+    This does not set the process-wide start method. ``set_start_method``
+    raises when one process calls it twice, including from tests.
     """
     multiprocessing.freeze_support()
-    multiprocessing.set_start_method("spawn")

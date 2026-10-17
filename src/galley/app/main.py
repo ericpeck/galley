@@ -4,20 +4,27 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 
+from galley.app.fonts import ui_font
+from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
 
 
 def create_main_window() -> QMainWindow:
-    """Return an empty main window titled Galley."""
-    window = QMainWindow()
-    window.setWindowTitle("Galley")
-    return window
+    """Return the Galley window in its empty state."""
+    return MainWindow()
 
 
 def main() -> int:
-    """Open one empty Galley window and run its event loop."""
+    """Open one Galley window and run its event loop."""
     configure_runtime()
     application = QApplication(sys.argv)
+    application.setApplicationName("Galley")
+    application.setApplicationDisplayName("Galley")
+    application.setFont(ui_font())
     window = create_main_window()
+    window.start_parse_worker()
     window.show()
-    return application.exec()
+    try:
+        return application.exec()
+    finally:
+        window.shutdown_parse_worker()
