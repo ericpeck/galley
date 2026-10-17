@@ -4,12 +4,17 @@ Generates nested documents in a temporary directory, times the format,
 validate, and convert callables that exist on this checkout, and writes a
 markdown table plus JSON. Generated inputs are deleted with the temp directory.
 
+YAML round-trip (``typ="rt"``) is timed here, including 0.05, 0.1, 0.25, and
+0.5 MB. A labeled comparison times ``typ="safe"`` with ``ruamel.yaml.clib``
+at 1, 5, and 10 MB. Neither path changes ``galley.core``.
+
     uv run python benchmarks/size_bench.py
 """
 
 import argparse
 import ctypes
 import gc
+import importlib.metadata
 import inspect
 import json
 import math
@@ -29,15 +34,17 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.main import CEmitter, CParser
 
 import galley.core
 from galley.core import format as core_format
 
 BYTES_PER_MB = 1024 * 1024
 DEFAULT_SIZES_MB = (1, 5, 10, 50, 100, 200)
-# Safe mode is a comparison with round-trip, not the UI cutoff. The ratio is
-# already visible at the small sizes, so larger safe-mode runs are not timed.
-SAFE_COMPARISON_SIZES_MB = frozenset({1, 5, 10})
+# Extra round-trip sizes so the 0.5 s and 2 s YAML bands can be interpolated.
+YAML_RT_EXTRA_SIZES_MB = (0.05, 0.1, 0.25, 0.5)
+# Benchmark-local safe+C comparison. Not galley.core.
+SAFE_C_SIZES_MB = frozenset({1, 5, 10})
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
 SAMPLE_INTERVAL_S = 0.01
@@ -181,7 +188,48 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         if operation.group == "format" and operation.source_format != "yaml":
             insert_at = index + 1
     ordered[insert_at:insert_at] = [round_trip, *safe_yaml]
-    return ordered, skipped
+    safe_c = Operation(
+        operation_id="yaml_safe_c",
+        group="format",
+        source_format="yaml",
+        fn=format_yaml_safe_c,
+        yaml_typ="safe-c",
+        cutoff_role="comparison",
+    )
+    # format_yaml stays in galley.core (typ="safe"). The timed comparison is
+    # the benchmark-local safe loader with the C extension, not that function.
+    timed = [
+        operation for operation in ordered if operation.operation_id != "format_yaml"
+    ]
+    scheduled: list[Operation] = []
+    for operation in timed:
+        if operation.operation_id == "yaml_round_trip":
+            scheduled.append(safe_c)
+        scheduled.append(operation)
+    if all(operation.operation_id != "yaml_safe_c" for operation in scheduled):
+        scheduled.append(safe_c)
+    return scheduled, skipped
+
+
+def format_yaml_safe_c(text: str) -> str:
+    """Load and dump YAML with ruamel safe mode and the C extension.
+
+    ``YAML(typ="safe")`` selects ``CParser`` and ``CEmitter`` when
+    ``ruamel.yaml.clib`` is installed. Round-trip mode never uses that
+    extension. This function is benchmark-only.
+    """
+    if CParser is None or CEmitter is None:
+        message = "ruamel.yaml.clib is not installed; the safe+C comparison needs it."
+        raise RuntimeError(message)
+    yaml = YAML(typ="safe", pure=False)
+    if yaml.Parser is not CParser or yaml.Emitter is not CEmitter:
+        message = "safe mode did not select the C parser and emitter."
+        raise RuntimeError(message)
+    yaml.default_flow_style = False
+    parsed = yaml.load(text)
+    buffer = StringIO()
+    yaml.dump(parsed, buffer)
+    return buffer.getvalue()
 
 
 def format_yaml_round_trip(text: str) -> str:
@@ -292,11 +340,52 @@ def _write_document(
     return count
 
 
+def ruamel_environment() -> dict[str, Any]:
+    """How this process loads YAML. No filesystem paths."""
+    try:
+        clib_version = importlib.metadata.version("ruamel.yaml.clib")
+    except importlib.metadata.PackageNotFoundError:
+        clib_version = None
+    return {
+        "core_format_yaml_typ": "safe",
+        "round_trip_typ": "rt",
+        "round_trip_pure_python": True,
+        "clib_distribution": "ruamel.yaml.clib",
+        "clib_installed": clib_version is not None,
+        "clib_version": clib_version,
+        "c_parser": CParser is not None,
+        "c_emitter": CEmitter is not None,
+    }
+
+
+def _sizes_for_operation(operation: Operation, requested: list[float]) -> list[float]:
+    """Sizes to time for one operation.
+
+    Round-trip adds the sub-megabyte grid so the 0.5 s and 2 s bands can be
+    interpolated. The safe+C comparison stays at 1, 5, and 10 MB.
+    """
+    if operation.operation_id == "yaml_round_trip":
+        return sorted({float(size) for size in (*requested, *YAML_RT_EXTRA_SIZES_MB)})
+    if operation.yaml_typ == "safe-c":
+        return sorted(
+            float(size) for size in requested if float(size) in SAFE_C_SIZES_MB
+        )
+    return [float(size) for size in requested]
+
+
+def _format_mb(size_mb: float) -> str:
+    return f"{float(size_mb):.4f}".rstrip("0").rstrip(".")
+
+
+def _target_bytes(size_mb: float) -> int:
+    return int(round(float(size_mb) * BYTES_PER_MB))
+
+
 def generate_files(
     directory: Path,
     source_format: str,
-    sizes_mb: tuple[int, ...] | list[int],
-) -> dict[int, tuple[Path, int]]:
+    sizes_mb: list[float],
+) -> dict[float, tuple[Path, int]]:
     if source_format == "json":
         suffix = ".json"
         header = JSON_HEADER
@@ -315,13 +404,13 @@ def generate_files(
         message = f"No synthetic generator for {source_format}."
         raise RuntimeError(message)
 
-    written: dict[int, tuple[Path, int]] = {}
+    written: dict[float, tuple[Path, int]] = {}
     for size_mb in sizes_mb:
-        path = directory / f"{size_mb}mb{suffix}"
-        print(f"generating {source_format} {size_mb} MB", file=sys.stderr)
+        path = directory / f"{_format_mb(size_mb)}mb{suffix}"
+        print(f"generating {source_format} {_format_mb(size_mb)} MB", file=sys.stderr)
         count = _write_document(
             path,
-            size_mb * BYTES_PER_MB,
+            _target_bytes(size_mb),
             header=header,
             separator=separator,
             footer_prefix=footer_prefix,
@@ -448,7 +537,7 @@ def _warmup(operation: Operation) -> None:
 def _measure_loaded(
     operation: Operation,
     text: str,
-    size_mb: int,
+    size_mb: float,
     runs: int,
     item_count: int,
 ) -> dict[str, Any]:
@@ -460,7 +549,7 @@ def _measure_loaded(
         elapsed, peak = _time_once(operation.fn, text)
         samples.append({"seconds": round(elapsed, 6), "peak_rss_bytes": peak})
         print(
-            f"{operation.operation_id} {size_mb} MB "
+            f"{operation.operation_id} {_format_mb(size_mb)} MB "
             f"run {run_index + 1}/{runs}: {elapsed:.4f} s",
             file=sys.stderr,
         )
@@ -474,7 +563,7 @@ def _measure_loaded(
         "group": operation.group,
         "source_format": operation.source_format,
         "size_mb": size_mb,
-        "size_bytes": size_mb * BYTES_PER_MB,
+        "size_bytes": _target_bytes(size_mb),
         "item_count": item_count,
         "runs": samples,
         "median_s": round(statistics.median(seconds), 6),
@@ -495,7 +584,7 @@ def _operation_meta(operation: Operation) -> dict[str, str | None]:
 
 def _error_row(
     operation: Operation,
-    size_mb: int,
+    size_mb: float,
     item_count: int,
     error: str,
 ) -> dict[str, Any]:
@@ -504,7 +593,7 @@ def _error_row(
         "group": operation.group,
         "source_format": operation.source_format,
         "size_mb": size_mb,
-        "size_bytes": size_mb * BYTES_PER_MB,
+        "size_bytes": _target_bytes(size_mb),
         "item_count": item_count,
         "error": error,
         **_operation_meta(operation),
@@ -514,7 +603,7 @@ def _error_row(
 def _measure_in_subprocess(
     operation: Operation,
     path: Path,
-    size_mb: int,
+    size_mb: float,
     runs: int,
     item_count: int,
 ) -> dict[str, Any]:
@@ -528,7 +617,7 @@ def _measure_in_subprocess(
             "--input-file",
             str(path),
             "--size-mb",
-            str(size_mb),
+            _format_mb(size_mb),
             "--runs",
             str(runs),
             "--item-count",
@@ -561,14 +650,15 @@ def _measure_in_subprocess(
             reason = str(payload["error"])
         return _error_row(operation, size_mb, item_count, reason)
     message = (
-        f"{operation.operation_id} {size_mb} MB worker exited {completed.returncode}"
+        f"{operation.operation_id} {_format_mb(size_mb)} MB "
+        f"worker exited {completed.returncode}"
     )
     raise RuntimeError(message)
 
 
 def measure_operation(
     operation: Operation,
-    files: dict[int, tuple[Path, int]],
+    files: dict[float, tuple[Path, int]],
     runs: int,
     on_row: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
@@ -583,7 +673,10 @@ def measure_operation(
                 "skipped after a smaller size ran out of memory",
             )
         else:
-            print(f"timing {operation.operation_id} {size_mb} MB", file=sys.stderr)
+            print(
+                f"timing {operation.operation_id} {_format_mb(size_mb)} MB",
+                file=sys.stderr,
+            )
             row = _measure_in_subprocess(operation, path, size_mb, runs, item_count)
             if row.get("error"):
                 blocked = True
@@ -596,7 +689,7 @@ def measure_operation(
 def run_worker(
     operation_id: str,
     input_file: Path,
-    size_mb: int,
+    size_mb: float,
     runs: int,
     item_count: int,
 ) -> int:
@@ -853,11 +946,16 @@ def _mb(num_bytes: int) -> str:
 def _cell_mb(value: object) -> str:
     if value is None:
         return "n/a"
-    return f"{float(value):.2f}"
+    number = float(value)
+    if number < 10:
+        return f"{number:.4f}".rstrip("0").rstrip(".")
+    return f"{number:.2f}"
 
 
 def render_markdown(report: dict[str, Any]) -> str:
     machine = report["machine"]
+    ruamel = report.get("ruamel") or {}
+    clib_state = "installed" if ruamel.get("clib_installed") else "not installed"
     lines = [
         "# Galley core file-size benchmark",
         "",
@@ -869,7 +967,10 @@ def render_markdown(report: dict[str, Any]) -> str:
     if machine.get("cpu_model"):
         lines.append(f"CPU: {machine['cpu_model']}.")
     if not machine["apple_silicon"]:
-        lines.append("These timings are not from an Apple Silicon macos-14 runner.")
+        lines.append(
+            "Provisional Linux x86 timings. The macos-14 run happens after "
+            "the workflow is on main."
+        )
     lines.extend(
         [
             "",
@@ -881,12 +982,16 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"The median is {report['runs']} runs. Peak RSS is the high "
                 "resident set during those runs (sampled from the process, and "
                 "`resource` ru_maxrss when the run sets a new high-water mark). "
-                "`format_json` and `format_yaml` are galley.core. "
-                '`format_yaml` uses ruamel `typ="safe"`. '
-                '`yaml_round_trip` is `YAML(typ="rt")` load and dump in this '
-                "script (ruamel's default; keeps comments and key order). "
-                "YAML UI cutoffs use round-trip. Safe mode is comparison only, "
-                "and only at 1, 5, and 10 MB."
+                "`format_json` is galley.core. "
+                '`galley.core.format_yaml` uses ruamel `typ="safe"`, '
+                "not round-trip. This script does not time that function. "
+                '`yaml_round_trip` is benchmark-local `YAML(typ="rt")`. '
+                "Round-trip is always pure Python. "
+                "It also times 0.05, 0.1, 0.25, and 0.5 MB. "
+                '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` '
+                "with the C extension, at 1, 5, and 10 MB. "
+                f"ruamel.yaml.clib is {clib_state}. "
+                "YAML UI cutoffs use round-trip."
             ),
             "",
             "## Results",
@@ -912,7 +1017,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.extend(["", "Sizes that did not finish:", ""])
         for row in failures:
             lines.append(
-                f"- `{row['operation_id']}` {row['size_mb']} MB: {row['error']}."
+                f"- `{row['operation_id']}` {_format_mb(row['size_mb'])} MB: "
+                f"{row['error']}."
             )
     lines.extend(["", "## UI cutoffs", ""])
     lines.append(
@@ -934,12 +1040,26 @@ def render_markdown(report: dict[str, Any]) -> str:
         cutoff for cutoff in report["cutoffs"] if cutoff.get("role") == "comparison"
     ]
     if comparisons:
-        lines.extend(["", "## Safe-mode comparison", ""])
+        lines.extend(["", "## Safe mode with the C extension", ""])
         lines.append(
-            '`format_yaml` (`typ="safe"`) is the core function on this checkout. '
-            "These sizes are not the UI bands."
+            '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` using '
+            "ruamel's C parser and emitter. These sizes are not the UI bands. "
+            "Round-trip does not use the C extension."
         )
         lines.extend(_cutoff_section(comparisons, lead_in=False))
+        ratio_rows = _rt_vs_safe_c_rows(report["measurements"])
+        if ratio_rows:
+            lines.extend(
+                [
+                    "",
+                    "Round-trip median divided by safe+C median (cost of round-trip):",
+                    "",
+                    *_markdown_table(
+                        ["Size (MB)", "Round-trip (s)", "Safe + C (s)", "Ratio"],
+                        ratio_rows,
+                    ),
+                ]
+            )
     if report["skipped"]:
         lines.extend(["", "## Not on this checkout", ""])
         for skipped in report["skipped"]:
@@ -951,9 +1071,39 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _rt_vs_safe_c_rows(measurements: list[dict[str, Any]]) -> list[list[str]]:
+    round_trip: dict[float, dict[str, Any]] = {}
+    safe_c: dict[float, dict[str, Any]] = {}
+    for row in measurements:
+        if "median_s" not in row:
+            continue
+        size = float(row["size_mb"])
+        if row["operation_id"] == "yaml_round_trip":
+            round_trip[size] = row
+        elif row["operation_id"] == "yaml_safe_c":
+            safe_c[size] = row
+    rows: list[list[str]] = []
+    for size in sorted(set(round_trip) & set(safe_c)):
+        rt_s = float(round_trip[size]["median_s"])
+        safe_s = float(safe_c[size]["median_s"])
+        if safe_s <= 0:
+            continue
+        rows.append(
+            [
+                _format_mb(size),
+                f"{rt_s:.4f}",
+                f"{safe_s:.4f}",
+                f"{rt_s / safe_s:.2f}x",
+            ]
+        )
+    return rows
+
+
 def _yaml_mode(row: dict[str, Any]) -> str:
     if row.get("yaml_typ") == "safe":
         return "safe"
+    if row.get("yaml_typ") == "safe-c":
+        return "safe + C"
     if row.get("yaml_typ") == "rt":
         return "round-trip"
     return "—"
@@ -1006,13 +1156,13 @@ def _cutoff_section(cutoffs: list[dict[str, Any]], *, lead_in: bool) -> list[str
 
 def _measurement_cells(row: dict[str, Any]) -> list[str]:
     mode = _yaml_mode(row)
-    size = str(row["size_mb"])
+    size = _format_mb(row["size_mb"])
     if "median_s" not in row:
         return [row["operation_id"], mode, size, "n/a", "n/a", "n/a", "n/a"]
     return [
         row["operation_id"],
         mode,
-        str(row["size_mb"]),
+        size,
         f"{row['median_s']:.4f}",
         f"{row['min_s']:.4f}",
         f"{row['max_s']:.4f}",
@@ -1035,25 +1185,38 @@ def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def build_report(
-    sizes_mb: list[int],
+    sizes_mb: list[float],
     runs: int,
     output_dir: Path,
 ) -> dict[str, Any]:
     operations, skipped = discover_operations()
     if not operations:
         raise RuntimeError("galley.core has no format, validate, or convert functions.")
-    needed = sorted({operation.source_format for operation in operations})
+    requested = [float(size) for size in sizes_mb]
+    planned = {
+        operation.operation_id: _sizes_for_operation(operation, requested)
+        for operation in operations
+    }
+    by_format: dict[str, set[float]] = {}
+    for operation in operations:
+        by_format.setdefault(operation.source_format, set()).update(
+            planned[operation.operation_id]
+        )
     measurements: list[dict[str, Any]] = []
     machine = machine_info()
+    ruamel = ruamel_environment()
 
     def report_so_far() -> dict[str, Any]:
         return {
             "bytes_per_mb": BYTES_PER_MB,
-            "sizes_mb": sizes_mb,
+            "sizes_mb": requested,
+            "yaml_round_trip_extra_mb": list(YAML_RT_EXTRA_SIZES_MB),
+            "yaml_safe_c_mb": sorted(SAFE_C_SIZES_MB),
             "runs": runs,
             "memory_source": "rss",
             "isolated_process": True,
             "machine": machine,
+            "ruamel": ruamel,
             "measurements": measurements,
             "cutoffs": cutoffs_for(measurements),
             "skipped": skipped,
@@ -1065,23 +1228,18 @@ def build_report(
 
     with tempfile.TemporaryDirectory(prefix="galley-size-bench-") as temporary:
         root = Path(temporary)
-        generated: dict[str, dict[int, tuple[Path, int]]] = {}
-        for source_format in needed:
+        generated: dict[str, dict[float, tuple[Path, int]]] = {}
+        for source_format in sorted(by_format):
             generated[source_format] = generate_files(
                 root,
                 source_format,
-                sizes_mb,
+                sorted(by_format[source_format]),
             )
         for operation in operations:
-            files = generated[operation.source_format]
-            if operation.yaml_typ == "safe":
-                files = {
-                    size: item
-                    for size, item in files.items()
-                    if size in SAFE_COMPARISON_SIZES_MB
-                }
-            if not files:
+            wanted = planned[operation.operation_id]
+            if not wanted:
                 continue
+            files = {size: generated[operation.source_format][size] for size in wanted}
             print(f"timing {operation.operation_id}", file=sys.stderr)
             measure_operation(
                 operation,
@@ -1111,9 +1269,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--sizes",
-        type=int,
+        type=float,
         nargs="+",
-        default=list(DEFAULT_SIZES_MB),
+        default=[float(size) for size in DEFAULT_SIZES_MB],
         help="File sizes in MB (1 MB = 1,048,576 bytes).",
     )
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
@@ -1125,7 +1283,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--operation")
     parser.add_argument("--input-file", type=Path)
-    parser.add_argument("--size-mb", type=int)
+    parser.add_argument("--size-mb", type=float)
     parser.add_argument("--item-count", type=int)
     args = parser.parse_args(argv)
     if args.runs < 1:
@@ -1136,7 +1294,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         if args.size_mb is None or args.item_count is None:
             parser.error("--worker requires --size-mb and --item-count")
         return args
-    if any(size < 1 for size in args.sizes):
+    if any(size <= 0 for size in args.sizes):
         parser.error("--sizes values must be positive")
     return args
 
