@@ -49,4 +49,5 @@ select = ["E", "F", "I", "UP", "S102", "S307", "TID251"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 qt_api = "pyside6"
