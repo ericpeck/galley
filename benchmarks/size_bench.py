@@ -24,6 +24,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,10 @@ class Operation:
     group: str
     source_format: str
     fn: Callable[..., object]
+    yaml_typ: str | None = None
+    # "ui" sizes feed the spinner / progress-bar bands. "comparison" is reported
+    # beside them and is not the product cutoff.
+    cutoff_role: str = "ui"
 
 
 def _accepts_text(candidate: object) -> bool:
@@ -140,15 +145,55 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 }
             )
             continue
+        yaml_typ = "safe" if spec["operation_id"] == "format_yaml" else None
+        cutoff_role = "comparison" if yaml_typ == "safe" else "ui"
         found.append(
             Operation(
                 operation_id=spec["operation_id"],
                 group=spec["group"],
                 source_format=spec["source_format"],
                 fn=fn,
+                yaml_typ=yaml_typ,
+                cutoff_role=cutoff_role,
             )
         )
-    return found, skipped
+    round_trip = Operation(
+        operation_id="yaml_round_trip",
+        group="format",
+        source_format="yaml",
+        fn=format_yaml_round_trip,
+        yaml_typ="rt",
+        cutoff_role="ui",
+    )
+    ordered: list[Operation] = []
+    safe_yaml: list[Operation] = []
+    for operation in found:
+        if operation.yaml_typ == "safe":
+            safe_yaml.append(operation)
+        else:
+            ordered.append(operation)
+    # Round-trip is the product path, so time it before the safe-mode comparison.
+    insert_at = len(ordered)
+    for index, operation in enumerate(ordered):
+        if operation.group == "format" and operation.source_format != "yaml":
+            insert_at = index + 1
+    ordered[insert_at:insert_at] = [round_trip, *safe_yaml]
+    return ordered, skipped
+
+
+def format_yaml_round_trip(text: str) -> str:
+    """Load and dump YAML with ruamel round-trip mode.
+
+    ``YAML(typ="rt")`` is the default ``YAML()`` and keeps comments and key
+    order. The benchmark owns this path so ``galley.core.format_yaml`` can stay
+    on ``typ="safe"``.
+    """
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    parsed = yaml.load(text)
+    buffer = StringIO()
+    yaml.dump(parsed, buffer)
+    return buffer.getvalue()
 
 
 def _record(index: int) -> dict[str, Any]:
@@ -434,6 +479,14 @@ def _measure_loaded(
         "max_s": round(max(seconds), 6),
         "peak_rss_bytes": peak_bytes,
         "process_ru_maxrss_bytes": after_rss,
+        **_operation_meta(operation),
+    }
+
+
+def _operation_meta(operation: Operation) -> dict[str, str | None]:
+    return {
+        "yaml_typ": operation.yaml_typ,
+        "cutoff_role": operation.cutoff_role,
     }
 
 
@@ -451,6 +504,7 @@ def _error_row(
         "size_bytes": size_mb * BYTES_PER_MB,
         "item_count": item_count,
         "error": error,
+        **_operation_meta(operation),
     }
 
 
@@ -513,25 +567,26 @@ def measure_operation(
     operation: Operation,
     files: dict[int, tuple[Path, int]],
     runs: int,
+    on_row: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     blocked = False
     for size_mb, (path, item_count) in files.items():
         if blocked:
-            rows.append(
-                _error_row(
-                    operation,
-                    size_mb,
-                    item_count,
-                    "skipped after a smaller size ran out of memory",
-                )
+            row = _error_row(
+                operation,
+                size_mb,
+                item_count,
+                "skipped after a smaller size ran out of memory",
             )
-            continue
-        print(f"timing {operation.operation_id} {size_mb} MB", file=sys.stderr)
-        row = _measure_in_subprocess(operation, path, size_mb, runs, item_count)
+        else:
+            print(f"timing {operation.operation_id} {size_mb} MB", file=sys.stderr)
+            row = _measure_in_subprocess(operation, path, size_mb, runs, item_count)
+            if row.get("error"):
+                blocked = True
         rows.append(row)
-        if row.get("error"):
-            blocked = True
+        if on_row is not None:
+            on_row(row)
     return rows
 
 
@@ -726,22 +781,27 @@ def interpolate_cutoff(
 
 
 def cutoffs_for(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reports: list[dict[str, Any]] = []
-    format_rows: dict[str, list[dict[str, Any]]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if row["group"] != "format" or "median_s" not in row:
             continue
-        format_rows.setdefault(row["source_format"], []).append(row)
-    for source_format, measured in format_rows.items():
-        operation_id = measured[0]["operation_id"]
+        role = row.get("cutoff_role", "ui")
+        if role not in ("ui", "comparison"):
+            continue
+        grouped.setdefault(row["operation_id"], []).append(row)
+    reports: list[dict[str, Any]] = []
+    for measured in grouped.values():
+        sample = measured[0]
         points = [interpolate_cutoff(measured, target) for target in CUTOFF_SECONDS]
         by_target = {point["target_s"]: point for point in points}
         slow = by_target[0.5]
         progress = by_target[2.0]
         reports.append(
             {
-                "source_format": source_format,
-                "operation_id": operation_id,
+                "source_format": sample["source_format"],
+                "operation_id": sample["operation_id"],
+                "role": sample.get("cutoff_role", "ui"),
+                "yaml_typ": sample.get("yaml_typ"),
                 "no_indicator_below_s": 0.5,
                 "spinner_until_s": 2.0,
                 "progress_bar_from_s": 2.0,
@@ -813,11 +873,16 @@ def render_markdown(report: dict[str, Any]) -> str:
             (
                 "Each size is exact "
                 f"({report['bytes_per_mb']} bytes = 1 MB). "
-                "Each size runs in a fresh process. Times are wall time inside "
-                "the core function after the text is already in memory. "
+                "Each size runs in a fresh process. Times are wall time of one "
+                "load-and-dump after the text is already in memory. "
                 f"The median is {report['runs']} runs. Peak RSS is the high "
                 "resident set during those runs (sampled from the process, and "
-                "`resource` ru_maxrss when the run sets a new high-water mark)."
+                "`resource` ru_maxrss when the run sets a new high-water mark). "
+                "`format_json` and `format_yaml` are galley.core. "
+                '`format_yaml` uses ruamel `typ="safe"`. '
+                '`yaml_round_trip` is `YAML(typ="rt")` load and dump in this '
+                "script (ruamel's default; keeps comments and key order). "
+                "YAML UI cutoffs use round-trip. Safe mode is comparison only."
             ),
             "",
             "## Results",
@@ -826,6 +891,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     )
     headers = [
         "Operation",
+        "YAML mode",
         "Size (MB)",
         "Median (s)",
         "Min (s)",
@@ -847,47 +913,29 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## UI cutoffs", ""])
     lines.append(
         "Formatting time bands: under 0.5 s no indicator, "
-        "0.5 s to 2 s spinner only, over 2 s progress bar with Cancel."
+        "0.5 s to 2 s spinner only, over 2 s progress bar with Cancel. "
+        'YAML bands use round-trip (`typ="rt"`).'
     )
-    lines.append("")
-    cutoff_rows = []
-    for cutoff in report["cutoffs"]:
-        points = {point["target_s"]: point for point in cutoff["points"]}
-        cutoff_rows.append(
+    lines.extend(
+        _cutoff_section(
             [
-                cutoff["source_format"],
-                cutoff["operation_id"],
-                _cell_mb(cutoff["no_indicator_below_mb"]),
-                _cell_mb(cutoff["progress_bar_from_mb"]),
-                _basis(points[0.5]),
-                _basis(points[2.0]),
-            ]
+                cutoff
+                for cutoff in report["cutoffs"]
+                if cutoff.get("role", "ui") == "ui"
+            ],
+            lead_in=True,
         )
-    if cutoff_rows:
-        lines.extend(
-            _markdown_table(
-                [
-                    "Format",
-                    "Operation",
-                    "0.5 s (MB)",
-                    "2 s (MB)",
-                    "0.5 s basis",
-                    "2 s basis",
-                ],
-                cutoff_rows,
-            )
+    )
+    comparisons = [
+        cutoff for cutoff in report["cutoffs"] if cutoff.get("role") == "comparison"
+    ]
+    if comparisons:
+        lines.extend(["", "## Safe-mode comparison", ""])
+        lines.append(
+            '`format_yaml` (`typ="safe"`) is the core function on this checkout. '
+            "These sizes are not the UI bands."
         )
-        lines.append("")
-        for cutoff in report["cutoffs"]:
-            spinner = _cell_mb(cutoff["no_indicator_below_mb"])
-            progress = _cell_mb(cutoff["progress_bar_from_mb"])
-            lines.append(
-                f"- {cutoff['source_format']}: no indicator under {spinner} MB; "
-                f"spinner only from {spinner} MB up to {progress} MB; "
-                f"progress bar with Cancel at {progress} MB and above."
-            )
-    else:
-        lines.append("No format operation was available to interpolate.")
+        lines.extend(_cutoff_section(comparisons, lead_in=False))
     if report["skipped"]:
         lines.extend(["", "## Not on this checkout", ""])
         for skipped in report["skipped"]:
@@ -899,11 +947,67 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _yaml_mode(row: dict[str, Any]) -> str:
+    if row.get("yaml_typ") == "safe":
+        return "safe"
+    if row.get("yaml_typ") == "rt":
+        return "round-trip"
+    return "—"
+
+
+def _cutoff_section(cutoffs: list[dict[str, Any]], *, lead_in: bool) -> list[str]:
+    if not cutoffs:
+        if lead_in:
+            return ["", "No format operation was available to interpolate."]
+        return []
+    rows = []
+    for cutoff in cutoffs:
+        points = {point["target_s"]: point for point in cutoff["points"]}
+        rows.append(
+            [
+                cutoff["source_format"],
+                cutoff["operation_id"],
+                _cell_mb(cutoff["no_indicator_below_mb"]),
+                _cell_mb(cutoff["progress_bar_from_mb"]),
+                _basis(points[0.5]),
+                _basis(points[2.0]),
+            ]
+        )
+    lines = [
+        "",
+        *_markdown_table(
+            [
+                "Format",
+                "Operation",
+                "0.5 s (MB)",
+                "2 s (MB)",
+                "0.5 s basis",
+                "2 s basis",
+            ],
+            rows,
+        ),
+        "",
+    ]
+    for cutoff in cutoffs:
+        spinner = _cell_mb(cutoff["no_indicator_below_mb"])
+        progress = _cell_mb(cutoff["progress_bar_from_mb"])
+        lines.append(
+            f"- {cutoff['source_format']} (`{cutoff['operation_id']}`): "
+            f"no indicator under {spinner} MB; "
+            f"spinner only from {spinner} MB up to {progress} MB; "
+            f"progress bar with Cancel at {progress} MB and above."
+        )
+    return lines
+
+
 def _measurement_cells(row: dict[str, Any]) -> list[str]:
+    mode = _yaml_mode(row)
+    size = str(row["size_mb"])
     if "median_s" not in row:
-        return [row["operation_id"], str(row["size_mb"]), "n/a", "n/a", "n/a", "n/a"]
+        return [row["operation_id"], mode, size, "n/a", "n/a", "n/a", "n/a"]
     return [
         row["operation_id"],
+        mode,
         str(row["size_mb"]),
         f"{row['median_s']:.4f}",
         f"{row['min_s']:.4f}",
@@ -936,6 +1040,25 @@ def build_report(
         raise RuntimeError("galley.core has no format, validate, or convert functions.")
     needed = sorted({operation.source_format for operation in operations})
     measurements: list[dict[str, Any]] = []
+    machine = machine_info()
+
+    def report_so_far() -> dict[str, Any]:
+        return {
+            "bytes_per_mb": BYTES_PER_MB,
+            "sizes_mb": sizes_mb,
+            "runs": runs,
+            "memory_source": "rss",
+            "isolated_process": True,
+            "machine": machine,
+            "measurements": measurements,
+            "cutoffs": cutoffs_for(measurements),
+            "skipped": skipped,
+        }
+
+    def checkpoint(row: dict[str, Any]) -> None:
+        measurements.append(row)
+        _write_report(report_so_far(), output_dir, to_stdout=False)
+
     with tempfile.TemporaryDirectory(prefix="galley-size-bench-") as temporary:
         root = Path(temporary)
         generated: dict[str, dict[int, tuple[Path, int]]] = {}
@@ -947,24 +1070,18 @@ def build_report(
             )
         for operation in operations:
             print(f"timing {operation.operation_id}", file=sys.stderr)
-            measurements.extend(
-                measure_operation(
-                    operation,
-                    generated[operation.source_format],
-                    runs,
-                )
+            measure_operation(
+                operation,
+                generated[operation.source_format],
+                runs,
+                on_row=checkpoint,
             )
-    report = {
-        "bytes_per_mb": BYTES_PER_MB,
-        "sizes_mb": sizes_mb,
-        "runs": runs,
-        "memory_source": "rss",
-        "isolated_process": True,
-        "machine": machine_info(),
-        "measurements": measurements,
-        "cutoffs": cutoffs_for(measurements),
-        "skipped": skipped,
-    }
+    report = report_so_far()
+    _write_report(report, output_dir, to_stdout=True)
+    return report
+
+
+def _write_report(report: dict[str, Any], output_dir: Path, *, to_stdout: bool) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown = render_markdown(report)
     (output_dir / "size_bench.md").write_text(markdown, encoding="utf-8")
@@ -972,8 +1089,8 @@ def build_report(
         json.dumps(report, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(markdown, end="")
-    return report
+    if to_stdout:
+        print(markdown, end="")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
