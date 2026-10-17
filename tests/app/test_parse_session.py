@@ -190,14 +190,14 @@ def test_cancel_updates_the_window_before_the_worker_is_killed(
     assert output.toPlainText() == previous
 
 
-def test_reap_poll_does_not_block_or_spawn_over_a_live_child(
-    qtbot, tmp_path: Path
-) -> None:
+def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) -> None:
     session = ParseSession()
     path = tmp_path / ".galley-slow.tmp"
     path.write_text("pending", encoding="utf-8")
     extra = tmp_path / ".galley-later.tmp"
     joins: list[str] = []
+    failures: list[str] = []
+    session.failed.connect(failures.append)
 
     class _SlowExit:
         pid = 424242
@@ -211,7 +211,8 @@ def test_reap_poll_does_not_block_or_spawn_over_a_live_child(
             return
 
     try:
-        session._retired_process = _SlowExit()  # type: ignore[assignment]
+        slow = _SlowExit()
+        session._retired_process = slow  # type: ignore[assignment]
         session._temps_to_delete = [str(path)]
         session._reap_started_s = time.monotonic()
         for _ in range(5):
@@ -219,18 +220,22 @@ def test_reap_poll_does_not_block_or_spawn_over_a_live_child(
             assert session.process is None
             assert path.exists()
         assert joins == []
+        assert failures == []
         session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
         assert _tick_ms(session) < 100
-        assert session.process is None
+        assert session.process is not None
+        assert session.process.pid != 424242
+        replacement = session.process
         assert path.exists()
         assert str(path) in session._deferred_temps
         assert joins == []
-        session._retired_process.exitcode = -9  # type: ignore[attr-defined]
+        assert failures == []
+        slow.exitcode = -9
         session._poll()
         assert joins == []
+        assert failures == []
         assert not path.exists()
-        assert session.process is not None
-        assert session.process.pid != 424242
+        assert session.process is replacement
         assert session.reaped_pid == 424242
         assert session.reaped_exitcode == -9
         extra.write_text("later", encoding="utf-8")
@@ -240,6 +245,84 @@ def test_reap_poll_does_not_block_or_spawn_over_a_live_child(
         assert not extra.exists()
     finally:
         session.shutdown()
+
+
+def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
+    qtbot, tmp_path: Path
+) -> None:
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    try:
+        for _ in range(5):
+            rig.ticks.append(_tick_ms(session))
+            assert session.process is None
+            assert rig.status.text() == CANCELLED_MESSAGE
+        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        rig.ticks.append(_tick_ms(session))
+        for _ in range(3):
+            rig.ticks.append(_tick_ms(session))
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.output.toPlainText() == "previous output\n"
+        assert rig.destination.read_bytes() == rig.original
+        assert Path(rig.temp_path).exists()
+        assert str(rig.temp_path) in session._deferred_temps
+        replacement = session.process
+        assert replacement is not None
+        assert replacement.pid not in (None, rig.stuck.pid)
+        assert replacement.exitcode is None
+        assert rig.stuck.exitcode is None
+        assert not session.has_pending_job
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+    finally:
+        rig.window.shutdown_parse_worker()
+
+
+def test_format_during_reap_shows_the_crash_banner_and_runs(
+    qtbot, tmp_path: Path
+) -> None:
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    try:
+        rig.button.click()
+        session._timer.stop()
+        rig.window._reveal_timer.stop()
+        assert rig.window._formatting
+        assert session.has_pending_job
+        for _ in range(5):
+            rig.ticks.append(_tick_ms(session))
+            assert session.process is None
+            assert rig.status.text() == CANCELLED_MESSAGE
+            assert Path(rig.temp_path).exists()
+        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        rig.ticks.append(_tick_ms(session))
+        assert rig.status.text() == FORMATTER_STOPPED
+        lowered = rig.status.text().casefold()
+        assert "line" not in lowered
+        assert "column" not in lowered
+        replacement = session.process
+        assert replacement is not None
+        assert replacement.pid not in (None, rig.stuck.pid)
+        assert replacement.exitcode is None
+        assert not session.has_pending_job
+
+        def _formatted() -> bool:
+            rig.ticks.append(_tick_ms(session))
+            return rig.output.toPlainText() == '{\n  "a": 1\n}\n'
+
+        qtbot.waitUntil(_formatted, timeout=_SPAWN_TIMEOUT_MS)
+        assert rig.destination.read_bytes() == rig.original
+        assert Path(rig.temp_path).exists()
+        assert str(rig.temp_path) in session._deferred_temps
+        assert session.process is replacement
+        assert rig.stuck.exitcode is None
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+    finally:
+        rig.window.shutdown_parse_worker()
 
 
 def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None:
@@ -307,6 +390,99 @@ def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None
         _assert_reaped(crashed_pid)
     finally:
         window.shutdown_parse_worker()
+
+
+class _StuckCancel:
+    def __init__(
+        self,
+        destination: Path,
+        original: bytes,
+        window,
+        status: QLabel,
+        output: CodeEditor,
+        button: QPushButton,
+        joins: list[str],
+        ticks: list[float],
+        stuck: object,
+        temp_path: str,
+    ) -> None:
+        self.destination = destination
+        self.original = original
+        self.window = window
+        self.status = status
+        self.output = output
+        self.button = button
+        self.joins = joins
+        self.ticks = ticks
+        self.stuck = stuck
+        self.temp_path = temp_path
+
+
+def _stuck_cancel(qtbot, tmp_path: Path) -> _StuckCancel:
+    """Cancel a job whose worker never sets ``exitcode``."""
+    destination, original = _original_file(tmp_path)
+    window = _show(qtbot)
+    session = window._session
+    editor = window.findChild(CodeEditor, "inputEditor")
+    output = window.findChild(CodeEditor, "outputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    button = window.findChild(QPushButton, "formatButton")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
+    assert isinstance(status, QLabel)
+    assert isinstance(button, QPushButton)
+    assert isinstance(cancel, QPushButton)
+    previous = "previous output\n"
+    output.setPlainText(previous)
+    editor.setPlainText('{"a": 1}')
+    joins: list[str] = []
+
+    class _NeverExits:
+        pid = 515151
+
+        @property
+        def exitcode(self) -> None:
+            return None
+
+        def join(self, timeout: float | None = None) -> None:
+            joins.append("join")
+            time.sleep(0.3)
+
+        def kill(self) -> None:
+            return
+
+    stuck = _NeverExits()
+    session._process = stuck  # type: ignore[assignment]
+    session.submit(
+        '{"keep": true}',
+        "json",
+        "json",
+        destination=str(destination),
+    )
+    temp_path = session.last_temp_path
+    assert temp_path is not None
+    assert Path(temp_path).exists()
+    window._formatting = True
+    window._output_before_format = previous
+    cancel.show()
+    cancel.click()
+    session._timer.stop()
+    assert status.text() == CANCELLED_MESSAGE
+    assert session.process is None
+    assert str(temp_path) in session._temps_to_delete
+    return _StuckCancel(
+        destination,
+        original,
+        window,
+        status,
+        output,
+        button,
+        joins,
+        [],
+        stuck,
+        temp_path,
+    )
 
 
 def _tick_ms(session: ParseSession) -> float:
