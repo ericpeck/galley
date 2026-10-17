@@ -545,6 +545,13 @@ class MainWindow(QMainWindow):
     def _on_format_failed(self, message: str) -> None:
         if not self._formatting:
             return
+        # Format was pressed while a cancelled worker was still being reaped.
+        # The banner answers that press. The job is sent to the replacement
+        # and still owns this format, so a later success can replace the banner.
+        if self._session.has_pending_job:
+            self._reveal_timer.stop()
+            self._status_message.setText(message)
+            return
         self._finish_format(message)
 
     def _finish_format(self, status: str) -> None:

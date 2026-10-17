@@ -4,9 +4,10 @@ Cancel updates no widgets itself. The window changes the UI, then calls
 :meth:`ParseSession.cancel`, which kills the child and does not join it.
 The poll timer reads ``exitcode`` and does not join. Once the child has
 exited, its temp file is deleted and a replacement starts with new queues.
-If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll shows
-the crash banner and starts that replacement anyway. The temp path stays
-queued for shutdown.
+If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll starts
+that replacement without changing the Cancelled status. A Format press that
+is still waiting is answered with the crash banner, and that job is then
+sent to the new worker. The temp path stays queued for shutdown.
 """
 
 import atexit
@@ -34,9 +35,8 @@ from galley.core.worker import (
 _POLL_MS = 30
 _KILL_JOIN_S = 5.0
 
-# How long a retired child may stay alive before the poll shows the crash
-# banner, starts a replacement, and leaves the temp for shutdown.
-# The poll never joins.
+# How long a retired child may stay alive before the poll starts a
+# replacement and leaves the temp for shutdown. The poll never joins.
 REAP_DEADLINE_MS = 5000
 
 
@@ -174,6 +174,11 @@ class ParseSession(QObject):
         return self._reaped_process
 
     @property
+    def has_pending_job(self) -> bool:
+        """True when Format was pressed and the job has not been sent yet."""
+        return self._pending is not None
+
+    @property
     def phase(self) -> str:
         if self._active is None:
             return "idle"
@@ -253,8 +258,10 @@ class ParseSession(QObject):
         new ones. The temp file is removed once ``exitcode`` is set, so
         Windows can delete a file the worker still had open. This method
         does not wait. A child still alive after :data:`REAP_DEADLINE_MS`
-        keeps that path for shutdown. The poll then shows the crash banner
-        and starts a replacement without joining.
+        keeps that path for shutdown. The poll starts a replacement without
+        joining and leaves the Cancelled status in place. A Format press
+        that is still waiting gets the crash banner, then runs on that
+        replacement.
         """
         if self._shut_down or self._active is None:
             return
@@ -358,8 +365,8 @@ class ParseSession(QObject):
         """Watch the killed child. Never join.
 
         A child that is still alive after :data:`REAP_DEADLINE_MS` keeps
-        its temp for shutdown. The crash banner is reported and a
-        replacement starts on that same tick.
+        its temp for shutdown, and a replacement starts on that same tick.
+        The Cancelled status is left alone unless Format is still waiting.
         """
         process = self._retired_process
         if process is None:
@@ -378,22 +385,29 @@ class ParseSession(QObject):
         self._flush_pending()
 
     def _abandon_live_worker(self) -> None:
-        """Give up on a killed child that is still alive after the deadline.
+        """Start a replacement once the reap deadline passes.
 
-        Show :data:`FORMATTER_STOPPED` and start a replacement. The child
-        stays retired until ``exitcode`` is set, and its temp stays queued.
-        This does not join.
+        Cancel is the only kill, so this stays quiet and leaves the
+        Cancelled status alone. A Format press that arrived during the
+        wait would otherwise get no response: report
+        :data:`FORMATTER_STOPPED`, then send that job to the new worker.
+        The child stays retired until ``exitcode`` is set, and its temp
+        stays queued. This does not join.
         """
         if self._reap_abandoned:
             return
         self._reap_abandoned = True
-        self._active = None
-        self._pending = None
+        waiting = self._pending is not None
         if self._closing or self._shut_down:
+            self._active = None
+            self._pending = None
             return
-        self.failed.emit(FORMATTER_STOPPED)
+        if waiting:
+            self.failed.emit(FORMATTER_STOPPED)
         if self._process is None:
             self._spawn()
+        if waiting:
+            self._flush_pending()
 
     def _defer_temps_if_due(self) -> None:
         if self._temps_deferred:
