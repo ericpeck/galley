@@ -543,6 +543,117 @@ def test_second_cancel_after_deadline_keeps_each_child_temp(
         rig.window.shutdown_parse_worker()
 
 
+def test_format_after_second_cancel_past_deadline_stays_quiet(
+    qtbot, tmp_path: Path
+) -> None:
+    """Format right after a second cancel does not announce an earlier reap.
+
+    The first worker is already past ``REAP_DEADLINE_MS``. The second has
+    just been cancelled. Format then runs on the replacement. The user did
+    not wait on a worker that died, so the crash banner stays hidden.
+    """
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    cancel = rig.window.findChild(QPushButton, "cancelButton")
+    editor = rig.window.findChild(CodeEditor, "inputEditor")
+    assert isinstance(cancel, QPushButton)
+    assert isinstance(editor, CodeEditor)
+    real_spawn = session._spawn
+
+    class _Stuck:
+        def __init__(self) -> None:
+            self.pid = 626262
+            self.exitcode: int | None = None
+
+        def join(self, timeout: float | None = None) -> None:
+            rig.joins.append("join")
+            time.sleep(0.3)
+
+        def kill(self) -> None:
+            return
+
+    def _spawn_stuck() -> None:
+        job_queue: parse_session_module.Queue = session._ctx.Queue()
+        event_queue: parse_session_module.Queue = session._ctx.Queue()
+        process = _Stuck()
+        queues = [job_queue, event_queue]
+        resource = parse_session_module._RunningWorker(process, queues)  # type: ignore[arg-type]
+        parse_session_module._LIVE_WORKERS.append(resource)
+        parse_session_module._arm_exit_cleanup()
+        session._job_queue = job_queue
+        session._event_queue = event_queue
+        session._process = process  # type: ignore[assignment]
+        session._resource = resource
+
+    session._spawn = _spawn_stuck  # type: ignore[method-assign]
+    try:
+        _expire_reap(session)
+        rig.ticks.append(_tick_ms(session))
+        child2 = session.process
+        assert child2 is not None
+        assert child2 is not rig.stuck
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert _elapsed_ms(session._retired[0].started_s) >= REAP_DEADLINE_MS
+
+        editor.setPlainText('{"b": 2}')
+        rig.button.click()
+        session._timer.stop()
+        rig.window._reveal_timer.stop()
+        assert session.process is child2
+        assert not session.has_pending_job
+        cancel.show()
+        cancel.click()
+        session._timer.stop()
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.button.isEnabled()
+        assert session.process is None
+        assert len(session._retired) == 2
+        assert session._retired[0].process is rig.stuck
+        assert session._retired[1].process is child2
+        assert _elapsed_ms(session._retired[0].started_s) >= REAP_DEADLINE_MS
+        assert _elapsed_ms(session._retired[1].started_s) < REAP_DEADLINE_MS
+
+        session._spawn = real_spawn  # type: ignore[method-assign]
+        failures: list[str] = []
+        session.failed.connect(failures.append)
+        editor.setPlainText('{"c": 3}')
+        rig.button.click()
+        session._timer.stop()
+        rig.window._reveal_timer.stop()
+        assert rig.window._formatting
+        assert session.has_pending_job
+        rig.ticks.append(_tick_ms(session))
+
+        assert FORMATTER_STOPPED not in failures
+        assert FORMATTER_STOPPED not in rig.status.text()
+        replacement = session.process
+        assert replacement is not None
+        assert replacement is not rig.stuck
+        assert replacement is not child2
+        assert replacement.pid not in (None, rig.stuck.pid, child2.pid)
+        assert replacement.exitcode is None
+        assert not session.has_pending_job
+        expected = format_json('{"c": 3}')
+
+        def _formatted() -> bool:
+            rig.ticks.append(_tick_ms(session))
+            return rig.output.toPlainText() == expected
+
+        qtbot.waitUntil(_formatted, timeout=_SPAWN_TIMEOUT_MS)
+        assert session.process is replacement
+        assert session.process.exitcode is None
+        assert FORMATTER_STOPPED not in failures
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.output.toPlainText() == expected
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+    finally:
+        rig.window.shutdown_parse_worker()
+
+
 def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None:
     destination, original = _original_file(tmp_path)
     window = _show(qtbot)
@@ -713,6 +824,10 @@ def _queued_temps(session: ParseSession) -> list[str]:
 def _expire_reap(session: ParseSession) -> None:
     overdue_s = (REAP_DEADLINE_MS + 1000) / 1000
     session._retired[0].started_s = time.monotonic() - overdue_s
+
+
+def _elapsed_ms(started_s: float) -> float:
+    return (time.monotonic() - started_s) * 1000
 
 
 def _within_reap_deadline(session: ParseSession) -> bool:

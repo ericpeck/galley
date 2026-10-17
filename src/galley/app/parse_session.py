@@ -6,11 +6,13 @@ The poll timer reads ``exitcode`` and does not join. Once the child has
 exited, its temp file is deleted and a replacement starts with new queues.
 If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll starts
 that replacement without changing the Cancelled status. A Format press that
-is still waiting is answered with the crash banner, and that job is then
-sent to the new worker. Cancelling that job retires the replacement beside
-any child still being reaped. Each retired child keeps its own process,
-queues, reap clock, and temp paths. The poll reads ``exitcode`` and does
-not join. When one child exits, only that child's temps are deleted.
+had to wait for that deadline is answered with the crash banner, and that
+job is then sent to the new worker. A Format press made after a deadline
+has already passed runs on the replacement and stays quiet. Cancelling that
+job retires the replacement beside any child still being reaped. Each
+retired child keeps its own process, queues, reap clock, and temp paths.
+The poll reads ``exitcode`` and does not join. When one child exits, only
+that child's temps are deleted.
 """
 
 import atexit
@@ -171,6 +173,7 @@ class ParseSession(QObject):
         self._resource: _RunningWorker | None = None
         self._active: _Active | None = None
         self._pending: FormatJob | None = None
+        self._report_abandoned_reap = False
         self._job_ids = 0
         self._closing = False
         self._shut_down = False
@@ -268,6 +271,7 @@ class ParseSession(QObject):
         self._active = active
         self.last_temp_path = temp_path
         self._pending = job
+        self._report_abandoned_reap = self._format_is_waiting_out_a_deadline()
         if self._process is None and not self._retired:
             self.start()
         self._flush_pending()
@@ -292,6 +296,7 @@ class ParseSession(QObject):
             self.last_temp_path = temp_path
         self._active = None
         self._pending = None
+        self._report_abandoned_reap = False
         process = self._process
         if process is None:
             self._release_unsent_temp(temp_path)
@@ -316,6 +321,7 @@ class ParseSession(QObject):
         temp_path = self._active.temp_path if self._active is not None else None
         self._active = None
         self._pending = None
+        self._report_abandoned_reap = False
         if self._process is not None:
             owned = temp_path if not self._temp_is_queued(temp_path) else None
             self._retire_current(owned)
@@ -371,7 +377,8 @@ class ParseSession(QObject):
         A child that exits loses only its own temps. A child that is still
         alive after :data:`REAP_DEADLINE_MS` keeps those temps, and one
         replacement starts if the session does not already have one. The
-        Cancelled status is left alone unless Format is still waiting.
+        Cancelled status is left alone unless Format had to wait out that
+        deadline.
         """
         for entry in list(self._retired):
             if entry not in self._retired:
@@ -388,10 +395,13 @@ class ParseSession(QObject):
         """Start one replacement once any reap deadline has passed.
 
         Cancel is the only kill, so a quiet deadline leaves the Cancelled
-        status alone. A Format press that is still waiting would otherwise
-        get no response: report :data:`FORMATTER_STOPPED`, then send that
-        job to the new worker. Retired children stay in the list until
-        their own ``exitcode`` is set. This does not join.
+        status alone. A Format press that had to wait out a deadline would
+        otherwise get no response: report :data:`FORMATTER_STOPPED`, then
+        send that job to the new worker. A press made when a child is
+        already past :data:`REAP_DEADLINE_MS` did not wait, so it stays
+        quiet even if another child was just cancelled. Retired children
+        stay in the list until their own ``exitcode`` is set. This does
+        not join.
         """
         if self._process is not None:
             return
@@ -400,7 +410,7 @@ class ParseSession(QObject):
             self._active = None
             self._pending = None
             return
-        if waiting:
+        if waiting and self._report_abandoned_reap:
             self.failed.emit(FORMATTER_STOPPED)
         self._spawn()
         if waiting:
@@ -428,6 +438,20 @@ class ParseSession(QObject):
             and _elapsed_ms(entry.started_s) < REAP_DEADLINE_MS
             for entry in self._retired
         )
+
+    def _format_is_waiting_out_a_deadline(self) -> bool:
+        """True when this Format must wait for a live child to pass its deadline.
+
+        The crash banner answers that wait. A child already past
+        :data:`REAP_DEADLINE_MS` is replaced on the next poll, so pressing
+        Format then did not wait and stays quiet.
+        """
+        if self._process is not None:
+            return False
+        live = [entry for entry in self._retired if entry.process.exitcode is None]
+        if not live:
+            return False
+        return all(_elapsed_ms(entry.started_s) < REAP_DEADLINE_MS for entry in live)
 
     def _replace_dead_worker(self) -> None:
         """Respawn when the current child has exited, including while idle.
