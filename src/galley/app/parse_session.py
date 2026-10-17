@@ -2,9 +2,11 @@
 
 Cancel updates no widgets itself. The window changes the UI, then calls
 :meth:`ParseSession.cancel`, which kills the child and does not join it.
-The poll timer reads ``exitcode``. Once the child has exited, its temp file
-is deleted and a replacement starts with new queues. The poll does not join,
-and it does not start that replacement while the old child is still alive.
+The poll timer reads ``exitcode`` and does not join. Once the child has
+exited, its temp file is deleted and a replacement starts with new queues.
+If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll shows
+the crash banner and starts that replacement anyway. The temp path stays
+queued for shutdown.
 """
 
 import atexit
@@ -32,8 +34,9 @@ from galley.core.worker import (
 _POLL_MS = 30
 _KILL_JOIN_S = 5.0
 
-# How long a retired child may stay alive before its temp is left for shutdown.
-# The poll never joins; this only decides when the path is remembered.
+# How long a retired child may stay alive before the poll shows the crash
+# banner, starts a replacement, and leaves the temp for shutdown.
+# The poll never joins.
 REAP_DEADLINE_MS = 5000
 
 
@@ -146,6 +149,7 @@ class ParseSession(QObject):
         self._deferred_temps: list[str] = []
         self._temps_deferred = False
         self._reap_started_s = 0.0
+        self._reap_abandoned = False
         self._job_ids = 0
         self._closing = False
         self._shut_down = False
@@ -249,7 +253,8 @@ class ParseSession(QObject):
         new ones. The temp file is removed once ``exitcode`` is set, so
         Windows can delete a file the worker still had open. This method
         does not wait. A child still alive after :data:`REAP_DEADLINE_MS`
-        keeps that path for shutdown.
+        keeps that path for shutdown. The poll then shows the crash banner
+        and starts a replacement without joining.
         """
         if self._shut_down or self._active is None:
             return
@@ -266,6 +271,7 @@ class ParseSession(QObject):
         _kill(process)
         self._reap_started_s = time.monotonic()
         self._temps_deferred = False
+        self._reap_abandoned = False
         if not self._timer.isActive():
             self._timer.start()
 
@@ -330,7 +336,7 @@ class ParseSession(QObject):
         if (
             job is None
             or queue is None
-            or self._retired_process is not None
+            or (self._retired_process is not None and not self._reap_abandoned)
             or self._active is None
             or self._active.job_id != job.job_id
         ):
@@ -343,23 +349,51 @@ class ParseSession(QObject):
             return
         if self._retired_process is not None:
             self._poll_retired()
+        if self._shut_down:
             return
         self._drain()
         self._replace_dead_worker()
 
     def _poll_retired(self) -> None:
-        """Watch the killed child. Never join, and never spawn over it."""
+        """Watch the killed child. Never join.
+
+        A child that is still alive after :data:`REAP_DEADLINE_MS` keeps
+        its temp for shutdown. The crash banner is reported and a
+        replacement starts on that same tick.
+        """
         process = self._retired_process
         if process is None:
             return
         if process.exitcode is None:
+            if _elapsed_ms(self._reap_started_s) < REAP_DEADLINE_MS:
+                return
             self._defer_temps_if_due()
+            self._abandon_live_worker()
             return
+        already_replaced = self._reap_abandoned and self._process is not None
         self._finish_retired()
-        if self._closing or self._shut_down:
+        if self._closing or self._shut_down or already_replaced:
             return
         self._spawn()
         self._flush_pending()
+
+    def _abandon_live_worker(self) -> None:
+        """Give up on a killed child that is still alive after the deadline.
+
+        Show :data:`FORMATTER_STOPPED` and start a replacement. The child
+        stays retired until ``exitcode`` is set, and its temp stays queued.
+        This does not join.
+        """
+        if self._reap_abandoned:
+            return
+        self._reap_abandoned = True
+        self._active = None
+        self._pending = None
+        if self._closing or self._shut_down:
+            return
+        self.failed.emit(FORMATTER_STOPPED)
+        if self._process is None:
+            self._spawn()
 
     def _defer_temps_if_due(self) -> None:
         if self._temps_deferred:
@@ -389,6 +423,7 @@ class ParseSession(QObject):
         self._dispose_queue(self._abandoned_event_queue)
         self._abandoned_job_queue = None
         self._abandoned_event_queue = None
+        self._reap_abandoned = False
 
     def _replace_dead_worker(self) -> None:
         """Respawn when the current child has exited, including while idle.
