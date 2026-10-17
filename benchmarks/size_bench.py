@@ -3,13 +3,21 @@
 Generates nested documents in a temporary directory, times the format,
 validate, and convert callables that exist on this checkout, and writes a
 markdown table plus JSON. Generated inputs are deleted with the temp directory.
+Both result files are rewritten after every completed size, including the
+cutoff summary computed from the rows so far.
 
 ``format_yaml`` is timed as shipped: ruamel ``typ="safe"``, pure Python, in a
 process where ``ruamel.yaml.clib`` is not importable. YAML UI cutoffs use that
 row. Round-trip and safe+C are labeled comparisons. Each call reports load and
 dump wall time. Nothing here changes ``galley.core``.
 
+Default ladders keep a three-run macos-14 job near 20 minutes. JSON is
+1, 5, 10, 50, and 100 MB. Shipped YAML, round-trip, and safe+C are
+0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. ``--sizes`` replaces those ladders
+for every row, including sizes above the caps.
+
     uv run python benchmarks/size_bench.py
+    uv run python benchmarks/size_bench.py --sizes 1 5 10 50 100 200
     uv run --with ruamel.yaml.clib==0.2.15 python benchmarks/size_bench.py
 """
 
@@ -43,12 +51,14 @@ import galley.core
 from galley.core import format as core_format
 
 BYTES_PER_MB = 1024 * 1024
-DEFAULT_SIZES_MB = (1, 5, 10, 50, 100, 200)
-# Fine sizes so shipped format_yaml can interpolate the 0.5 s and 2 s bands.
-# Round-trip uses the same grid and stays a comparison.
-YAML_RT_EXTRA_SIZES_MB = (0.05, 0.1, 0.25, 0.5)
-# Benchmark-local safe+C comparison. Not galley.core.
-SAFE_C_SIZES_MB = frozenset({1, 5, 10})
+# Default ladders. `--sizes` replaces them for every operation.
+# JSON stays through 100 MB: on macos-14 that was about 32 s per run, while
+# 200 MB was about 64 s and is not needed for the 0.5 s / 2 s bands.
+DEFAULT_JSON_SIZES_MB = (1, 5, 10, 50, 100)
+# Capped at 10 MB. The 50/100/200 MB pure-Python points dominated the macOS job.
+DEFAULT_YAML_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5, 10)
+# Same grid as pure-Python YAML so the 0.5 s and 2 s bands can be interpolated.
+DEFAULT_SAFE_C_SIZES_MB = DEFAULT_YAML_SIZES_MB
 # Pinned so later safe+C runs stay comparable. Not a project dependency.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 DEFAULT_RUNS = 3
@@ -490,20 +500,29 @@ def ruamel_environment() -> dict[str, Any]:
     }
 
 
-def _sizes_for_operation(operation: Operation, requested: list[float]) -> list[float]:
+def _default_sizes(operation: Operation) -> tuple[float, ...]:
+    if operation.source_format == "json":
+        return DEFAULT_JSON_SIZES_MB
+    if operation.yaml_typ == "safe-c":
+        return DEFAULT_SAFE_C_SIZES_MB
+    if operation.source_format == "yaml":
+        return DEFAULT_YAML_SIZES_MB
+    return DEFAULT_JSON_SIZES_MB
+
+
+def _sizes_for_operation(
+    operation: Operation,
+    requested: list[float] | None,
+) -> list[float]:
     """Sizes to time for one operation.
 
-    Shipped ``format_yaml`` and round-trip share the sub-megabyte grid so the
-    0.5 s and 2 s bands can be interpolated from the shipped row. The safe+C
-    comparison stays at 1, 5, and 10 MB.
+    With no ``--sizes``, each operation uses its default ladder. An explicit
+    list is used for every operation, including sizes above those defaults,
+    sorted so a larger file is skipped after a smaller one runs out of memory.
     """
-    if operation.operation_id in {"format_yaml", "yaml_round_trip"}:
-        return sorted({float(size) for size in (*requested, *YAML_RT_EXTRA_SIZES_MB)})
-    if operation.yaml_typ == "safe-c":
-        return sorted(
-            float(size) for size in requested if float(size) in SAFE_C_SIZES_MB
-        )
-    return [float(size) for size in requested]
+    if requested is None:
+        return [float(size) for size in _default_sizes(operation)]
+    return sorted(float(size) for size in requested)
 
 
 def _format_mb(size_mb: float) -> str:
@@ -1208,12 +1227,14 @@ def render_markdown(report: dict[str, Any]) -> str:
                 '`format_yaml` is ruamel `typ="safe"` as shipped, pure Python, '
                 "in a process where `ruamel.yaml.clib` is not importable. "
                 "YAML UI cutoffs use that row. "
-                "It uses the same sizes as round-trip, "
-                "including 0.05, 0.1, 0.25, and 0.5 MB. "
+                "Default JSON sizes are 1, 5, 10, 50, and 100 MB. "
+                "Default shipped YAML, round-trip, and safe+C sizes are "
+                "0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. "
+                "`--sizes` replaces those ladders for every row. "
                 '`yaml_round_trip` is benchmark-local `YAML(typ="rt")`, '
                 "always pure Python, and is a comparison. "
                 '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` with '
-                f"`{RUAMEL_CLIB_SPEC}`, at 1, 5, and 10 MB, and is a comparison. "
+                f"`{RUAMEL_CLIB_SPEC}` and is a comparison. "
                 f"In this parent process ruamel.yaml.clib is {clib_state}."
             ),
             "",
@@ -1416,14 +1437,14 @@ def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def build_report(
-    sizes_mb: list[float],
+    sizes_mb: list[float] | None,
     runs: int,
     output_dir: Path,
 ) -> dict[str, Any]:
     operations, skipped = discover_operations()
     if not operations:
         raise RuntimeError("galley.core has no format, validate, or convert functions.")
-    requested = [float(size) for size in sizes_mb]
+    requested = None if sizes_mb is None else [float(size) for size in sizes_mb]
     planned = {
         operation.operation_id: _sizes_for_operation(operation, requested)
         for operation in operations
@@ -1441,8 +1462,7 @@ def build_report(
         return {
             "bytes_per_mb": BYTES_PER_MB,
             "sizes_mb": requested,
-            "yaml_round_trip_extra_mb": list(YAML_RT_EXTRA_SIZES_MB),
-            "yaml_safe_c_mb": sorted(SAFE_C_SIZES_MB),
+            "ladders_mb": planned,
             "runs": runs,
             "memory_source": "rss",
             "isolated_process": True,
@@ -1454,6 +1474,7 @@ def build_report(
         }
 
     def checkpoint(row: dict[str, Any]) -> None:
+        # Rewrite both result files after every size, before the next one starts.
         measurements.append(row)
         _write_report(report_so_far(), output_dir, to_stdout=False)
 
@@ -1483,14 +1504,34 @@ def build_report(
     return report
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    temporary = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temporary_path = Path(temporary.name)
+    try:
+        temporary.write(text)
+        temporary.flush()
+        os.fsync(temporary.fileno())
+        temporary.close()
+        os.replace(temporary_path, path)
+    except Exception:
+        temporary.close()
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def _write_report(report: dict[str, Any], output_dir: Path, *, to_stdout: bool) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown = render_markdown(report)
-    (output_dir / "size_bench.md").write_text(markdown, encoding="utf-8")
-    (output_dir / "size_bench.json").write_text(
-        json.dumps(report, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    payload = json.dumps(report, indent=2) + "\n"
+    _atomic_write(output_dir / "size_bench.md", markdown)
+    _atomic_write(output_dir / "size_bench.json", payload)
     if to_stdout:
         print(markdown, end="")
 
@@ -1502,8 +1543,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--sizes",
         type=float,
         nargs="+",
-        default=[float(size) for size in DEFAULT_SIZES_MB],
-        help="File sizes in MB (1 MB = 1,048,576 bytes).",
+        default=None,
+        help=(
+            "File sizes in MB (1 MB = 1,048,576 bytes) for every row. "
+            "Omit to use the default ladders: JSON 1, 5, 10, 50, 100; "
+            "shipped YAML, round-trip, and safe+C "
+            "0.05, 0.1, 0.25, 0.5, 1, 5, 10. "
+            "Sizes above those caps are timed when passed here."
+        ),
     )
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
     parser.add_argument(
@@ -1525,7 +1572,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         if args.size_mb is None or args.item_count is None:
             parser.error("--worker requires --size-mb and --item-count")
         return args
-    if any(size <= 0 for size in args.sizes):
+    if args.sizes is not None and any(size <= 0 for size in args.sizes):
         parser.error("--sizes values must be positive")
     return args
 
