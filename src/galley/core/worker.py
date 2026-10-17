@@ -19,6 +19,11 @@ TEMP_SUFFIX = ".tmp"
 FAULT_AFTER_TEMP = "after-temp"
 _KNOWN_FAULTS = frozenset({None, FAULT_AFTER_TEMP})
 
+# Placeholders until Isaac's benchmark (ADR 0001, UI spec §10). Not tuned.
+# Chunk size and how often a write-progress event is sent can change separately.
+WRITE_CHUNK_SIZE = 65_536
+WRITE_PROGRESS_EVERY_CHUNKS = 1
+
 
 @dataclass(frozen=True)
 class FormatJob:
@@ -30,7 +35,7 @@ class FormatJob:
     target: str
     destination: str | None = None
     temp_path: str | None = None
-    chunk_size: int = 65536
+    chunk_size: int = WRITE_CHUNK_SIZE
     chunk_pause_s: float = 0.0
     fault: str | None = None
 
@@ -159,12 +164,16 @@ def _write_chunks(
     written = 0
     step = job.chunk_size if job.chunk_size > 0 else 1
     pause_s = job.chunk_pause_s if job.chunk_pause_s > 0 else 0.0
+    every = WRITE_PROGRESS_EVERY_CHUNKS if WRITE_PROGRESS_EVERY_CHUNKS > 0 else 1
+    chunks = 0
     while written < total:
         end = min(written + step, total)
         handle.write(payload[written:end])
         written = end
         handle.flush()
-        _report_write(event_queue, job.job_id, path, written, total)
+        chunks += 1
+        if chunks % every == 0 or written == total:
+            _report_write(event_queue, job.job_id, path, written, total)
         if pause_s > 0 and written < total:
             time.sleep(pause_s)
     os.fsync(handle.fileno())

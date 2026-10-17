@@ -10,6 +10,8 @@ from queue import Empty
 
 from galley.core.format import format_json
 from galley.core.worker import (
+    WRITE_CHUNK_SIZE,
+    WRITE_PROGRESS_EVERY_CHUNKS,
     FailureEvent,
     FormatJob,
     SuccessEvent,
@@ -76,6 +78,12 @@ def test_worker_runs_without_a_global_start_method(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "ok"
+
+
+def test_write_cutoffs_are_named_placeholders() -> None:
+    job = FormatJob(job_id=1, text="{}", source="json", target="json")
+    assert job.chunk_size == WRITE_CHUNK_SIZE
+    assert WRITE_PROGRESS_EVERY_CHUNKS >= 1
 
 
 def test_worker_writes_a_temp_and_leaves_the_destination(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from queue import Empty
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from galley.core.worker import (
+    WRITE_CHUNK_SIZE,
     FailureEvent,
     FormatJob,
     ProgressEvent,
@@ -181,7 +182,7 @@ class ParseSession(QObject):
         target: str,
         *,
         destination: str | None = None,
-        chunk_size: int = 65536,
+        chunk_size: int = WRITE_CHUNK_SIZE,
         chunk_pause_s: float = 0.0,
         fault: str | None = None,
     ) -> None:

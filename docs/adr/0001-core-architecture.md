@@ -49,7 +49,7 @@ Cancel kills the worker. The handler updates the window first, then kills the ch
 
 1. **The UI answers Cancel within about 100 ms.** The handler immediately shows `Cancelled. Showing the previous result.` and restores the previous output on the UI thread. It then kills the process in the background. `Process.kill()` returns without waiting for the parser. Reaping the child and starting the next warm worker happen after that update.
 2. **Cancel during the 6d write leaves the user's text and file byte-for-byte unchanged.** The worker receives a copy of the text. The UI process creates an empty temp file in the destination's directory and passes that path in the job, so Cancel can delete it without reading a queue. The worker writes formatted bytes only to that temp and never opens the destination for writing. Only the UI process commits, and only after success, by calling `os.replace` on that temp. Cancel kills the worker before `os.replace`. The temp is removed after the killed worker has been reaped, so Windows can delete a file the worker still had open; that wait is not on the Cancel status path. The original file is untouched. Input stays a copy, and the previously committed output is restored. The 6d pane may show lines as they arrive; Cancel discards that view (UI spec 6d). Streaming those lines into the editor is not part of this worker; the editor is replaced on success and restored on Cancel. The same-directory temp keeps `os.replace` on one volume, where the replace is atomic. The worker closes the temp before reporting success or failure, so Windows can replace the destination.
-3. **Queue events drive the 6d progress bar. Screen 6m is spinner-only.** During the read (6m) the worker emits no fraction: a spinner and `Formatting…`, with no bar and no percent. A read event has phase `read`, `written == 0`, and `total == 0`. During the write (6d) it enqueues phase `write`, the amount written, the total, and the temp path. The UI draws the bar and the percentage from those events, one event per write chunk. The bar exists only in this phase (UI spec §5.7, §7, §13). Chunk size can change after Isaac's benchmark.
+3. **Queue events drive the 6d progress bar. Screen 6m is spinner-only.** During the read (6m) the worker emits no fraction: a spinner and `Formatting…`, with no bar and no percent. A read event has phase `read`, `written == 0`, and `total == 0`. During the write (6d) it enqueues phase `write`, the amount written, the total, and the temp path. The UI draws the bar and the percentage from those events. `WRITE_CHUNK_SIZE` and `WRITE_PROGRESS_EVERY_CHUNKS` (one event per chunk, plus the final byte) are named placeholders until Isaac's benchmark. The bar exists only in this phase (UI spec §5.7, §7, §13). `SPINNER_REVEAL_MS` and `PROGRESS_BAR_REVEAL_MS` are the same kind of placeholder: both are `0`, so the spinner status and the bar show as soon as that phase starts.
 4. **`spawn` on the current macOS build and on Windows.** The worker function lives at module top level in `galley.core`, so it is picklable, and `multiprocessing.freeze_support()` runs on the `__main__` → `main` → `configure_runtime` path. Both are required for the macOS app that ships now, because `spawn` has been the default on macOS since Python 3.8, and for Windows, where `spawn` is also the default. CI runs tests on macOS arm64 and Windows, so a non-importable worker fails there before packaging.
 
 ### 3. Convert from Python uses `ast` only
@@ -60,7 +60,7 @@ Conversion parses with `ast.parse` and edits the user's text in place from node 
 
 ### 4. YAML uses ruamel.yaml round-trip
 
-Load and dump YAML with `ruamel.yaml` in round-trip mode (`YAML(typ="rt")`), which keeps comments and key order. The starter's `format_yaml` uses `typ="safe"`, which drops comments; formatting code uses round-trip. Sort-keys may move comments (UI spec §5.12). JSON formatting stays on the stdlib.
+Load and dump YAML with `ruamel.yaml` in round-trip mode (`YAML(typ="rt")`), which keeps comments and key order. The starter's `format_yaml` uses `typ="safe"`, which drops comments; formatting code uses round-trip. Unknown tags, including `!!python/...`, raise, as they do in safe mode. A collection is registered before its children are built, so a recursive alias stays shared instead of being written as null. Sort-keys may move comments (UI spec §5.12). JSON formatting stays on the stdlib.
 
 ### 5. Cross-platform paths, shortcuts, and processes
 
@@ -101,14 +101,15 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 - Cancel can leave a temp file. The UI deletes it on Cancel and on failure. A crash of the UI process can orphan one; the orphan is not the user's file.
 - Killing a worker while it uses a `multiprocessing.Queue` can corrupt that queue. After Cancel the replacement worker gets fresh queues. Queues are never reused across a killed worker.
 - `os.replace` is atomic on one volume, so the temp stays beside the destination. On Windows the worker closes the temp before the replace.
-- Round-trip mode rejects some inputs a safe loader accepts, and it uses more CPU.
+- Round-trip mode uses more CPU than a safe dump. Stock round-trip accepts unknown tags and writes a recursive alias as null. This loader rejects those tags and keeps the alias shared. Safe mode still drops comments, so formatting does not switch back to it.
 - Moving `freeze_support()` off the entry path lets a frozen spawn child relaunch the GUI. The current test guards `configure_runtime`.
 - The UI reads the progress queue with a `QTimer`, or with a thread that only blocks on `Queue.get` and posts back to the UI thread. Cancel does not block on the queue.
 
 ## Open questions
 
-- Size-band numbers, and how long Format runs before 6m appears, after Isaac's benchmark (UI spec §10, open question 13).
+- Size-band numbers, after Isaac's benchmark (UI spec §10, open question 13). No code path reads a file-size cutoff, so this record still sets none.
+- How long Format runs before the spinner or the progress bar appears. The placeholders are `0` (`SPINNER_REVEAL_MS`, `PROGRESS_BAR_REVEAL_MS`) so both show immediately.
 - Whether large documents should skip pickle and use a temp file or shared memory.
-- How often to send a write-progress event after Isaac's benchmark. The fields are phase, written, total, and the temp path; the worker currently sends one event per chunk.
+- How often to send a write-progress event after Isaac's benchmark. The fields are phase, written, total, and the temp path. The placeholder `WRITE_PROGRESS_EVERY_CHUNKS` is `1`.
 - One warm worker per process, or one per window, once panes pop out (UI spec §8). This implementation keeps one session on the main window.
 - How to remove temp files left when the UI process crashes.
