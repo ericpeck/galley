@@ -10,7 +10,7 @@ import json
 import pytest
 from ruamel.yaml import YAML
 
-from galley.core.errors import utf8_input_error
+from galley.core.errors import InputError, utf8_input_error
 from galley.core.format import format_json, format_yaml
 
 
@@ -143,60 +143,67 @@ def test_yaml_invalid_utf8_does_not_crash() -> None:
         format_yaml(b'a: "\xff"\n')
     exc = caught.value
     assert not isinstance(exc, RecursionError)
-    has_offset = getattr(exc, "position", None) == 4
-    has_line = getattr(getattr(exc, "problem_mark", None), "line", None) is not None
+    details = getattr(exc, "details", None)
+    has_offset = isinstance(details, dict) and details.get("offset") == 4
+    has_line = isinstance(getattr(exc, "lineno", None), int)
     assert has_offset or has_line
 
 
 def test_json_invalid_utf8_names_line_and_column() -> None:
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(InputError) as caught:
         format_json(b'{"a": "\xff"}')
     # Byte 0xff sits at offset 7, which is column 8 on line 1.
-    assert_location(caught.value, 1, 8)
-    assert str(caught.value) == (
-        "This file isn't valid UTF-8, so Galley can't read it. "
-        "The first bad byte is at line 1, column 8. "
-        "Save the file as UTF-8 and open it again."
-    )
+    error = caught.value
+    assert error.kind == "invalid_utf8"
+    assert error.lineno == 1
+    assert error.colno == 8
+    assert error.details == {"offset": 7}
 
 
 def test_yaml_invalid_utf8_names_line_and_column() -> None:
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(InputError) as caught:
         format_yaml(b'a: "\xff"\n')
     # Byte 0xff sits at offset 4, which is column 5 on line 1.
-    assert_location(caught.value, 1, 5)
-    assert str(caught.value) == (
-        "This file isn't valid UTF-8, so Galley can't read it. "
-        "The first bad byte is at line 1, column 5. "
-        "Save the file as UTF-8 and open it again."
-    )
+    error = caught.value
+    assert error.kind == "invalid_utf8"
+    assert error.lineno == 1
+    assert error.colno == 5
+    assert error.details == {"offset": 4}
 
 
 def test_json_invalid_utf8_counts_newlines_before_the_bad_byte() -> None:
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(InputError) as caught:
         format_json(b'{\n  "a": "\xff"}')
-    # The bad byte is the 9th character on line 2.
-    assert_location(caught.value, 2, 9)
+    # The bad byte is the 9th character on line 2, at byte offset 10.
+    error = caught.value
+    assert error.kind == "invalid_utf8"
+    assert error.lineno == 2
+    assert error.colno == 9
+    assert error.details == {"offset": 10}
 
 
 def test_invalid_utf8_column_counts_characters_not_bytes() -> None:
     # U+00E9 is two bytes. The bad byte is the next character, not the next byte.
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(InputError) as caught:
         format_json(b'{"a": "\xc3\xa9\xff"}')
-    assert_location(caught.value, 1, 9)
-    with pytest.raises(Exception) as caught:
+    error = caught.value
+    assert error.kind == "invalid_utf8"
+    assert error.lineno == 1
+    assert error.colno == 9
+    assert error.details == {"offset": 9}
+    with pytest.raises(InputError) as caught:
         format_yaml(b'a: "\xc3\xa9\xff"\n')
-    assert_location(caught.value, 1, 6)
+    error = caught.value
+    assert error.kind == "invalid_utf8"
+    assert error.lineno == 1
+    assert error.colno == 6
+    assert error.details == {"offset": 6}
 
 
 def test_utf8_error_falls_back_to_the_byte_offset() -> None:
     # Offset 1 cuts through an invalid prefix, so the line cannot be counted.
     error = utf8_input_error(b"\xff" * 1500, 1234)
+    assert error.kind == "invalid_utf8"
     assert error.lineno is None
     assert error.colno is None
-    assert error.position == 1234
-    assert str(error) == (
-        "This file isn't valid UTF-8, so Galley can't read it. "
-        "The first bad byte is at byte 1,234. "
-        "Save the file as UTF-8 and open it again."
-    )
+    assert error.details == {"offset": 1234}

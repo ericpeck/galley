@@ -1,79 +1,79 @@
 """Located input errors.
 
-``str(error)`` is the banner copy. ``lineno`` and ``colno`` are the 1-based
-caret when the problem has a line and column. A UTF-8 failure that cannot be
-placed on a line keeps ``position``, the byte offset, and says so in the copy.
+``kind`` says which problem this is. ``lineno`` and ``colno`` are the 1-based
+caret when the problem has one. ``details`` holds the structured facts the UI
+needs (a byte offset, a depth, or an escape). Banner sentences live in
+``galley.app``.
 """
 
-MAX_NESTING_DEPTH = 64
+from typing import Literal
 
-_UTF8_BANNER = (
-    "This file isn't valid UTF-8, so Galley can't read it. "
-    "The first bad byte is {where}. "
-    "Save the file as UTF-8 and open it again."
-)
+MAX_DEPTH = 512
+
+InputKind = Literal["invalid_utf8", "too_deep", "bad_escape"]
 
 
 class InputError(Exception):
-    """A problem in the user's document, with the text the error banner shows."""
+    """A problem in the user's document.
+
+    The exception text is the ``kind`` name. The words shown in the banner
+    are chosen in the UI from ``kind`` and ``details``.
+    """
 
     def __init__(
         self,
-        message: str,
+        kind: InputKind,
         *,
-        line: int | None = None,
-        column: int | None = None,
-        position: int | None = None,
+        lineno: int | None,
+        colno: int | None,
+        details: dict[str, object],
     ) -> None:
-        super().__init__(message)
-        self.lineno = line
-        self.colno = column
-        self.position = position
-        # JSON's UnicodeDecodeError calls this offset ``start``. Callers that
-        # only know a byte offset can read either name.
-        self.start = position
+        super().__init__(kind)
+        self.kind = kind
+        self.lineno = lineno
+        self.colno = colno
+        self.details = details
 
 
 def utf8_input_error(data: bytes, offset: int) -> InputError:
-    """Build the banner for a UTF-8 byte that cannot be decoded.
+    """Build an ``invalid_utf8`` error for the byte at ``offset``.
 
     The line and column come from decoding the bytes before ``offset`` and
-    counting newlines. If that prefix is not valid UTF-8, the banner names
-    the byte offset instead.
+    counting newlines. If that prefix is not valid UTF-8, the line and column
+    are left unset and ``details["offset"]`` is the only location.
     """
     located = _line_column_at_byte(data, offset)
     if located is None:
-        where = f"at byte {offset:,}"
         line = None
         column = None
     else:
         line, column = located
-        where = f"at line {line}, column {column}"
     return InputError(
-        _UTF8_BANNER.format(where=where),
-        line=line,
-        column=column,
-        position=offset,
+        "invalid_utf8",
+        lineno=line,
+        colno=column,
+        details={"offset": offset},
     )
 
 
-def nesting_error(line: int, column: int) -> InputError:
-    """Build the banner for a document nested past the safe limit."""
-    message = (
-        "This document is nested more than "
-        f"{MAX_NESTING_DEPTH} levels deep, which is more than Galley can "
-        f"format safely. The limit was reached at line {line}."
+def nesting_error(line: int, column: int, *, depth: int) -> InputError:
+    """Build a ``too_deep`` error at the container that crossed the limit."""
+    return InputError(
+        "too_deep",
+        lineno=line,
+        colno=column,
+        details={"depth": depth},
     )
-    return InputError(message, line=line, column=column)
 
 
-def surrogate_error(line: int, column: int, escape: str) -> InputError:
-    """Build the banner for a JSON escape that is not a Unicode scalar."""
-    message = (
-        f"Line {line}, column {column} has an invalid character escape "
-        f"({escape}) that can't be saved as UTF-8."
+def escape_error(line: int, column: int, escape: str) -> InputError:
+    """Build a ``bad_escape`` error for an escape that is not a Unicode scalar."""
+    return InputError(
+        "bad_escape",
+        lineno=line,
+        colno=column,
+        details={"escape": escape},
     )
-    return InputError(message, line=line, column=column)
 
 
 def _line_column_at_byte(data: bytes, offset: int) -> tuple[int, int] | None:
