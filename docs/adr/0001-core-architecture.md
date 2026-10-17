@@ -69,14 +69,14 @@ An `InputError` pickles as those four fields. `Exception` would otherwise rebuil
 The starter depends on PySide6 and ruamel.yaml, both cross-platform, and it has no macOS path literals. Keep new dependencies the same way: AppKit, pyobjc, and other macOS frameworks stay out. Traffic-light colors in the UI spec are platform chrome.
 
 - Config and cache directories follow the platformdirs layout (`platformdirs`, or the same per-OS names). A temp file for `os.replace` is the exception and sits beside the destination. `QSettings` may store window geometry; Qt picks its per-OS location (UI spec §8).
-- Shortcuts use `QKeySequence.StandardKey` where one exists. Other bindings come from the macOS and Windows columns in UI spec §6, via the platform layer in §12 (`⌘↵` on macOS, `Ctrl+Enter` on Windows).
+- Shortcuts use `QKeySequence.StandardKey` where one exists. Other bindings come from the macOS and Windows columns in UI spec §6, via the platform layer in §12 (`⌘↵` on macOS, `Ctrl+Return` on Windows, the main Return key).
 - The worker uses `multiprocessing.get_context("spawn")` (decision 2). That context does not set the global start method.
 
 ### 6. Large-file size bands
 
-Placeholder. Undecided.
+macOS measurements are in `docs/benchmarks/macos-size-bench.md` (commit `46d7ddc`). Pure-Python YAML is the worst case. The C-library row applies only once the clib fallback PR merges and clib ships. Windows numbers are not measured yet.
 
-UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax colors, and indent guides, and for when screen 6m appears, wait on Isaac's benchmark. This record sets no numbers.
+UI spec §10 sets no file-size cap. Thresholds for word wrap, syntax colors, indent guides, and for when screen 6m appears stay open. The UI owner sets them in a later PR. This record sets no numbers. `SPINNER_REVEAL_MS` and `PROGRESS_BAR_REVEAL_MS` stay placeholders.
 
 ## Options considered
 
@@ -84,7 +84,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 **`ast` span edits (chosen) vs `eval` or `ast.literal_eval`.** `eval` runs the user's code. `literal_eval` still evaluates an expression and cannot apply the in-place span edits in UI spec §9. `ast.parse` yields positions and does not run the tree.
 
-**ruamel round-trip (recorded) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. The located-error formatter that landed uses safe mode, the depth limit, and an explicit stack. This worker calls that formatter. Switching it to round-trip would replace those checks.
+**Safe dump (chosen) vs ruamel round-trip (deferred).** `format_yaml` uses `YAML(typ="safe")`. Safe mode drops comments. Round-trip (`typ="rt"`) would keep comments and order, which the YAML options and the "Comments may move" note assume, and it is not the formatter. The located-error formatter uses safe mode, the depth limit, and an explicit stack. This worker calls that formatter. Switching it to round-trip would drop those checks.
 
 **`get_context("spawn")` (chosen) vs a global `set_start_method`.** `spawn` is the default on macOS since Python 3.8 and the default on Windows, so both targets already need a picklable worker and `freeze_support()`. A global `set_start_method("spawn")` raises if it is called again, including from tests and from a second window. `get_context("spawn")` starts the child from that context and does not touch global state. A global call that remains has to pass `force=True` or run once. Leaving the method unset uses `fork` wherever that is the default, and `fork` after threads have started deadlocks.
 
@@ -110,7 +110,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 ## Open questions
 
-- Size-band numbers, after Isaac's benchmark (UI spec §10, open question 13). No code path reads a file-size cutoff, so this record still sets none.
+- Size-band thresholds. macOS measurements are in `docs/benchmarks/macos-size-bench.md` (UI spec §10, open question 13). Pure-Python YAML is the worst case. The C-library row applies only once the clib fallback PR merges and clib ships. Windows numbers are not measured yet. No code path reads a file-size cutoff, so this record still sets none. Word wrap, syntax colors, indent guides, and the spinner and progress-bar reveal stay open for the UI owner.
 - How long Format runs before the spinner or the progress bar appears. The placeholders are `SPINNER_REVEAL_MS` 500 and `PROGRESS_BAR_REVEAL_MS` 2000, and they are not tuned.
 - Whether large documents should skip pickle and use a temp file or shared memory.
 - How often to send a write-progress event after Isaac's benchmark. The fields are phase, written, total, and the temp path. The placeholder `WRITE_PROGRESS_EVERY_CHUNKS` is `1`.
