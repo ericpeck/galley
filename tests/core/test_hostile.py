@@ -17,6 +17,8 @@ import pytest
 from ruamel.yaml import YAML
 
 import galley.core as core
+from galley.core import MAX_DEPTH
+from galley.core.errors import InputError
 from galley.core.format import format_json, format_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -213,26 +215,53 @@ def test_yaml_deep_nesting_under_the_limit_round_trips() -> None:
     assert format_yaml(formatted) == formatted
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_json raises RecursionError with no line or column once "
-        "nesting exceeds the recursion limit"
-    ),
-    strict=True,
-)
 def test_json_excessive_nesting_names_line_and_column() -> None:
     _assert_excessive_nesting("json")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_yaml raises RecursionError with no line or column once "
-        "nesting exceeds the recursion limit"
-    ),
-    strict=True,
-)
 def test_yaml_excessive_nesting_names_line_and_column() -> None:
     _assert_excessive_nesting("yaml")
+
+
+def test_json_at_max_depth_parses() -> None:
+    formatted = format_json(_nested_json(MAX_DEPTH))
+    value = json.loads(formatted)
+    for _ in range(MAX_DEPTH):
+        assert isinstance(value, list)
+        value = value[0]
+    assert value == 0
+    assert format_json(formatted) == formatted
+
+
+def test_yaml_at_max_depth_parses() -> None:
+    formatted = format_yaml(_nested_yaml(MAX_DEPTH))
+    lines = formatted.splitlines()
+    assert len(lines) == MAX_DEPTH
+    for level in range(MAX_DEPTH - 1):
+        assert lines[level] == f"{'  ' * level}k:"
+    assert lines[-1] == f"{'  ' * (MAX_DEPTH - 1)}k: 1"
+    assert format_yaml(formatted) == formatted
+
+
+def test_json_past_max_depth_is_too_deep() -> None:
+    text = "[\n" * (MAX_DEPTH + 1) + "0" + "]" * (MAX_DEPTH + 1)
+    with pytest.raises(InputError) as caught:
+        format_json(text)
+    error = caught.value
+    assert error.kind == "too_deep"
+    assert error.lineno == MAX_DEPTH + 1
+    assert error.colno == 1
+    assert error.details == {"depth": MAX_DEPTH + 1}
+
+
+def test_yaml_past_max_depth_is_too_deep() -> None:
+    with pytest.raises(InputError) as caught:
+        format_yaml(_nested_yaml(MAX_DEPTH + 1))
+    error = caught.value
+    assert error.kind == "too_deep"
+    assert error.lineno == MAX_DEPTH + 1
+    assert error.colno == 2 * MAX_DEPTH + 1
+    assert error.details == {"depth": MAX_DEPTH + 1}
 
 
 def test_yaml_alias_bomb_stays_shared() -> None:
@@ -419,19 +448,24 @@ def test_convert_python_syntax_error_names_line_and_column() -> None:
     assert "nt" not in str(caught.value)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_json emits a lone surrogate for a JSON unicode escape, and "
-        "that string cannot be encoded as UTF-8"
-    ),
-    strict=True,
-)
 def test_json_lone_surrogate_output_is_utf8() -> None:
-    try:
-        formatted = format_json('{"a": "\\uD800"}')
-    except json.JSONDecodeError as exc:
-        assert exc.lineno >= 1
-        assert exc.colno >= 1
-        return
-    encoded = formatted.encode("utf-8")
-    assert b"\\uD800" in encoded or b"\\ud800" in encoded
+    with pytest.raises(InputError) as caught:
+        format_json('{"a": "\\uD800"}')
+    error = caught.value
+    assert error.kind == "bad_escape"
+    assert error.lineno == 1
+    assert error.colno == 8
+    assert error.details == {"escape": "\\uD800"}
+
+
+def test_json_lone_surrogate_escape_keeps_the_source_spelling() -> None:
+    with pytest.raises(InputError) as caught:
+        format_json('{"a": "\\ud800"}')
+    assert caught.value.kind == "bad_escape"
+    assert caught.value.details == {"escape": "\\ud800"}
+
+
+def test_json_surrogate_pair_formats_as_utf8() -> None:
+    formatted = format_json('{"a": "\\uD800\\uDC00"}')
+    assert json.loads(formatted) == {"a": "\U00010000"}
+    formatted.encode("utf-8")
