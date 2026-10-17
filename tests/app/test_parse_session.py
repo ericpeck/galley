@@ -8,11 +8,12 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
 
+from galley.app import parse_session as parse_session_module
 from galley.app.banner import FORMATTER_STOPPED
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.main_window import CANCELLED_MESSAGE, WRITING_MESSAGE
-from galley.app.parse_session import REAP_DEADLINE_MS, ParseSession
+from galley.app.parse_session import REAP_DEADLINE_MS, ParseSession, _Retired
 from galley.core.format import format_json
 from galley.core.worker import FAULT_AFTER_TEMP
 
@@ -212,22 +213,28 @@ def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) 
 
     try:
         slow = _SlowExit()
-        session._retired_process = slow  # type: ignore[assignment]
-        session._temps_to_delete = [str(path)]
-        session._reap_started_s = time.monotonic()
+        session._retired.append(
+            _Retired(
+                process=slow,  # type: ignore[arg-type]
+                resource=None,
+                queues=[],
+                started_s=time.monotonic(),
+                temps=[str(path)],
+            )
+        )
         for _ in range(5):
             assert _tick_ms(session) < 100
             assert session.process is None
             assert path.exists()
         assert joins == []
         assert failures == []
-        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        _expire_reap(session)
         assert _tick_ms(session) < 100
         assert session.process is not None
         assert session.process.pid != 424242
         replacement = session.process
         assert path.exists()
-        assert str(path) in session._deferred_temps
+        assert str(path) in session._retired[0].temps
         assert joins == []
         assert failures == []
         slow.exitcode = -9
@@ -239,7 +246,17 @@ def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) 
         assert session.reaped_pid == 424242
         assert session.reaped_exitcode == -9
         extra.write_text("later", encoding="utf-8")
-        session._deferred_temps.append(str(extra))
+        still = _SlowExit()
+        still.pid = 434343
+        session._retired.append(
+            _Retired(
+                process=still,  # type: ignore[arg-type]
+                resource=None,
+                queues=[],
+                started_s=time.monotonic(),
+                temps=[str(extra)],
+            )
+        )
         session.shutdown()
         assert not path.exists()
         assert not extra.exists()
@@ -257,7 +274,7 @@ def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
             rig.ticks.append(_tick_ms(session))
             assert session.process is None
             assert rig.status.text() == CANCELLED_MESSAGE
-        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        _expire_reap(session)
         rig.ticks.append(_tick_ms(session))
         for _ in range(3):
             rig.ticks.append(_tick_ms(session))
@@ -266,7 +283,7 @@ def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
         assert rig.output.toPlainText() == "previous output\n"
         assert rig.destination.read_bytes() == rig.original
         assert Path(rig.temp_path).exists()
-        assert str(rig.temp_path) in session._deferred_temps
+        assert str(rig.temp_path) in session._retired[0].temps
         replacement = session.process
         assert replacement is not None
         assert replacement.pid not in (None, rig.stuck.pid)
@@ -296,7 +313,7 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
             assert session.process is None
             assert rig.status.text() == CANCELLED_MESSAGE
             assert Path(rig.temp_path).exists()
-        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        _expire_reap(session)
         rig.ticks.append(_tick_ms(session))
         assert rig.status.text() == FORMATTER_STOPPED
         lowered = rig.status.text().casefold()
@@ -315,12 +332,213 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
         qtbot.waitUntil(_formatted, timeout=_SPAWN_TIMEOUT_MS)
         assert rig.destination.read_bytes() == rig.original
         assert Path(rig.temp_path).exists()
-        assert str(rig.temp_path) in session._deferred_temps
+        assert str(rig.temp_path) in session._retired[0].temps
         assert session.process is replacement
         assert rig.stuck.exitcode is None
         assert rig.joins == []
         assert rig.ticks
         assert all(tick < 100 for tick in rig.ticks)
+    finally:
+        rig.window.shutdown_parse_worker()
+
+
+def test_second_cancel_inside_reap_deadline_queues_once(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """Cancel, format, and cancel again while the first worker is still alive.
+
+    Both cancels stay inside the reap deadline. A second job must not start
+    another replacement, queue a stuck worker twice, or replace the
+    Cancelled status with the crash banner.
+    """
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    cancel = rig.window.findChild(QPushButton, "cancelButton")
+    assert isinstance(cancel, QPushButton)
+    unlinked: list[str | None] = []
+    spawned: list[int] = []
+    original_unlink = parse_session_module.unlink_temp
+    real_spawn = session._spawn
+
+    def _track_unlink(path: str | None) -> None:
+        unlinked.append(path)
+        original_unlink(path)
+
+    def _spawn_and_count() -> None:
+        real_spawn()
+        process = session.process
+        assert process is not None
+        spawned.append(id(process))
+
+    monkeypatch.setattr(parse_session_module, "unlink_temp", _track_unlink)
+    session._spawn = _spawn_and_count  # type: ignore[method-assign]
+    try:
+        assert _within_reap_deadline(session)
+        assert session.process is None
+        assert session._retired[0].process is rig.stuck
+        _poll_within_deadline(rig, session, 3)
+
+        rig.button.click()
+        session._timer.stop()
+        rig.window._reveal_timer.stop()
+        assert rig.window._formatting
+        assert session.has_pending_job
+        assert _within_reap_deadline(session)
+        _poll_within_deadline(rig, session, 3)
+        assert session.process is None
+        assert rig.status.text() == CANCELLED_MESSAGE
+
+        cancel.show()
+        cancel.click()
+        session._timer.stop()
+        assert not rig.window._formatting
+        assert not session.has_pending_job
+        assert _within_reap_deadline(session)
+        _poll_within_deadline(rig, session, 3)
+
+        assert len(spawned) <= 1
+        assert session.process is None
+        assert len(session._retired) == 1
+        assert session._retired[0].process is rig.stuck
+        _assert_stuck_worker_queued_once(session, rig.stuck, rig.temp_path)
+        assert rig.temp_path not in unlinked
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.output.toPlainText() == "previous output\n"
+        assert rig.destination.read_bytes() == rig.original
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+
+        rig.window.shutdown_parse_worker()
+        assert unlinked.count(rig.temp_path) == 1
+        assert not Path(rig.temp_path).exists()
+        assert _queued_temps(session) == []
+    finally:
+        rig.window.shutdown_parse_worker()
+
+
+def test_second_cancel_after_deadline_keeps_each_child_temp(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """Cancel the replacement after the first child's reap deadline.
+
+    Both children stay stuck. Each temp stays queued once, and neither
+    file is deleted until its own child exits or the window shuts down.
+    The poll and shutdown do not join. After the second Cancel the window
+    shows the previous result, with Format enabled and no crash banner.
+    """
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    cancel = rig.window.findChild(QPushButton, "cancelButton")
+    assert isinstance(cancel, QPushButton)
+    unlinked: list[str | None] = []
+    original_unlink = parse_session_module.unlink_temp
+
+    def _track_unlink(path: str | None) -> None:
+        unlinked.append(path)
+        original_unlink(path)
+
+    class _Stuck:
+        def __init__(self, joins: list[str]) -> None:
+            self.pid = 626262
+            self.exitcode: int | None = None
+            self._joins = joins
+
+        def join(self, timeout: float | None = None) -> None:
+            self._joins.append("join")
+            time.sleep(0.3)
+
+        def kill(self) -> None:
+            return
+
+    def _spawn_stuck() -> None:
+        job_queue: parse_session_module.Queue = session._ctx.Queue()
+        event_queue: parse_session_module.Queue = session._ctx.Queue()
+        process = _Stuck(rig.joins)
+        queues = [job_queue, event_queue]
+        resource = parse_session_module._RunningWorker(process, queues)  # type: ignore[arg-type]
+        parse_session_module._LIVE_WORKERS.append(resource)
+        parse_session_module._arm_exit_cleanup()
+        session._job_queue = job_queue
+        session._event_queue = event_queue
+        session._process = process  # type: ignore[assignment]
+        session._resource = resource
+
+    monkeypatch.setattr(parse_session_module, "unlink_temp", _track_unlink)
+    session._spawn = _spawn_stuck  # type: ignore[method-assign]
+    second = tmp_path / "next.json"
+    second.write_bytes(b'{"old": true}\n')
+    try:
+        rig.window._formatting = True
+        rig.window._sync_format_button()
+        assert not rig.button.isEnabled()
+        rig.output.setPlainText("partial result\n")
+        session.submit(
+            '{"b": 2}',
+            "json",
+            "json",
+            destination=str(second),
+        )
+        temp2 = session.last_temp_path
+        assert temp2 is not None
+        assert temp2 != rig.temp_path
+        assert session.has_pending_job
+        assert session._retired[0].process is rig.stuck
+        _expire_reap(session)
+        rig.ticks.append(_tick_ms(session))
+        child2 = session.process
+        assert child2 is not None
+        assert child2 is not rig.stuck
+        assert rig.status.text() == FORMATTER_STOPPED
+        assert not session.has_pending_job
+
+        cancel.show()
+        cancel.click()
+        session._timer.stop()
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.button.isEnabled()
+        assert rig.output.toPlainText() == "previous output\n"
+        assert not rig.window._formatting
+        queued = _queued_temps(session)
+        assert queued.count(rig.temp_path) == 1
+        assert queued.count(temp2) == 1
+        assert len(queued) == len(set(queued))
+        assert session._retired[0].process is rig.stuck
+        assert session._retired[0].temps == [rig.temp_path]
+        assert session._retired[1].process is child2
+        assert session._retired[1].temps == [temp2]
+        assert Path(rig.temp_path).exists()
+        assert Path(temp2).exists()
+        assert rig.temp_path not in unlinked
+        assert temp2 not in unlinked
+        assert rig.destination.read_bytes() == rig.original
+        assert second.read_bytes() == b'{"old": true}\n'
+        assert rig.joins == []
+
+        child2.exitcode = -9  # type: ignore[attr-defined]
+        rig.ticks.append(_tick_ms(session))
+        assert not Path(temp2).exists()
+        assert Path(rig.temp_path).exists()
+        assert unlinked.count(temp2) == 1
+        assert rig.temp_path not in unlinked
+        remaining = _queued_temps(session)
+        assert remaining.count(rig.temp_path) == 1
+        assert temp2 not in remaining
+        assert any(entry.process is rig.stuck for entry in session._retired)
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+
+        rig.window.shutdown_parse_worker()
+        assert unlinked.count(rig.temp_path) == 1
+        assert unlinked.count(temp2) == 1
+        assert not Path(rig.temp_path).exists()
+        assert not Path(temp2).exists()
+        assert _queued_temps(session) == []
+        assert rig.joins == []
     finally:
         rig.window.shutdown_parse_worker()
 
@@ -470,7 +688,7 @@ def _stuck_cancel(qtbot, tmp_path: Path) -> _StuckCancel:
     session._timer.stop()
     assert status.text() == CANCELLED_MESSAGE
     assert session.process is None
-    assert str(temp_path) in session._temps_to_delete
+    assert str(temp_path) in _queued_temps(session)
     return _StuckCancel(
         destination,
         original,
@@ -483,6 +701,45 @@ def _stuck_cancel(qtbot, tmp_path: Path) -> _StuckCancel:
         stuck,
         temp_path,
     )
+
+
+def _queued_temps(session: ParseSession) -> list[str]:
+    queued: list[str] = []
+    for entry in session._retired:
+        queued.extend(entry.temps)
+    return queued
+
+
+def _expire_reap(session: ParseSession) -> None:
+    overdue_s = (REAP_DEADLINE_MS + 1000) / 1000
+    session._retired[0].started_s = time.monotonic() - overdue_s
+
+
+def _within_reap_deadline(session: ParseSession) -> bool:
+    assert session._retired
+    started = session._retired[0].started_s
+    elapsed = (time.monotonic() - started) * 1000
+    return elapsed < REAP_DEADLINE_MS
+
+
+def _poll_within_deadline(rig: _StuckCancel, session: ParseSession, times: int) -> None:
+    """Poll inside the deadline. A replacement must not be running yet."""
+    for _ in range(times):
+        assert _within_reap_deadline(session)
+        rig.ticks.append(_tick_ms(session))
+        assert session.process is None
+
+
+def _assert_stuck_worker_queued_once(
+    session: ParseSession, worker: object, path: str
+) -> None:
+    """A worker that never exits is queued once and is not also reaped."""
+    exitcode = getattr(worker, "exitcode", None)
+    queued = _queued_temps(session)
+    assert exitcode is None
+    assert queued.count(path) == 1
+    assert len(queued) == len(set(queued))
+    assert Path(path).exists()
 
 
 def _tick_ms(session: ParseSession) -> float:

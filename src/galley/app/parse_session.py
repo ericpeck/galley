@@ -7,7 +7,10 @@ exited, its temp file is deleted and a replacement starts with new queues.
 If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll starts
 that replacement without changing the Cancelled status. A Format press that
 is still waiting is answered with the crash banner, and that job is then
-sent to the new worker. The temp path stays queued for shutdown.
+sent to the new worker. Cancelling that job retires the replacement beside
+any child still being reaped. Each retired child keeps its own process,
+queues, reap clock, and temp paths. The poll reads ``exitcode`` and does
+not join. When one child exits, only that child's temps are deleted.
 """
 
 import atexit
@@ -99,14 +102,40 @@ def _dispose_queue(queue: Queue | None) -> None:
         pass
 
 
-def _release_without_join(resource: _RunningWorker) -> None:
-    """Forget a child that has already exited. The caller read ``exitcode``."""
+def _release_without_join(resource: _RunningWorker | None) -> None:
+    """Forget a child without joining it.
+
+    The caller already read ``exitcode``, or the session is shutting down.
+    """
+    if resource is None or resource.closed:
+        return
     resource.drop_queues()
     resource.closed = True
     try:
         _LIVE_WORKERS.remove(resource)
     except ValueError:
         return
+
+
+class _Retired:
+    """One killed child, tracked until ``exitcode`` is set or shutdown.
+
+    The poll never joins. Temps on this entry belong to this child only.
+    """
+
+    def __init__(
+        self,
+        process: BaseProcess,
+        resource: _RunningWorker | None,
+        queues: list[Queue],
+        started_s: float,
+        temps: list[str],
+    ) -> None:
+        self.process = process
+        self.resource = resource
+        self.queues = queues
+        self.started_s = started_s
+        self.temps = temps
 
 
 class _Active:
@@ -137,19 +166,11 @@ class ParseSession(QObject):
         self._process: BaseProcess | None = None
         self._job_queue: Queue | None = None
         self._event_queue: Queue | None = None
-        self._retired_process: BaseProcess | None = None
+        self._retired: list[_Retired] = []
         self._reaped_process: BaseProcess | None = None
         self._resource: _RunningWorker | None = None
-        self._retired_resource: _RunningWorker | None = None
-        self._abandoned_job_queue: Queue | None = None
-        self._abandoned_event_queue: Queue | None = None
         self._active: _Active | None = None
         self._pending: FormatJob | None = None
-        self._temps_to_delete: list[str] = []
-        self._deferred_temps: list[str] = []
-        self._temps_deferred = False
-        self._reap_started_s = 0.0
-        self._reap_abandoned = False
         self._job_ids = 0
         self._closing = False
         self._shut_down = False
@@ -200,9 +221,9 @@ class ParseSession(QObject):
         """Start the warm worker if this session does not already have one."""
         if self._shut_down:
             return
-        if self._active is None and self._retired_process is None:
+        if self._active is None and not self._retired:
             self._replace_dead_worker()
-        if self._process is None and self._retired_process is None:
+        if self._process is None and not self._retired:
             self._spawn()
         if not self._timer.isActive():
             self._timer.start()
@@ -221,7 +242,7 @@ class ParseSession(QObject):
         """Send one job. A second submit while a job is active is ignored."""
         if self._shut_down or self._active is not None:
             return
-        if self._retired_process is None:
+        if not self._retired:
             self._replace_dead_worker()
         temp_path: str | None = None
         if destination is not None:
@@ -247,7 +268,7 @@ class ParseSession(QObject):
         self._active = active
         self.last_temp_path = temp_path
         self._pending = job
-        if self._process is None and self._retired_process is None:
+        if self._process is None and not self._retired:
             self.start()
         self._flush_pending()
 
@@ -255,71 +276,54 @@ class ParseSession(QObject):
         """Kill the current worker without joining it or reading its queues.
 
         Drop the queues. The replacement created after the child exits gets
-        new ones. The temp file is removed once ``exitcode`` is set, so
-        Windows can delete a file the worker still had open. This method
-        does not wait. A child still alive after :data:`REAP_DEADLINE_MS`
-        keeps that path for shutdown. The poll starts a replacement without
-        joining and leaves the Cancelled status in place. A Format press
-        that is still waiting gets the crash banner, then runs on that
-        replacement.
+        new ones. The temp file is removed once that child's ``exitcode``
+        is set, so Windows can delete a file the worker still had open.
+        This method does not wait, and it does not join. A second cancel
+        appends another retired child. It does not drop a child that is
+        already retired, and it does not delete that child's temps.
+        Inside the deadline, cancelling a job that was never sent leaves
+        the retired list unchanged. Past the deadline, the replacement is
+        retired beside the first child. Each keeps its own temps.
         """
         if self._shut_down or self._active is None:
             return
-        if self._active.temp_path:
-            self.last_temp_path = self._active.temp_path
-            self._temps_to_delete.append(self._active.temp_path)
+        temp_path = self._active.temp_path
+        if temp_path:
+            self.last_temp_path = temp_path
         self._active = None
         self._pending = None
         process = self._process
         if process is None:
-            self._unlink_queued_temps()
+            self._release_unsent_temp(temp_path)
             return
-        self._retire_current()
+        self._retire_current(temp_path)
         _kill(process)
-        self._reap_started_s = time.monotonic()
-        self._temps_deferred = False
-        self._reap_abandoned = False
         if not self._timer.isActive():
             self._timer.start()
 
     def shutdown(self) -> None:
         """Stop the timer, kill any child, and drop its queues.
 
-        This does not join. A child that is still alive stays registered so
-        process exit can reap it. Temp paths, including ones held past
-        :data:`REAP_DEADLINE_MS`, are deleted here.
+        This does not join. Every retired child is killed and its queues
+        are dropped. Temp paths still queued on those children are deleted
+        here, including ones held past :data:`REAP_DEADLINE_MS`.
         """
         if self._shut_down:
             return
         self._shut_down = True
         self._closing = True
         self._timer.stop()
-        if self._active is not None and self._active.temp_path:
-            self._temps_to_delete.append(self._active.temp_path)
+        temp_path = self._active.temp_path if self._active is not None else None
         self._active = None
         self._pending = None
         if self._process is not None:
-            if self._retired_process is None:
-                self._retire_current()
-            else:
-                _kill(self._process)
-                if self._resource is not None:
-                    self._resource.drop_queues()
-                self._process = None
-                self._resource = None
-                self._dispose_queue(self._job_queue)
-                self._dispose_queue(self._event_queue)
-                self._job_queue = None
-                self._event_queue = None
-        _kill(self._retired_process)
-        if self._retired_resource is not None:
-            self._retired_resource.drop_queues()
-        self._unlink_queued_temps()
-        self._unlink_deferred_temps()
-        self._dispose_queue(self._abandoned_job_queue)
-        self._dispose_queue(self._abandoned_event_queue)
-        self._abandoned_job_queue = None
-        self._abandoned_event_queue = None
+            owned = temp_path if not self._temp_is_queued(temp_path) else None
+            self._retire_current(owned)
+        elif temp_path and not self._temp_is_queued(temp_path):
+            unlink_temp(temp_path)
+        for entry in list(self._retired):
+            _kill(entry.process)
+            self._forget_retired(entry, unlink=True)
 
     def _spawn(self) -> None:
         job_queue: Queue = self._ctx.Queue()
@@ -343,7 +347,7 @@ class ParseSession(QObject):
         if (
             job is None
             or queue is None
-            or (self._retired_process is not None and not self._reap_abandoned)
+            or self._waiting_on_reap()
             or self._active is None
             or self._active.job_id != job.job_id
         ):
@@ -354,7 +358,7 @@ class ParseSession(QObject):
     def _poll(self) -> None:
         if self._shut_down:
             return
-        if self._retired_process is not None:
+        if self._retired:
             self._poll_retired()
         if self._shut_down:
             return
@@ -362,41 +366,35 @@ class ParseSession(QObject):
         self._replace_dead_worker()
 
     def _poll_retired(self) -> None:
-        """Watch the killed child. Never join.
+        """Watch every killed child. Never join.
 
-        A child that is still alive after :data:`REAP_DEADLINE_MS` keeps
-        its temp for shutdown, and a replacement starts on that same tick.
-        The Cancelled status is left alone unless Format is still waiting.
+        A child that exits loses only its own temps. A child that is still
+        alive after :data:`REAP_DEADLINE_MS` keeps those temps, and one
+        replacement starts if the session does not already have one. The
+        Cancelled status is left alone unless Format is still waiting.
         """
-        process = self._retired_process
-        if process is None:
-            return
-        if process.exitcode is None:
-            if _elapsed_ms(self._reap_started_s) < REAP_DEADLINE_MS:
-                return
-            self._defer_temps_if_due()
-            self._abandon_live_worker()
-            return
-        already_replaced = self._reap_abandoned and self._process is not None
-        self._finish_retired()
-        if self._closing or self._shut_down or already_replaced:
-            return
-        self._spawn()
-        self._flush_pending()
+        for entry in list(self._retired):
+            if entry not in self._retired:
+                continue
+            process = entry.process
+            if process.exitcode is not None:
+                self._finish_retired(entry)
+                continue
+            if _elapsed_ms(entry.started_s) < REAP_DEADLINE_MS:
+                continue
+            self._replace_abandoned()
 
-    def _abandon_live_worker(self) -> None:
-        """Start a replacement once the reap deadline passes.
+    def _replace_abandoned(self) -> None:
+        """Start one replacement once any reap deadline has passed.
 
-        Cancel is the only kill, so this stays quiet and leaves the
-        Cancelled status alone. A Format press that arrived during the
-        wait would otherwise get no response: report
-        :data:`FORMATTER_STOPPED`, then send that job to the new worker.
-        The child stays retired until ``exitcode`` is set, and its temp
-        stays queued. This does not join.
+        Cancel is the only kill, so a quiet deadline leaves the Cancelled
+        status alone. A Format press that is still waiting would otherwise
+        get no response: report :data:`FORMATTER_STOPPED`, then send that
+        job to the new worker. Retired children stay in the list until
+        their own ``exitcode`` is set. This does not join.
         """
-        if self._reap_abandoned:
+        if self._process is not None:
             return
-        self._reap_abandoned = True
         waiting = self._pending is not None
         if self._closing or self._shut_down:
             self._active = None
@@ -404,40 +402,32 @@ class ParseSession(QObject):
             return
         if waiting:
             self.failed.emit(FORMATTER_STOPPED)
-        if self._process is None:
-            self._spawn()
+        self._spawn()
         if waiting:
             self._flush_pending()
 
-    def _defer_temps_if_due(self) -> None:
-        if self._temps_deferred:
-            return
-        if _elapsed_ms(self._reap_started_s) < REAP_DEADLINE_MS:
-            return
-        self._deferred_temps.extend(self._temps_to_delete)
-        self._temps_to_delete.clear()
-        self._temps_deferred = True
-
-    def _finish_retired(self) -> None:
-        process = self._retired_process
-        if process is None:
-            return
+    def _finish_retired(self, entry: _Retired) -> None:
+        """Drop one exited child and delete only that child's temps."""
+        process = entry.process
         self.reaped_pid = process.pid
         self.reaped_exitcode = process.exitcode
-        self._retired_process = None
         self._reaped_process = process
-        resource = self._retired_resource
-        self._retired_resource = None
-        if resource is not None:
-            _release_without_join(resource)
-        self._unlink_queued_temps()
-        self._unlink_deferred_temps()
-        self._temps_deferred = False
-        self._dispose_queue(self._abandoned_job_queue)
-        self._dispose_queue(self._abandoned_event_queue)
-        self._abandoned_job_queue = None
-        self._abandoned_event_queue = None
-        self._reap_abandoned = False
+        already_replaced = self._process is not None
+        self._forget_retired(entry, unlink=True)
+        if self._closing or self._shut_down or already_replaced:
+            return
+        self._spawn()
+        self._flush_pending()
+
+    def _waiting_on_reap(self) -> bool:
+        """True when a job must wait for a child still inside its deadline."""
+        if self._process is not None:
+            return False
+        return any(
+            entry.process.exitcode is None
+            and _elapsed_ms(entry.started_s) < REAP_DEADLINE_MS
+            for entry in self._retired
+        )
 
     def _replace_dead_worker(self) -> None:
         """Respawn when the current child has exited, including while idle.
@@ -471,13 +461,33 @@ class ParseSession(QObject):
             self._spawn()
             self._flush_pending()
 
-    def _retire_current(self) -> None:
-        self._retired_process = self._process
-        self._retired_resource = self._resource
+    def _retire_current(self, temp_path: str | None) -> None:
+        """Append the current child. Leave every earlier retired child in place."""
+        process = self._process
+        if process is None:
+            return
+        temps: list[str] = []
+        if temp_path and not self._temp_is_queued(temp_path):
+            temps.append(temp_path)
+        if self._resource is not None:
+            queues = self._resource.queues
+        else:
+            queues = [
+                queue
+                for queue in (self._job_queue, self._event_queue)
+                if queue is not None
+            ]
+        self._retired.append(
+            _Retired(
+                process=process,
+                resource=self._resource,
+                queues=queues,
+                started_s=time.monotonic(),
+                temps=temps,
+            )
+        )
         self._process = None
         self._resource = None
-        self._abandoned_job_queue = self._job_queue
-        self._abandoned_event_queue = self._event_queue
         self._job_queue = None
         self._event_queue = None
 
@@ -542,13 +552,35 @@ class ParseSession(QObject):
         unlink_temp(path)
         self.failed.emit(_failure_text(event))
 
-    def _unlink_queued_temps(self) -> None:
-        while self._temps_to_delete:
-            unlink_temp(self._temps_to_delete.pop())
+    def _release_unsent_temp(self, temp_path: str | None) -> None:
+        """Delete a temp that no worker has opened.
 
-    def _unlink_deferred_temps(self) -> None:
-        while self._deferred_temps:
-            unlink_temp(self._deferred_temps.pop())
+        Retired children keep the paths already queued for them. Those are
+        removed once, when that child exits or when the UI process shuts
+        down. This does not start a replacement and does not join.
+        """
+        if self._temp_is_queued(temp_path):
+            return
+        unlink_temp(temp_path)
+
+    def _forget_retired(self, entry: _Retired, *, unlink: bool) -> None:
+        """Drop one retired child without joining it."""
+        try:
+            self._retired.remove(entry)
+        except ValueError:
+            pass
+        if unlink:
+            while entry.temps:
+                unlink_temp(entry.temps.pop())
+        _release_without_join(entry.resource)
+        for queue in list(entry.queues):
+            _dispose_queue(queue)
+        entry.queues.clear()
+
+    def _temp_is_queued(self, path: str | None) -> bool:
+        if path is None:
+            return False
+        return any(path in entry.temps for entry in self._retired)
 
     def _dispose_queue(self, queue: Queue | None) -> None:
         _dispose_queue(queue)
