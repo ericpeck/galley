@@ -1,0 +1,44 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  size-bench:
+    name: Size benchmark (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          # The workflow token is contents: read, which cannot write the Actions cache.
+          enable-cache: false
+
+      - name: Sync dependencies
+        run: uv sync
+
+      # Not a project dependency. Tests stay on ruamel's pure-Python parser.
+      - name: Install ruamel.yaml.clib for the safe+C comparison
+        run: uv pip install ruamel.yaml.clib
+
+      - name: Run file-size benchmark
+        run: uv run python benchmarks/size_bench.py
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: size-bench-macos-14
+          path: benchmarks/results/
+          if-no-files-found: error
