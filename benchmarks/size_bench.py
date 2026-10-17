@@ -35,6 +35,9 @@ from galley.core import format as core_format
 
 BYTES_PER_MB = 1024 * 1024
 DEFAULT_SIZES_MB = (1, 5, 10, 50, 100, 200)
+# Safe mode is a comparison with round-trip, not the UI cutoff. The ratio is
+# already visible at the small sizes, so larger safe-mode runs are not timed.
+SAFE_COMPARISON_SIZES_MB = frozenset({1, 5, 10})
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
 SAMPLE_INTERVAL_S = 0.01
@@ -882,7 +885,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 '`format_yaml` uses ruamel `typ="safe"`. '
                 '`yaml_round_trip` is `YAML(typ="rt")` load and dump in this '
                 "script (ruamel's default; keeps comments and key order). "
-                "YAML UI cutoffs use round-trip. Safe mode is comparison only."
+                "YAML UI cutoffs use round-trip. Safe mode is comparison only, "
+                "and only at 1, 5, and 10 MB."
             ),
             "",
             "## Results",
@@ -1069,10 +1073,19 @@ def build_report(
                 sizes_mb,
             )
         for operation in operations:
+            files = generated[operation.source_format]
+            if operation.yaml_typ == "safe":
+                files = {
+                    size: item
+                    for size, item in files.items()
+                    if size in SAFE_COMPARISON_SIZES_MB
+                }
+            if not files:
+                continue
             print(f"timing {operation.operation_id}", file=sys.stderr)
             measure_operation(
                 operation,
-                generated[operation.source_format],
+                files,
                 runs,
                 on_row=checkpoint,
             )
