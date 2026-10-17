@@ -22,5 +22,9 @@ def main() -> int:
     application.setApplicationDisplayName("Galley")
     application.setFont(ui_font())
     window = create_main_window()
+    window.start_parse_worker()
     window.show()
-    return application.exec()
+    try:
+        return application.exec()
+    finally:
+        window.shutdown_parse_worker()

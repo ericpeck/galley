@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
     QMenu,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.main_window import NOT_YET_MESSAGE
+from galley.app.main_window import FORMATTING_MESSAGE, NOT_YET_MESSAGE
 from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -340,7 +341,9 @@ def test_typing_enables_format_without_writing_output(qtbot) -> None:
     title = window.findChild(QLabel, "inputEmptyTitle")
     assert title is not None and not title.isVisible()
     _action(window, "Format").trigger()
-    assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
+    status = window.findChild(QLabel, "statusMessage")
+    assert status is not None
+    qtbot.waitUntil(lambda: "Expecting value" in status.text(), timeout=15000)
     assert output.toPlainText() == ""
     clear = window.findChild(QPushButton, "clearButton")
     assert clear is not None
@@ -391,17 +394,44 @@ def test_focus_caption_follows_the_editor(qtbot) -> None:
     qtbot.waitUntil(lambda: "Input 1" in caption.text())
 
 
-def test_configure_runtime_sets_spawn() -> None:
+def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    output = window.findChild(CodeEditor, "outputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    bar = window.findChild(QProgressBar, "writeProgress")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
+    assert status is not None
+    assert isinstance(bar, QProgressBar)
+    assert isinstance(cancel, QPushButton)
+    editor.setPlainText('{"a": 1}')
+    _action(window, "Format").trigger()
+    assert status.text() == FORMATTING_MESSAGE
+    assert not bar.isVisible()
+
+    def _done() -> bool:
+        assert not bar.isVisible()
+        return output.toPlainText() != ""
+
+    qtbot.waitUntil(_done, timeout=15000)
+    assert output.toPlainText() == '{\n  "a": 1\n}\n'
+    assert status.text() == "Valid JSON"
+    assert not cancel.isVisible()
+
+
+def test_configure_runtime_leaves_start_method_unset() -> None:
     completed = subprocess.run(
         [
             sys.executable,
             "-c",
             "\n".join(
                 [
-                    "from galley.app.runtime import configure_runtime",
                     "import multiprocessing",
+                    "from galley.app.runtime import configure_runtime",
                     "configure_runtime()",
-                    "print(multiprocessing.get_start_method())",
+                    "print(multiprocessing.get_start_method(allow_none=True))",
                 ]
             ),
         ],
@@ -410,7 +440,7 @@ def test_configure_runtime_sets_spawn() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "spawn"
+    assert completed.stdout.strip() == "None"
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -430,7 +460,7 @@ def _function(tree: ast.Module, name: str) -> ast.FunctionDef:
     )
 
 
-def test_entry_point_uses_freeze_support_and_spawn() -> None:
+def test_entry_point_uses_freeze_support_without_global_start_method() -> None:
     runtime_tree = ast.parse((APP_ROOT / "runtime.py").read_text(encoding="utf-8"))
     configure_calls = [
         node
@@ -440,11 +470,8 @@ def test_entry_point_uses_freeze_support_and_spawn() -> None:
     assert any(
         _call_name(node) == "multiprocessing.freeze_support" for node in configure_calls
     )
-    assert any(
+    assert not any(
         _call_name(node) == "multiprocessing.set_start_method"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and node.args[0].value == "spawn"
         for node in configure_calls
     )
 

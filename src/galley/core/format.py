@@ -419,3 +419,62 @@ def _scalar_text(value: object) -> str:
             return json.dumps(value, ensure_ascii=False)
         return value
     return json.dumps(str(value), ensure_ascii=False)
+
+
+def format_document(text: str | bytes, source: str, target: str) -> str:
+    """Format ``text`` from ``source`` into ``target``.
+
+    ``source`` and ``target`` are ``json`` or ``yaml`` (case-insensitive).
+    Same-format calls go through ``format_json`` and ``format_yaml``, so
+    located ``InputError`` checks stay exactly those functions.
+    """
+    source_kind = _normalize_format(source)
+    target_kind = _normalize_format(target)
+    if source_kind == "json" and target_kind == "json":
+        return format_json(text)
+    if source_kind == "yaml" and target_kind == "yaml":
+        return format_yaml(text)
+    if source_kind == "json":
+        value = json.loads(format_json(text))
+        return _dump_yaml_value(value)
+    rendered = format_yaml(text)
+    opened = _yaml_limits(text)
+    try:
+        return _dump_json(_load_rendered_yaml(text, rendered))
+    except RecursionError:
+        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+
+
+def _normalize_format(name: str) -> str:
+    kind = name.strip().lower()
+    if kind not in {"json", "yaml"}:
+        raise ValueError(f"Unsupported format: {name}")
+    return kind
+
+
+def _dump_json(value: object) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+
+
+def _dump_yaml_value(value: object) -> str:
+    """Dump ``value`` with the same safe block style ``format_yaml`` uses."""
+    yaml = YAML(typ="safe")
+    yaml.default_flow_style = False
+    buffer = StringIO()
+    try:
+        yaml.dump(value, buffer)
+    except RecursionError:
+        return _dump_block(value)
+    dumped = buffer.getvalue()
+    if dumped and not dumped.endswith("\n"):
+        return dumped + "\n"
+    return dumped
+
+
+def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:
+    """Load YAML text ``format_yaml`` already accepted."""
+    yaml = YAML(typ="safe")
+    try:
+        return yaml.load(rendered)
+    except RecursionError:
+        return _yaml_from_events(original)

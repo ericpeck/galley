@@ -3,6 +3,7 @@
 from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtGui import (
     QAction,
+    QCloseEvent,
     QColor,
     QKeySequence,
     QPalette,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMenuBar,
+    QProgressBar,
     QPushButton,
     QToolButton,
     QVBoxLayout,
@@ -29,11 +31,13 @@ from galley.app.actions import ShellActions
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.pane import PaneRole, PaneWidget
+from galley.app.parse_session import ParseSession
 from galley.app.splitter import PaneSplitter
 from galley.app.style import (
     menu_style,
     muted_text_style,
     primary_button_style,
+    progress_style,
     status_bar_style,
 )
 from galley.app.theme import (
@@ -46,6 +50,9 @@ from galley.app.theme import (
 )
 
 NOT_YET_MESSAGE = "Not yet available."
+CANCELLED_MESSAGE = "Cancelled. Showing the previous result."
+FORMATTING_MESSAGE = "Formatting…"
+WRITING_MESSAGE = "Formatting… · writing output"
 _NOT_YET_MS = 4000
 
 
@@ -57,6 +64,12 @@ class MainWindow(QMainWindow):
         self._initial_show_done = False
         self._split_settled = False
         self._splitter: PaneSplitter | None = None
+        self._formatting = False
+        self._output_before_format = ""
+        self._format_source = "JSON"
+        self._format_target = "JSON"
+        self._format_idle_text = ""
+        self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
@@ -78,6 +91,18 @@ class MainWindow(QMainWindow):
         self._sync_output_state()
         self._sync_direction()
         self._splitter.apply_even_split()
+
+    def start_parse_worker(self) -> None:
+        """Start the warm formatter after runtime configuration."""
+        self._session.start()
+
+    def shutdown_parse_worker(self) -> None:
+        """Reap the formatter when the window is done with it."""
+        self._session.shutdown()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._session.shutdown()
+        super().closeEvent(event)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -220,7 +245,8 @@ class MainWindow(QMainWindow):
         hint = self._actions.format.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText
         )
-        button.setText(f"{{·}} Format {hint}".rstrip())
+        self._format_idle_text = f"{{·}} Format {hint}".rstrip()
+        button.setText(self._format_idle_text)
         self._actions.format.enabledChanged.connect(button.setEnabled)
         button.setEnabled(self._actions.format.isEnabled())
         button.clicked.connect(self._actions.format.trigger)
@@ -289,10 +315,24 @@ class MainWindow(QMainWindow):
         message = QLabel("Ready")
         message.setObjectName("statusMessage")
         message.setStyleSheet(muted_text_style())
+        self._write_progress = QProgressBar()
+        self._write_progress.setObjectName("writeProgress")
+        self._write_progress.setAccessibleName("Writing output")
+        self._write_progress.setTextVisible(True)
+        self._write_progress.setFormat("%p%")
+        self._write_progress.setFixedWidth(120)
+        self._write_progress.setStyleSheet(progress_style())
+        self._write_progress.hide()
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.setObjectName("cancelButton")
+        self._cancel_button.setAccessibleName("Cancel")
+        self._cancel_button.hide()
         direction = QLabel("JSON → JSON")
         direction.setObjectName("directionLabel")
         direction.setStyleSheet(muted_text_style())
         status.addWidget(message, 1)
+        status.addWidget(self._write_progress)
+        status.addWidget(self._cancel_button)
         status.addPermanentWidget(direction)
         return message, direction
 
@@ -328,6 +368,11 @@ class MainWindow(QMainWindow):
         actions.smaller.triggered.connect(self._zoom_out)
         actions.actual_size.triggered.connect(self._actual_size)
         actions.full_screen.toggled.connect(self._set_full_screen)
+        actions.format.triggered.connect(self._format)
+        self._cancel_button.clicked.connect(self._cancel_format)
+        self._session.write_progress.connect(self._on_write_progress)
+        self._session.succeeded.connect(self._on_format_succeeded)
+        self._session.failed.connect(self._on_format_failed)
 
         self._input_pane.editor.textChanged.connect(self._sync_input_state)
         self._output_pane.editor.textChanged.connect(self._sync_output_state)
@@ -387,6 +432,71 @@ class MainWindow(QMainWindow):
 
     def _not_yet(self) -> None:
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)
+
+    def _format(self) -> None:
+        if self._formatting:
+            return
+        text = self._input_pane.editor.toPlainText()
+        if text == "":
+            return
+        self._formatting = True
+        self._output_before_format = self._output_pane.editor.toPlainText()
+        self._format_source = self._input_pane.format_name()
+        self._format_target = self._output_pane.format_name()
+        self._status_message.setText(FORMATTING_MESSAGE)
+        self._write_progress.hide()
+        self._cancel_button.show()
+        self._format_button.setText(FORMATTING_MESSAGE)
+        self._session.start()
+        self._session.submit(text, self._format_source, self._format_target)
+
+    def _cancel_format(self) -> None:
+        """Restore the previous output, then kill the worker."""
+        if not self._formatting:
+            return
+        self._output_pane.editor.setPlainText(self._output_before_format)
+        self._status_message.setText(CANCELLED_MESSAGE)
+        self._write_progress.hide()
+        self._cancel_button.hide()
+        self._formatting = False
+        self._format_button.setText(self._format_idle_text)
+        self._session.cancel()
+
+    def _on_write_progress(self, written: int, total: int) -> None:
+        if not self._formatting:
+            return
+        maximum = total if total > 0 else 1
+        self._write_progress.setMaximum(maximum)
+        self._write_progress.setValue(min(written, maximum))
+        self._write_progress.show()
+        self._status_message.setText(WRITING_MESSAGE)
+
+    def _on_format_succeeded(self, text: str) -> None:
+        if not self._formatting:
+            return
+        self._output_pane.editor.setPlainText(text)
+        self._finish_format(self._success_status())
+
+    def _on_format_failed(self, message: str) -> None:
+        if not self._formatting:
+            return
+        self._finish_format(message)
+
+    def _finish_format(self, status: str) -> None:
+        self._formatting = False
+        self._status_message.setText(status)
+        self._write_progress.hide()
+        self._cancel_button.hide()
+        self._format_button.setText(self._format_idle_text)
+
+    def _success_status(self) -> str:
+        source = self._format_source.casefold()
+        target = self._format_target.casefold()
+        if source != target:
+            return "Converted"
+        if target == "yaml":
+            return "Valid YAML"
+        return "Valid JSON"
 
     def _focus_input(self) -> None:
         self._input_pane.editor.setFocus()

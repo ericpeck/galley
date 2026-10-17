@@ -4,6 +4,7 @@ from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
     ACCENT_STRONG,
+    GUTTER_BG,
     PANE_EDGE,
     TEXT,
     TEXT_MUTED,
@@ -54,6 +55,24 @@ def link_button_style() -> str:
         }}
         QPushButton:disabled {{
             color: {ACCENT_DISABLED};
+        }}
+        """
+
+
+def progress_style() -> str:
+    """Write-progress track on ``gutter.bg`` with an ``accent`` fill."""
+    return f"""
+        QProgressBar {{
+            background: {GUTTER_BG};
+            border: none;
+            border-radius: 2px;
+            text-align: center;
+            color: {TEXT};
+            min-height: 14px;
+            max-height: 14px;
+        }}
+        QProgressBar::chunk {{
+            background: {ACCENT};
         }}
         """
 
