@@ -6,6 +6,7 @@ from the parser. Banner sentences are not built here.
 """
 
 import json
+import re
 from io import StringIO
 
 from ruamel.yaml import YAML
@@ -57,15 +58,34 @@ _YAML_OPEN = (
 _YAML_CLOSE = (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)
 _SCALAR_QUOTES = set(":#{}[]&*!|>'\"%@`,")
 
+# Lone surrogates, as ``\u`` escapes or raw code units. A high unit immediately
+# followed by a low unit is a pair and is not a hit, unless a backslash before
+# that pair escapes the high unit and leaves the low unit lone.
+_LONE_SURROGATE_RE = re.compile(
+    r"(?<=\\)\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}"
+    r"|\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][c-fC-F][0-9a-fA-F]{2})"
+    r"|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][c-fC-F][0-9a-fA-F]{2}"
+    "|"
+    "[\ud800-\udfff]"
+)
+_CHARACTER_WALK = object()
+
 
 def format_json(text: str | bytes) -> str:
-    """Return ``text`` parsed as JSON and pretty-printed."""
+    """Return ``text`` parsed as JSON and pretty-printed.
+
+    Valid text is scanned for lone surrogates, parsed with ``json.loads``,
+    and checked against the nesting limit. The character walk runs only when
+    that path needs the walk's line and column.
+    """
     source = _decode_json(text)
-    opened = _json_limits(source)
+    parsed = _json_fast_value(source)
+    if parsed is _CHARACTER_WALK:
+        return _format_json_walk_first(source)
     try:
-        parsed = json.loads(source)
-        return json.dumps(parsed, indent=2, ensure_ascii=False) + "\n"
+        return _dump_json(parsed)
     except RecursionError:
+        opened = _json_limits(source)
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
 
@@ -114,12 +134,113 @@ def _decode_json(text: str | bytes) -> str:
     return decoded
 
 
+def _format_json_walk_first(text: str | bytes) -> str:
+    """Format JSON by walking characters before ``json.loads``.
+
+    This is the path ``format_json`` used before the fast scan. It still
+    places nesting and surrogate errors, and a parity test calls it with
+    the same input it passes to ``format_json``.
+    """
+    source = _decode_json(text)
+    opened = _json_limits(source)
+    try:
+        return _dump_json(json.loads(source))
+    except RecursionError:
+        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+
+
+def _json_fast_value(source: str) -> object:
+    """Return the parsed value, or ``_CHARACTER_WALK`` when the walk must run."""
+    if _has_lone_surrogate(source):
+        return _CHARACTER_WALK
+    try:
+        parsed = json.loads(source)
+    except RecursionError:
+        return _CHARACTER_WALK
+    except json.JSONDecodeError:
+        return _CHARACTER_WALK
+    if _json_nesting_exceeds(parsed, MAX_DEPTH):
+        return _CHARACTER_WALK
+    return parsed
+
+
+def _has_lone_surrogate(text: str) -> bool:
+    """Return True if ``text`` has a surrogate the character walk rejects."""
+    start = 0
+    while True:
+        match = _LONE_SURROGATE_RE.search(text, start)
+        if match is None:
+            return False
+        token = match.group()
+        if _lone_surrogate_match(text, match.start(), token):
+            return True
+        end = match.end()
+        if end <= start:
+            end = start + 1
+        start = end
+
+
+def _lone_surrogate_match(text: str, index: int, token: str) -> bool:
+    """Return True when a regex hit is a surrogate the walk rejects.
+
+    A backslash that is itself escaped is literal text, so two backslashes
+    before ``uD800`` are not a surrogate escape. If that prefix sits on a
+    high+low pair, the low unit is still lone.
+    """
+    real = _backslash_starts_escape(text, index)
+    if len(token) == 12:
+        return not real
+    return real
+
+
+def _backslash_starts_escape(text: str, index: int) -> bool:
+    """Return True when ``text[index]`` is not escaped by a backslash.
+
+    Inside a string the walk pairs backslashes from the left. An even run
+    of backslashes immediately before ``index`` is that same pairing.
+    """
+    count = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        count += 1
+        cursor -= 1
+    return count % 2 == 0
+
+
+def _json_nesting_exceeds(value: object, limit: int) -> bool:
+    """Return True when lists or dicts nest more containers than ``limit``.
+
+    An explicit stack keeps this off the call stack. A scalar has depth 0.
+    The outermost container is depth 1, which is what ``_json_limits`` counts.
+    """
+    if not isinstance(value, (dict, list)):
+        return False
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limit:
+            return True
+        if isinstance(node, dict):
+            nested = node.values()
+        else:
+            nested = node
+        child_depth = depth + 1
+        for child in nested:
+            if not isinstance(child, (dict, list)):
+                continue
+            if child_depth > limit:
+                return True
+            stack.append((child, child_depth))
+    return False
+
+
 def _json_limits(text: str) -> tuple[int, int, int]:
     """Reject nesting past the limit and lone UTF-16 surrogates.
 
-    Returns the 1-based line and column of the last container opened, and
-    that container's depth, so a later ``RecursionError`` still has a place
-    to point.
+    ``format_json`` calls this only when the fast path needs a location.
+    The 1-based line and column are the last container opened, and the
+    third value is that container's depth, so a later ``RecursionError``
+    still has a place to point.
     """
     depth = 0
     line = 1
