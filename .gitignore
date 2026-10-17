@@ -31,3 +31,6 @@ dist/
 
 # Project Vault
 Project Vault/
+
+# Size-benchmark reports. Synthetic inputs are created in a temp directory.
+benchmarks/results/
