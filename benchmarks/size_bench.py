@@ -1055,6 +1055,63 @@ def _regression_cutoff(
     }
 
 
+def _unavailable_cutoff(target_s: float) -> dict[str, Any]:
+    return {
+        "target_s": target_s,
+        "size_mb": None,
+        "size_bytes": None,
+        "summary": None,
+        "extrapolated": None,
+        "method": "unavailable",
+        "bracket_mb": None,
+        "bracket_s": None,
+    }
+
+
+def _outside_measured_cutoff(
+    target_s: float,
+    series: list[tuple[float, float]],
+    *,
+    relation: str,
+    size_mb: float,
+) -> dict[str, Any]:
+    """Name the edge of the measured ladder instead of extrapolating past it."""
+    summary = f"{relation} {_format_mb(size_mb)} MB"
+    return {
+        "target_s": target_s,
+        "size_mb": None,
+        "size_bytes": None,
+        "summary": summary,
+        "bound": relation,
+        "bound_size_mb": size_mb,
+        "extrapolated": False,
+        "method": "outside measured sizes",
+        "bracket_mb": [series[0][0], series[-1][0]],
+        "bracket_s": [round(series[0][1], 6), round(series[-1][1], 6)],
+    }
+
+
+def _clamp_to_measured_range(
+    point: dict[str, Any],
+    series: list[tuple[float, float]],
+    target_s: float,
+) -> dict[str, Any]:
+    size = point.get("size_mb")
+    if size is None:
+        return point
+    smallest = series[0][0]
+    largest = series[-1][0]
+    if float(size) > largest:
+        return _outside_measured_cutoff(
+            target_s, series, relation="above", size_mb=largest
+        )
+    if float(size) < smallest:
+        return _outside_measured_cutoff(
+            target_s, series, relation="below", size_mb=smallest
+        )
+    return point
+
+
 def interpolate_cutoff(
     rows: list[dict[str, Any]],
     target_s: float,
@@ -1066,15 +1123,15 @@ def interpolate_cutoff(
     ]
     series.sort(key=lambda pair: pair[0])
     if len(series) < 2:
-        return {
-            "target_s": target_s,
-            "size_mb": None,
-            "size_bytes": None,
-            "extrapolated": None,
-            "method": "unavailable",
-            "bracket_mb": None,
-            "bracket_s": None,
-        }
+        if len(series) == 1 and series[0][1] < target_s:
+            return _outside_measured_cutoff(
+                target_s, series, relation="above", size_mb=series[0][0]
+            )
+        if len(series) == 1 and series[0][1] > target_s:
+            return _outside_measured_cutoff(
+                target_s, series, relation="below", size_mb=series[0][0]
+            )
+        return _unavailable_cutoff(target_s)
     for (size_0, time_0), (size_1, time_1) in zip(series, series[1:]):
         low, high = sorted((time_0, time_1))
         if low <= target_s <= high and time_0 != time_1:
@@ -1087,31 +1144,20 @@ def interpolate_cutoff(
                 extrapolated=False,
                 method="log-log",
             )
-    if target_s >= max(seconds for _size, seconds in series):
-        (size_0, time_0), (size_1, time_1) = series[-2], series[-1]
-        if time_1 > time_0:
-            return _cutoff_point(
-                size_0,
-                time_0,
-                size_1,
-                time_1,
-                target_s,
-                extrapolated=True,
-                method="log-log",
-            )
-    if target_s <= min(seconds for _size, seconds in series):
-        (size_0, time_0), (size_1, time_1) = series[0], series[1]
-        if time_0 != time_1:
-            return _cutoff_point(
-                size_0,
-                time_0,
-                size_1,
-                time_1,
-                target_s,
-                extrapolated=True,
-                method="log-log",
-            )
-    return _regression_cutoff(series, target_s)
+    # Not reached on this ladder, or already passed at the smallest file.
+    if all(seconds < target_s for _size, seconds in series):
+        return _outside_measured_cutoff(
+            target_s, series, relation="above", size_mb=series[-1][0]
+        )
+    if all(seconds > target_s for _size, seconds in series):
+        return _outside_measured_cutoff(
+            target_s, series, relation="below", size_mb=series[0][0]
+        )
+    return _clamp_to_measured_range(
+        _regression_cutoff(series, target_s),
+        series,
+        target_s,
+    )
 
 
 def cutoffs_for(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1140,8 +1186,10 @@ def cutoffs_for(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "spinner_until_s": 2.0,
                 "progress_bar_from_s": 2.0,
                 "no_indicator_below_mb": slow["size_mb"],
+                "no_indicator_summary": slow.get("summary"),
                 "spinner_only_below_mb": progress["size_mb"],
                 "progress_bar_from_mb": progress["size_mb"],
+                "progress_bar_summary": progress.get("summary"),
                 "points": points,
             }
         )
@@ -1169,12 +1217,28 @@ def machine_info() -> dict[str, Any]:
 
 
 def _basis(point: dict[str, Any]) -> str:
+    if point.get("summary"):
+        return "outside measured sizes"
     if point.get("size_mb") is None:
         return "unavailable"
     method = str(point["method"])
     if point.get("extrapolated"):
         return f"{method} extrapolation"
     return f"{method} interpolation"
+
+
+def _cutoff_cell(point: dict[str, Any]) -> str:
+    summary = point.get("summary")
+    if isinstance(summary, str) and summary:
+        return summary
+    return _cell_mb(point.get("size_mb"))
+
+
+def _cutoff_phrase(point: dict[str, Any]) -> str:
+    summary = point.get("summary")
+    if isinstance(summary, str) and summary:
+        return summary
+    return f"{_cell_mb(point.get('size_mb'))} MB"
 
 
 def _mb(num_bytes: object) -> str:
@@ -1371,8 +1435,8 @@ def _cutoff_section(cutoffs: list[dict[str, Any]], *, lead_in: bool) -> list[str
             [
                 cutoff["source_format"],
                 cutoff["operation_id"],
-                _cell_mb(cutoff["no_indicator_below_mb"]),
-                _cell_mb(cutoff["progress_bar_from_mb"]),
+                _cutoff_cell(points[0.5]),
+                _cutoff_cell(points[2.0]),
                 _basis(points[0.5]),
                 _basis(points[2.0]),
             ]
@@ -1393,13 +1457,22 @@ def _cutoff_section(cutoffs: list[dict[str, Any]], *, lead_in: bool) -> list[str
         "",
     ]
     for cutoff in cutoffs:
-        spinner = _cell_mb(cutoff["no_indicator_below_mb"])
-        progress = _cell_mb(cutoff["progress_bar_from_mb"])
+        points = {point["target_s"]: point for point in cutoff["points"]}
+        slow = points[0.5]
+        progress = points[2.0]
+        slow_phrase = _cutoff_phrase(slow)
+        progress_phrase = _cutoff_phrase(progress)
+        prefix = f"- {cutoff['source_format']} (`{cutoff['operation_id']}`): "
+        if slow.get("summary") or progress.get("summary"):
+            lines.append(
+                f"{prefix}0.5 s cutoff is {slow_phrase}; "
+                f"2 s cutoff is {progress_phrase}."
+            )
+            continue
         lines.append(
-            f"- {cutoff['source_format']} (`{cutoff['operation_id']}`): "
-            f"no indicator under {spinner} MB; "
-            f"spinner only from {spinner} MB up to {progress} MB; "
-            f"progress bar with Cancel at {progress} MB and above."
+            f"{prefix}no indicator under {slow_phrase}; "
+            f"spinner only from {slow_phrase} up to {progress_phrase}; "
+            f"progress bar with Cancel at {progress_phrase} and above."
         )
     return lines
 
