@@ -54,13 +54,13 @@ from galley.app.theme import (
 NOT_YET_MESSAGE = "Not yet available."
 CANCELLED_MESSAGE = "Cancelled. Showing the previous result."
 FORMATTING_MESSAGE = "Formatting…"
-WRITING_MESSAGE = "Formatting… · writing output"
+WRITING_MESSAGE = "Writing output…"
 _NOT_YET_MS = 4000
 
 # Placeholders until Isaac's benchmark (ADR 0001, UI spec §10). Not tuned.
-# 0 shows the indicator as soon as that phase starts.
-SPINNER_REVEAL_MS = 0
-PROGRESS_BAR_REVEAL_MS = 0
+# The spinner and Cancel wait this long. The write bar waits longer.
+SPINNER_REVEAL_MS = 500
+PROGRESS_BAR_REVEAL_MS = 2000
 
 
 class MainWindow(QMainWindow):
@@ -259,7 +259,8 @@ class MainWindow(QMainWindow):
         )
         self._format_idle_text = f"{{·}} Format {hint}".rstrip()
         button.setText(self._format_idle_text)
-        self._actions.format.enabledChanged.connect(button.setEnabled)
+        self._format_button = button
+        self._actions.format.enabledChanged.connect(self._on_format_action_enabled)
         button.setEnabled(self._actions.format.isEnabled())
         button.clicked.connect(self._actions.format.trigger)
         return button
@@ -327,6 +328,14 @@ class MainWindow(QMainWindow):
         message = QLabel("Ready")
         message.setObjectName("statusMessage")
         message.setStyleSheet(muted_text_style())
+        self._format_spinner = QProgressBar()
+        self._format_spinner.setObjectName("formatSpinner")
+        self._format_spinner.setAccessibleName("Formatting")
+        self._format_spinner.setRange(0, 0)
+        self._format_spinner.setTextVisible(False)
+        self._format_spinner.setFixedWidth(48)
+        self._format_spinner.setStyleSheet(progress_style())
+        self._format_spinner.hide()
         self._write_progress = QProgressBar()
         self._write_progress.setObjectName("writeProgress")
         self._write_progress.setAccessibleName("Writing output")
@@ -342,6 +351,7 @@ class MainWindow(QMainWindow):
         direction = QLabel("JSON → JSON")
         direction.setObjectName("directionLabel")
         direction.setStyleSheet(muted_text_style())
+        status.addWidget(self._format_spinner)
         status.addWidget(message, 1)
         status.addWidget(self._write_progress)
         status.addWidget(self._cancel_button)
@@ -452,15 +462,16 @@ class MainWindow(QMainWindow):
         if text == "":
             return
         self._formatting = True
-        self._format_started_s = time.monotonic()
+        self._format_started_s = _monotonic()
         self._pending_write = None
         self._reveal_timer.stop()
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         self._format_target = self._output_pane.format_name()
         self._write_progress.hide()
-        self._cancel_button.show()
-        self._format_button.setText(FORMATTING_MESSAGE)
+        self._format_spinner.hide()
+        self._cancel_button.hide()
+        self._sync_format_button()
         self._apply_deferred_reveal()
         self._session.start()
         self._session.submit(text, self._format_source, self._format_target)
@@ -472,11 +483,12 @@ class MainWindow(QMainWindow):
         self._output_pane.editor.setPlainText(self._output_before_format)
         self._status_message.setText(CANCELLED_MESSAGE)
         self._write_progress.hide()
+        self._format_spinner.hide()
         self._cancel_button.hide()
         self._formatting = False
         self._pending_write = None
         self._reveal_timer.stop()
-        self._format_button.setText(self._format_idle_text)
+        self._sync_format_button()
         self._session.cancel()
 
     def _on_write_progress(self, written: int, total: int) -> None:
@@ -489,18 +501,24 @@ class MainWindow(QMainWindow):
         """Show the spinner status and the bar once their placeholders elapse."""
         if not self._formatting:
             return
-        if _reveal_due(SPINNER_REVEAL_MS, self._format_started_s):
-            if not self._write_progress.isVisible():
-                self._status_message.setText(FORMATTING_MESSAGE)
-        if self._pending_write is not None and _reveal_due(
+        spinner_due = _reveal_due(SPINNER_REVEAL_MS, self._format_started_s)
+        write_due = self._pending_write is not None and _reveal_due(
             PROGRESS_BAR_REVEAL_MS, self._format_started_s
-        ):
+        )
+        if write_due and self._pending_write is not None:
             written, total = self._pending_write
             maximum = total if total > 0 else 1
             self._write_progress.setMaximum(maximum)
             self._write_progress.setValue(min(written, maximum))
             self._write_progress.show()
+            self._format_spinner.hide()
+            self._cancel_button.show()
             self._status_message.setText(WRITING_MESSAGE)
+        elif spinner_due:
+            self._format_spinner.show()
+            self._cancel_button.show()
+            if not self._write_progress.isVisible():
+                self._status_message.setText(FORMATTING_MESSAGE)
         self._arm_reveal_timer()
 
     def _arm_reveal_timer(self) -> None:
@@ -535,8 +553,9 @@ class MainWindow(QMainWindow):
         self._reveal_timer.stop()
         self._status_message.setText(status)
         self._write_progress.hide()
+        self._format_spinner.hide()
         self._cancel_button.hide()
-        self._format_button.setText(self._format_idle_text)
+        self._sync_format_button()
 
     def _success_status(self) -> str:
         source = self._format_source.casefold()
@@ -658,6 +677,15 @@ class MainWindow(QMainWindow):
         else:
             self.showNormal()
 
+    def _on_format_action_enabled(self, _enabled: bool) -> None:
+        self._sync_format_button()
+
+    def _sync_format_button(self) -> None:
+        """Keep Format disabled for the whole job without changing its label."""
+        self._format_button.setEnabled(
+            self._actions.format.isEnabled() and not self._formatting
+        )
+
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
         text = editor.toPlainText()
@@ -707,8 +735,12 @@ def _tool_button(action: QAction) -> QToolButton:
     return button
 
 
+def _monotonic() -> float:
+    return time.monotonic()
+
+
 def _elapsed_ms(started_s: float) -> float:
-    return (time.monotonic() - started_s) * 1000
+    return (_monotonic() - started_s) * 1000
 
 
 def _reveal_due(delay_ms: int, started_s: float) -> bool:

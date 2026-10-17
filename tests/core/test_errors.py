@@ -15,6 +15,9 @@ _BANNER_PHRASES = (
     "Save the file as UTF-8",
     "Galley can format safely",
     "invalid character escape",
+    "The formatter stopped unexpectedly",
+    "Your text and file weren't changed",
+    "Press Format to try again",
 )
 
 

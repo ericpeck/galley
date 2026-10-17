@@ -3,14 +3,16 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
 
+from galley.app.banner import FORMATTER_STOPPED
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.main_window import CANCELLED_MESSAGE
-from galley.app.parse_session import ParseSession
+from galley.app.main_window import CANCELLED_MESSAGE, WRITING_MESSAGE
+from galley.app.parse_session import REAP_DEADLINE_MS, ParseSession
 from galley.core.format import format_json
 from galley.core.worker import FAULT_AFTER_TEMP
 
@@ -154,7 +156,7 @@ def test_cancel_updates_the_window_before_the_worker_is_killed(
         lambda: _mid_write(session)() and bar.isVisible(),
         timeout=_SPAWN_TIMEOUT_MS,
     )
-    assert status.text() == "Formatting… · writing output"
+    assert status.text() == WRITING_MESSAGE
     process = session.process
     assert process is not None
     joined: list[str] = []
@@ -178,14 +180,139 @@ def test_cancel_updates_the_window_before_the_worker_is_killed(
     assert joined == []
     assert killed == [CANCELLED_MESSAGE, previous, "hidden"]
     assert session.reaped_exitcode is None
-    qtbot.waitUntil(lambda: bool(joined), timeout=10000)
     qtbot.waitUntil(lambda: session.reaped_exitcode is not None, timeout=10000)
+    assert joined == []
     assert destination.read_bytes() == original
     assert _temps(tmp_path) == []
     _assert_reaped(session.reaped_pid)
     assert not bar.isVisible()
     assert status.text() == CANCELLED_MESSAGE
     assert output.toPlainText() == previous
+
+
+def test_reap_poll_does_not_block_or_spawn_over_a_live_child(
+    qtbot, tmp_path: Path
+) -> None:
+    session = ParseSession()
+    path = tmp_path / ".galley-slow.tmp"
+    path.write_text("pending", encoding="utf-8")
+    extra = tmp_path / ".galley-later.tmp"
+    joins: list[str] = []
+
+    class _SlowExit:
+        pid = 424242
+        exitcode: int | None = None
+
+        def join(self, timeout: float | None = None) -> None:
+            joins.append("join")
+            time.sleep(0.3)
+
+        def kill(self) -> None:
+            return
+
+    try:
+        session._retired_process = _SlowExit()  # type: ignore[assignment]
+        session._temps_to_delete = [str(path)]
+        session._reap_started_s = time.monotonic()
+        for _ in range(5):
+            assert _tick_ms(session) < 100
+            assert session.process is None
+            assert path.exists()
+        assert joins == []
+        session._reap_started_s = time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000
+        assert _tick_ms(session) < 100
+        assert session.process is None
+        assert path.exists()
+        assert str(path) in session._deferred_temps
+        assert joins == []
+        session._retired_process.exitcode = -9  # type: ignore[attr-defined]
+        session._poll()
+        assert joins == []
+        assert not path.exists()
+        assert session.process is not None
+        assert session.process.pid != 424242
+        assert session.reaped_pid == 424242
+        assert session.reaped_exitcode == -9
+        extra.write_text("later", encoding="utf-8")
+        session._deferred_temps.append(str(extra))
+        session.shutdown()
+        assert not path.exists()
+        assert not extra.exists()
+    finally:
+        session.shutdown()
+
+
+def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None:
+    destination, original = _original_file(tmp_path)
+    window = _show(qtbot)
+    window.start_parse_worker()
+    session = window._session
+    qtbot.waitUntil(_warm(session), timeout=_SPAWN_TIMEOUT_MS)
+    previous = "previous output\n"
+    editor = window.findChild(CodeEditor, "inputEditor")
+    output = window.findChild(CodeEditor, "outputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
+    assert status is not None
+    assert isinstance(button, QPushButton)
+    output.setPlainText(previous)
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    window._formatting = True
+    window._output_before_format = previous
+    try:
+        _submit_slow(session, destination)
+        qtbot.waitUntil(_mid_write(session), timeout=_SPAWN_TIMEOUT_MS)
+        process = session.process
+        assert process is not None
+        crashed_pid = process.pid
+        assert crashed_pid is not None
+        process.kill()
+        qtbot.waitUntil(
+            lambda: status.text() == FORMATTER_STOPPED,
+            timeout=_SPAWN_TIMEOUT_MS,
+        )
+        assert "line" not in status.text().casefold()
+        assert "column" not in status.text().casefold()
+        assert output.toPlainText() == previous
+        assert destination.read_bytes() == original
+        assert button.text() == idle_text
+
+        def _replaced() -> bool:
+            replacement = session.process
+            return (
+                replacement is not None
+                and replacement.pid not in (None, crashed_pid)
+                and replacement.exitcode is None
+            )
+
+        qtbot.waitUntil(_replaced, timeout=_SPAWN_TIMEOUT_MS)
+        replacement = session.process
+        assert replacement is not None
+        fresh_pid = replacement.pid
+        qtbot.waitUntil(lambda: button.isEnabled(), timeout=5000)
+        editor.setPlainText('{"b": 2}')
+        button.click()
+        qtbot.waitUntil(
+            lambda: output.toPlainText() == '{\n  "b": 2\n}\n',
+            timeout=_SPAWN_TIMEOUT_MS,
+        )
+        assert session.process is not None
+        assert session.process.pid == fresh_pid
+        assert session.process.exitcode is None
+        assert destination.read_bytes() == original
+        assert button.text() == idle_text
+        _assert_reaped(crashed_pid)
+    finally:
+        window.shutdown_parse_worker()
+
+
+def _tick_ms(session: ParseSession) -> float:
+    started = time.perf_counter()
+    session._poll()
+    return (time.perf_counter() - started) * 1000
 
 
 def _show(qtbot):

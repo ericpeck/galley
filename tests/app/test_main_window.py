@@ -1,6 +1,7 @@
 """Smoke tests for the Galley window, menus, and process start method."""
 
 import ast
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +20,12 @@ from PySide6.QtWidgets import (
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.main_window import FORMATTING_MESSAGE, NOT_YET_MESSAGE
+from galley.app.main_window import (
+    FORMATTING_MESSAGE,
+    NOT_YET_MESSAGE,
+    SPINNER_REVEAL_MS,
+    WRITING_MESSAGE,
+)
 from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -400,16 +406,24 @@ def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
     output = window.findChild(CodeEditor, "outputEditor")
     status = window.findChild(QLabel, "statusMessage")
     bar = window.findChild(QProgressBar, "writeProgress")
+    spinner = window.findChild(QProgressBar, "formatSpinner")
     cancel = window.findChild(QPushButton, "cancelButton")
+    button = window.findChild(QPushButton, "formatButton")
     assert isinstance(editor, CodeEditor)
     assert isinstance(output, CodeEditor)
     assert status is not None
     assert isinstance(bar, QProgressBar)
+    assert isinstance(spinner, QProgressBar)
     assert isinstance(cancel, QPushButton)
+    assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
     _action(window, "Format").trigger()
-    assert status.text() == FORMATTING_MESSAGE
     assert not bar.isVisible()
+    assert not spinner.isVisible()
+    assert not cancel.isVisible()
+    assert button.text() == idle_text
+    assert not button.isEnabled()
 
     def _done() -> bool:
         assert not bar.isVisible()
@@ -419,6 +433,183 @@ def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
     assert output.toPlainText() == '{\n  "a": 1\n}\n'
     assert status.text() == "Valid JSON"
     assert not cancel.isVisible()
+    assert not spinner.isVisible()
+    assert button.text() == idle_text
+    assert button.isEnabled()
+
+
+def test_quick_format_hides_the_spinner_and_cancel(qtbot, monkeypatch) -> None:
+    clock = _freeze_clock(monkeypatch)
+    window = _show(qtbot)
+    window.start_parse_worker()
+    qtbot.waitUntil(
+        lambda: (
+            window._session.process is not None
+            and window._session.process.pid is not None
+        ),
+        timeout=15000,
+    )
+    editor = window.findChild(CodeEditor, "inputEditor")
+    output = window.findChild(CodeEditor, "outputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    bar = window.findChild(QProgressBar, "writeProgress")
+    spinner = window.findChild(QProgressBar, "formatSpinner")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
+    assert status is not None
+    assert isinstance(bar, QProgressBar)
+    assert isinstance(spinner, QProgressBar)
+    assert isinstance(cancel, QPushButton)
+    assert isinstance(button, QPushButton)
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    clock["now"] = 1_000.0
+    _action(window, "Format").trigger()
+    assert not spinner.isVisible()
+    assert not cancel.isVisible()
+    assert not bar.isVisible()
+    assert button.text() == idle_text
+    assert not button.isEnabled()
+
+    def _done() -> bool:
+        assert not spinner.isVisible()
+        assert not cancel.isVisible()
+        assert not bar.isVisible()
+        assert button.text() == idle_text
+        assert status.text() not in {FORMATTING_MESSAGE, WRITING_MESSAGE}
+        return output.toPlainText() != ""
+
+    qtbot.waitUntil(_done, timeout=15000)
+    assert output.toPlainText() == '{\n  "a": 1\n}\n'
+    assert status.text() == "Valid JSON"
+    assert button.text() == idle_text
+    assert button.isEnabled()
+
+
+def test_spinner_and_cancel_appear_with_the_spinner_delay(qtbot, monkeypatch) -> None:
+    clock = _freeze_clock(monkeypatch)
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    bar = window.findChild(QProgressBar, "writeProgress")
+    spinner = window.findChild(QProgressBar, "formatSpinner")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert status is not None
+    assert isinstance(bar, QProgressBar)
+    assert isinstance(spinner, QProgressBar)
+    assert isinstance(cancel, QPushButton)
+    assert isinstance(button, QPushButton)
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    started = 1_000.0
+    clock["now"] = started
+    _action(window, "Format").trigger()
+    assert not spinner.isVisible()
+    assert not cancel.isVisible()
+    assert button.text() == idle_text
+    assert not button.isEnabled()
+    clock["now"] = started + (SPINNER_REVEAL_MS - 1) / 1000
+    window._apply_deferred_reveal()
+    assert not spinner.isVisible()
+    assert not cancel.isVisible()
+    assert status.text() != FORMATTING_MESSAGE
+    clock["now"] = started + SPINNER_REVEAL_MS / 1000
+    window._apply_deferred_reveal()
+    assert spinner.isVisible()
+    assert cancel.isVisible()
+    assert not bar.isVisible()
+    assert spinner.accessibleName() == "Formatting"
+    assert spinner.minimum() == 0
+    assert spinner.maximum() == 0
+    assert not spinner.isTextVisible()
+    assert status.text() == FORMATTING_MESSAGE
+    assert button.text() == idle_text
+    assert not button.isEnabled()
+
+
+def test_write_bar_appears_after_the_progress_delay(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    clock = _freeze_clock(monkeypatch)
+    window = _show(qtbot)
+    window.start_parse_worker()
+    session = window._session
+    qtbot.waitUntil(
+        lambda: session.process is not None and session.process.pid is not None,
+        timeout=15000,
+    )
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    bar = window.findChild(QProgressBar, "writeProgress")
+    spinner = window.findChild(QProgressBar, "formatSpinner")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert status is not None
+    assert isinstance(bar, QProgressBar)
+    assert isinstance(spinner, QProgressBar)
+    assert isinstance(cancel, QPushButton)
+    assert isinstance(button, QPushButton)
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    assert _action(window, "Format").isEnabled()
+    started = 2_000.0
+    clock["now"] = started
+    window._formatting = True
+    window._format_started_s = started
+    window._sync_format_button()
+    destination = tmp_path / "out.json"
+    destination.write_bytes(b"{}")
+    try:
+        text = json.dumps({"blob": "x" * 80000})
+        session.submit(
+            text,
+            "json",
+            "json",
+            destination=str(destination),
+            chunk_size=4096,
+            chunk_pause_s=0.2,
+        )
+        qtbot.waitUntil(
+            lambda: session.total > 0 and 0 < session.written < session.total,
+            timeout=15000,
+        )
+        assert not spinner.isVisible()
+        assert not cancel.isVisible()
+        assert not bar.isVisible()
+        clock["now"] = started + SPINNER_REVEAL_MS / 1000
+        window._apply_deferred_reveal()
+        assert spinner.isVisible()
+        assert cancel.isVisible()
+        assert not bar.isVisible()
+        assert status.text() == FORMATTING_MESSAGE
+        clock["now"] = started + 1999 / 1000
+        window._apply_deferred_reveal()
+        assert not bar.isVisible()
+        clock["now"] = started + 2000 / 1000
+        window._apply_deferred_reveal()
+        assert bar.isVisible()
+        assert not spinner.isVisible()
+        assert cancel.isVisible()
+        assert status.text() == WRITING_MESSAGE
+        assert button.text() == idle_text
+        assert not button.isEnabled()
+    finally:
+        window.shutdown_parse_worker()
+
+
+def _freeze_clock(monkeypatch):
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        "galley.app.main_window._monotonic",
+        lambda: clock["now"],
+    )
+    return clock
 
 
 def test_configure_runtime_leaves_start_method_unset() -> None:
