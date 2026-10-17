@@ -11,4 +11,4 @@ alwaysApply: true
 - Do not use `eval` or `exec`. Convert from Python must parse with `ast` and must never run user code.
 - Stay cross-platform. Do not add macOS-only or Windows-only code paths.
 - Put tests in `tests/`, mirroring the module they cover (`tests/core` for `galley.core`, `tests/app` for `galley.app`). Run them with `uv run pytest`. The suite sets `QT_QPA_PLATFORM=offscreen`.
-- Do not add GitHub Actions workflows unless asked. `packaging/galley.spec` is only a placeholder for a later PyInstaller one-folder build.
+- Do not add GitHub Actions workflows unless asked. `packaging/galley.spec` is the unsigned macOS PyInstaller build used by `.github/workflows/release-macos.yml`.
