@@ -58,9 +58,11 @@ Conversion parses with `ast.parse` and edits the user's text in place from node 
 
 `tests/test_no_exec.py` already rejects `eval` and `exec` under `src/` and `tests/`, and checks that Ruff selects `S102` and `S307`.
 
-### 4. YAML uses ruamel.yaml round-trip
+### 4. YAML formatting keeps the located-error loader
 
-Load and dump YAML with `ruamel.yaml` in round-trip mode (`YAML(typ="rt")`), which keeps comments and key order. The starter's `format_yaml` uses `typ="safe"`, which drops comments; formatting code uses round-trip. Unknown tags, including `!!python/...`, raise, as they do in safe mode. A collection is registered before its children are built, so a recursive alias stays shared instead of being written as null. Sort-keys may move comments (UI spec §5.12). JSON formatting stays on the stdlib.
+`format_json` and `format_yaml` are the formatters that raise `InputError` (`kind`, `lineno`, `colno`, `details`) for invalid UTF-8, nesting past `MAX_DEPTH`, and JSON lone surrogates. YAML uses `YAML(typ="safe")`. Documents deeper than ruamel can recurse are built with an explicit stack. The worker calls those functions through `format_document` and does not replace them with round-trip mode. Round-trip would keep comments, and it would also drop this depth guard and these located errors. Comment preservation stays open until it can sit on top of this loader.
+
+An `InputError` pickles as those four fields. `Exception` would otherwise rebuild it as `InputError(kind)` and raise `TypeError` in the parent. The worker copies the exception onto the failure event. Banner sentences are built in `galley.app`.
 
 ### 5. Cross-platform paths, shortcuts, and processes
 
@@ -82,7 +84,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 **`ast` span edits (chosen) vs `eval` or `ast.literal_eval`.** `eval` runs the user's code. `literal_eval` still evaluates an expression and cannot apply the in-place span edits in UI spec §9. `ast.parse` yields positions and does not run the tree.
 
-**ruamel round-trip (chosen) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. It is stricter and slower than a safe dump.
+**ruamel round-trip (recorded) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. The located-error formatter that landed uses safe mode, the depth limit, and an explicit stack. This worker calls that formatter. Switching it to round-trip would replace those checks.
 
 **`get_context("spawn")` (chosen) vs a global `set_start_method`.** `spawn` is the default on macOS since Python 3.8 and the default on Windows, so both targets already need a picklable worker and `freeze_support()`. A global `set_start_method("spawn")` raises if it is called again, including from tests and from a second window. `get_context("spawn")` starts the child from that context and does not touch global state. A global call that remains has to pass `force=True` or run once. Leaving the method unset uses `fork` wherever that is the default, and `fork` after threads have started deadlocks.
 
@@ -93,7 +95,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 - The destination file changes only inside `os.replace` on the UI process, after success.
 - The session keeps a second interpreter for the warm worker. Respawn stays off the Cancel path, and the replacement gets new queues.
 - Convert from Python rewrites the current buffer from spans. It does not re-serialize the document.
-- Round-trip YAML keeps comments the safe-mode stub drops. Data-equality checks still apply; comment and order behavior becomes part of the formatter.
+- YAML formatting stays on the safe loader and `InputError`. The worker does not rebuild banner sentences. The parent unpickles `kind`, `lineno`, `colno`, and `details`, and the app chooses the words.
 
 ## Risks
 
@@ -101,7 +103,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 - Cancel can leave a temp file. The UI deletes it on Cancel and on failure. A crash of the UI process can orphan one; the orphan is not the user's file.
 - Killing a worker while it uses a `multiprocessing.Queue` can corrupt that queue. After Cancel the replacement worker gets fresh queues. Queues are never reused across a killed worker.
 - `os.replace` is atomic on one volume, so the temp stays beside the destination. On Windows the worker closes the temp before the replace.
-- Round-trip mode uses more CPU than a safe dump. Stock round-trip accepts unknown tags and writes a recursive alias as null. This loader rejects those tags and keeps the alias shared. Safe mode still drops comments, so formatting does not switch back to it.
+- Safe mode drops comments. Restoring them with round-trip has to keep `InputError`, `MAX_DEPTH`, and the explicit-stack builder.
 - Moving `freeze_support()` off the entry path lets a frozen spawn child relaunch the GUI. The current test guards `configure_runtime`.
 - The UI reads the progress queue with a `QTimer`, or with a thread that only blocks on `Queue.get` and posts back to the UI thread. Cancel does not block on the queue.
 

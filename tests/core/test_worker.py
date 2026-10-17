@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from queue import Empty
 
+from galley.core.errors import InputError
 from galley.core.format import format_json
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
@@ -111,6 +112,25 @@ def test_worker_writes_a_temp_and_leaves_the_destination(tmp_path: Path) -> None
     assert destination.read_bytes() == original
     unlink_temp(success.temp_path)
     assert not temp.exists()
+
+
+def test_worker_error_reaches_the_parent_with_its_fields() -> None:
+    events = _run_job(
+        FormatJob(
+            job_id=1,
+            text='{"a": "\\uD800"}',
+            source="json",
+            target="json",
+        )
+    )
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    error = failure.error
+    assert isinstance(error, InputError)
+    assert error.kind == "bad_escape"
+    assert error.lineno == 1
+    assert error.colno == 8
+    assert error.details == {"escape": "\\uD800"}
 
 
 def test_worker_module_does_not_replace_the_destination() -> None:

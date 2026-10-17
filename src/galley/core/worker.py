@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from multiprocessing.queues import Queue
 from typing import BinaryIO
 
+from galley.core.errors import InputError
 from galley.core.format import format_document
 
 TEMP_PREFIX = ".galley-"
@@ -62,11 +63,17 @@ class SuccessEvent:
 
 @dataclass(frozen=True)
 class FailureEvent:
-    """Formatting failed. ``temp_path`` is set when a temp file was created."""
+    """Formatting failed. ``temp_path`` is set when a temp file was created.
+
+    ``error`` is set when the failure is an ``InputError``. Its ``kind``,
+    ``lineno``, ``colno``, and ``details`` are the structured fields. The
+    banner sentence is built in the app, not here.
+    """
 
     job_id: int
     message: str
     temp_path: str | None = None
+    error: InputError | None = None
 
 
 def run_worker(job_queue: Queue, event_queue: Queue) -> None:
@@ -118,7 +125,7 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     try:
         text = format_document(job.text, job.source, job.target)
     except Exception as exc:
-        event_queue.put(FailureEvent(job.job_id, _failure_message(exc), None))
+        event_queue.put(_failure_event(job.job_id, exc, None))
         return
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
@@ -128,7 +135,7 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     try:
         temp_path = _write_output(job, payload, event_queue)
     except Exception as exc:
-        event_queue.put(FailureEvent(job.job_id, _failure_message(exc), temp_path))
+        event_queue.put(_failure_event(job.job_id, exc, temp_path))
         return
     if job.fault == FAULT_AFTER_TEMP:
         event_queue.put(FailureEvent(job.job_id, "forced failure", temp_path))
@@ -187,6 +194,11 @@ def _report_write(
     total: int,
 ) -> None:
     event_queue.put(ProgressEvent(job_id, "write", written, total, temp_path))
+
+
+def _failure_event(job_id: int, exc: Exception, temp_path: str | None) -> FailureEvent:
+    error = exc if isinstance(exc, InputError) else None
+    return FailureEvent(job_id, _failure_message(exc), temp_path, error)
 
 
 def _failure_message(exc: Exception) -> str:

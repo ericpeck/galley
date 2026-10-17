@@ -15,6 +15,7 @@ from queue import Empty
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from galley.app.banner import banner_text
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
     FailureEvent,
@@ -392,7 +393,7 @@ class ParseSession(QObject):
         self._active = None
         self._pending = None
         unlink_temp(path)
-        self.failed.emit(event.message)
+        self.failed.emit(_failure_text(event))
 
     def _unlink_queued_temps(self) -> None:
         while self._temps_to_delete:
@@ -454,3 +455,10 @@ class ParseSession(QObject):
 
     def _dispose_queue(self, queue: Queue | None) -> None:
         _dispose_queue(queue)
+
+
+def _failure_text(event: FailureEvent) -> str:
+    """Banner sentence for a located error; other failures keep their message."""
+    if event.error is None:
+        return event.message
+    return banner_text(event.error)

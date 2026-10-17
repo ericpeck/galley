@@ -96,6 +96,21 @@ def test_worker_failure_keeps_the_original_and_removes_the_temp(
         session.shutdown()
 
 
+def test_input_error_is_shown_as_a_banner(qtbot) -> None:
+    session = _started(qtbot)
+    messages: list[str] = []
+    session.failed.connect(messages.append)
+    try:
+        session.submit('{"a": "\\uD800"}', "json", "json")
+        qtbot.waitUntil(lambda: bool(messages), timeout=_SPAWN_TIMEOUT_MS)
+        assert messages == [
+            "Line 1, column 8 has an invalid "
+            "character escape (\\uD800) that can't be saved as UTF-8."
+        ]
+    finally:
+        session.shutdown()
+
+
 def test_success_replaces_the_destination(qtbot, tmp_path: Path) -> None:
     destination = tmp_path / "out.json"
     destination.write_bytes(b"OLD")
