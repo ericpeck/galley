@@ -7,6 +7,7 @@ from the parser. Banner sentences are not built here.
 
 import json
 from io import StringIO
+from typing import NoReturn
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -71,30 +72,38 @@ def format_json(text: str | bytes) -> str:
 
 def format_yaml(text: str | bytes) -> str:
     """Return ``text`` parsed as YAML and dumped as a block document."""
-    opened = _yaml_limits(text)
+    source = _decode_utf8(text)
+    opened = _yaml_limits(source)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
-            parsed = _yaml_from_events(text)
+            parsed = _yaml_from_events(source)
             return _dump_block(parsed)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    yaml = YAML(typ="safe")
-    yaml.default_flow_style = False
+        except (ReaderError, YAMLError) as exc:
+            _reraise_pure_safe_error(source, exc)
     try:
-        parsed = yaml.load(text)
+        parsed = _load_c_safe(source)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    except ReaderError as exc:
-        error = _reader_utf8_error(text, exc)
-        if error is not None:
-            raise error from None
-        raise
-    buffer = StringIO()
+    except (ReaderError, YAMLError) as exc:
+        _reraise_pure_safe_error(source, exc)
+    return _dump_c_safe(source, parsed, opened)
+
+
+def _decode_utf8(text: str | bytes) -> str:
+    """Return text, or bytes decoded as UTF-8.
+
+    Invalid bytes use the same located ``invalid_utf8`` error as JSON.
+    A leading BOM is left in place; YAML accepts it, and JSON strips it
+    itself.
+    """
+    if isinstance(text, str):
+        return text
     try:
-        yaml.dump(parsed, buffer)
-    except RecursionError:
-        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    return buffer.getvalue()
+        return text.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise utf8_input_error(text, exc.start) from None
 
 
 def _decode_json(text: str | bytes) -> str:
@@ -103,15 +112,54 @@ def _decode_json(text: str | bytes) -> str:
     ``json.loads`` accepts a BOM on bytes and rejects it on text. Decoding
     here keeps that split, and turns a bad byte into a located error.
     """
-    if isinstance(text, str):
-        return text
-    try:
-        decoded = text.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise utf8_input_error(text, exc.start) from None
-    if decoded.startswith("\ufeff"):
+    decoded = _decode_utf8(text)
+    if isinstance(text, bytes) and decoded.startswith("\ufeff"):
         return decoded[1:]
     return decoded
+
+
+def _c_safe_yaml() -> YAML:
+    """Safe YAML for the fast path. Uses the C loader and emitter when installed."""
+    return YAML(typ="safe")
+
+
+def _pure_safe_yaml() -> YAML:
+    """Pure-Python safe YAML. Used only to rebuild an error, never to dump."""
+    return YAML(typ="safe", pure=True)
+
+
+def _load_c_safe(text: str) -> object:
+    return _c_safe_yaml().load(text)
+
+
+def _dump_c_safe(source: str, parsed: object, opened: tuple[int, int, int]) -> str:
+    yaml = _c_safe_yaml()
+    yaml.default_flow_style = False
+    buffer = StringIO()
+    try:
+        yaml.dump(parsed, buffer)
+    except RecursionError:
+        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+    except (ReaderError, YAMLError) as exc:
+        _reraise_pure_safe_error(source, exc)
+    return buffer.getvalue()
+
+
+def _reraise_pure_safe_error(text: str, c_error: BaseException) -> NoReturn:
+    """Re-parse ``text`` with the pure-Python safe loader and raise that error.
+
+    ``ReaderError`` and every other ``YAMLError`` from the C path come here.
+    The pure loader's marks match the locations already covered by tests.
+    If the pure loader accepts the document, it is not dumped; ``c_error``
+    is raised instead, so this fallback cannot change successful output.
+    """
+    try:
+        _pure_safe_yaml().load(text)
+    except RecursionError:
+        raise
+    except (ReaderError, YAMLError):
+        raise
+    raise c_error
 
 
 def _json_limits(text: str) -> tuple[int, int, int]:
@@ -203,12 +251,13 @@ def _yaml_limits(text: str | bytes) -> tuple[int, int, int]:
     Windows stack. The returned line, column, and depth are the last
     container the scanner opened.
     """
-    yaml = YAML(typ="safe")
+    source = _decode_utf8(text)
+    yaml = _c_safe_yaml()
     depth = 0
     deepest = 0
     opened = (1, 1, 0)
     try:
-        for token in yaml.scan(text):
+        for token in yaml.scan(source):
             if isinstance(token, _YAML_OPEN):
                 depth += 1
                 if depth > deepest:
@@ -252,7 +301,8 @@ def _reader_utf8_error(text: str | bytes, exc: ReaderError) -> InputError | None
 
 def _yaml_from_events(text: str | bytes) -> object:
     """Build one document from parser events with an explicit stack."""
-    yaml = YAML(typ="safe")
+    source = _decode_utf8(text)
+    yaml = _c_safe_yaml()
     anchors: dict[str, object] = {}
     stack: list[list[object]] = []
     root: object = None
@@ -279,7 +329,7 @@ def _yaml_from_events(text: str | bytes) -> object:
         frame[0] = "key"
         frame[2] = None
 
-    for event in yaml.parse(text):
+    for event in yaml.parse(source):
         if isinstance(event, MappingStartEvent):
             node: object = {}
             if event.anchor:
@@ -458,7 +508,7 @@ def _dump_json(value: object) -> str:
 
 def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with the same safe block style ``format_yaml`` uses."""
-    yaml = YAML(typ="safe")
+    yaml = _c_safe_yaml()
     yaml.default_flow_style = False
     buffer = StringIO()
     try:
@@ -473,7 +523,7 @@ def _dump_yaml_value(value: object) -> str:
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:
     """Load YAML text ``format_yaml`` already accepted."""
-    yaml = YAML(typ="safe")
+    yaml = _c_safe_yaml()
     try:
         return yaml.load(rendered)
     except RecursionError:
