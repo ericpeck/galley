@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
 
+from galley.app import parse_session as parse_session_module
 from galley.app.banner import FORMATTER_STOPPED
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
@@ -325,6 +326,81 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
         rig.window.shutdown_parse_worker()
 
 
+def test_second_cancel_inside_reap_deadline_queues_once(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """Cancel, format, and cancel again while the first worker is still alive.
+
+    Both cancels stay inside the reap deadline. A second job must not start
+    another replacement, queue a stuck worker twice, or replace the
+    Cancelled status with the crash banner.
+    """
+    rig = _stuck_cancel(qtbot, tmp_path)
+    session = rig.window._session
+    cancel = rig.window.findChild(QPushButton, "cancelButton")
+    assert isinstance(cancel, QPushButton)
+    unlinked: list[str | None] = []
+    spawned: list[int] = []
+    original_unlink = parse_session_module.unlink_temp
+    real_spawn = session._spawn
+
+    def _track_unlink(path: str | None) -> None:
+        unlinked.append(path)
+        original_unlink(path)
+
+    def _spawn_and_count() -> None:
+        real_spawn()
+        process = session.process
+        assert process is not None
+        spawned.append(id(process))
+
+    monkeypatch.setattr(parse_session_module, "unlink_temp", _track_unlink)
+    session._spawn = _spawn_and_count  # type: ignore[method-assign]
+    try:
+        assert _within_reap_deadline(session)
+        assert session.process is None
+        assert session._retired_process is rig.stuck
+        _poll_within_deadline(rig, session, 3)
+
+        rig.button.click()
+        session._timer.stop()
+        rig.window._reveal_timer.stop()
+        assert rig.window._formatting
+        assert session.has_pending_job
+        assert _within_reap_deadline(session)
+        _poll_within_deadline(rig, session, 3)
+        assert session.process is None
+        assert rig.status.text() == CANCELLED_MESSAGE
+
+        cancel.show()
+        cancel.click()
+        session._timer.stop()
+        assert not rig.window._formatting
+        assert not session.has_pending_job
+        assert _within_reap_deadline(session)
+        _poll_within_deadline(rig, session, 3)
+
+        assert len(spawned) <= 1
+        assert session.process is None
+        assert session._retired_process is rig.stuck
+        _assert_stuck_worker_queued_once(session, rig.stuck, rig.temp_path)
+        assert rig.temp_path not in unlinked
+        assert rig.status.text() == CANCELLED_MESSAGE
+        assert FORMATTER_STOPPED not in rig.status.text()
+        assert rig.output.toPlainText() == "previous output\n"
+        assert rig.destination.read_bytes() == rig.original
+        assert rig.joins == []
+        assert rig.ticks
+        assert all(tick < 100 for tick in rig.ticks)
+
+        rig.window.shutdown_parse_worker()
+        assert unlinked.count(rig.temp_path) == 1
+        assert not Path(rig.temp_path).exists()
+        assert _queued_temps(session) == []
+    finally:
+        rig.window.shutdown_parse_worker()
+
+
 def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None:
     destination, original = _original_file(tmp_path)
     window = _show(qtbot)
@@ -483,6 +559,35 @@ def _stuck_cancel(qtbot, tmp_path: Path) -> _StuckCancel:
         stuck,
         temp_path,
     )
+
+
+def _queued_temps(session: ParseSession) -> list[str]:
+    return session._temps_to_delete + session._deferred_temps
+
+
+def _within_reap_deadline(session: ParseSession) -> bool:
+    elapsed = (time.monotonic() - session._reap_started_s) * 1000
+    return elapsed < REAP_DEADLINE_MS
+
+
+def _poll_within_deadline(rig: _StuckCancel, session: ParseSession, times: int) -> None:
+    """Poll inside the deadline. A replacement must not be running yet."""
+    for _ in range(times):
+        assert _within_reap_deadline(session)
+        rig.ticks.append(_tick_ms(session))
+        assert session.process is None
+
+
+def _assert_stuck_worker_queued_once(
+    session: ParseSession, worker: object, path: str
+) -> None:
+    """A worker that never exits is queued once and is not also reaped."""
+    exitcode = getattr(worker, "exitcode", None)
+    queued = _queued_temps(session)
+    assert exitcode is None
+    assert queued.count(path) == 1
+    assert len(queued) == len(set(queued))
+    assert Path(path).exists()
 
 
 def _tick_ms(session: ParseSession) -> float:

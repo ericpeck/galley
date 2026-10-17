@@ -7,7 +7,9 @@ exited, its temp file is deleted and a replacement starts with new queues.
 If the child is still alive after :data:`REAP_DEADLINE_MS`, the poll starts
 that replacement without changing the Cancelled status. A Format press that
 is still waiting is answered with the crash banner, and that job is then
-sent to the new worker. The temp path stays queued for shutdown.
+sent to the new worker. Cancelling that press before the deadline drops
+the unsent job only: the temp path stays queued once, and no second
+worker is started.
 """
 
 import atexit
@@ -258,22 +260,26 @@ class ParseSession(QObject):
         new ones. The temp file is removed once ``exitcode`` is set, so
         Windows can delete a file the worker still had open. This method
         does not wait. A child still alive after :data:`REAP_DEADLINE_MS`
-        keeps that path for shutdown. The poll starts a replacement without
-        joining and leaves the Cancelled status in place. A Format press
-        that is still waiting gets the crash banner, then runs on that
-        replacement.
+        keeps that path for shutdown. A second cancel while that child is
+        still inside the deadline drops the unsent job only. The queued
+        temp stays put, and no second worker is started. The poll starts
+        one replacement without joining and leaves the Cancelled status
+        in place. A Format press that is still waiting when the deadline
+        passes gets the crash banner, then runs on that replacement.
         """
         if self._shut_down or self._active is None:
             return
-        if self._active.temp_path:
-            self.last_temp_path = self._active.temp_path
-            self._temps_to_delete.append(self._active.temp_path)
+        temp_path = self._active.temp_path
+        if temp_path:
+            self.last_temp_path = temp_path
         self._active = None
         self._pending = None
         process = self._process
         if process is None:
-            self._unlink_queued_temps()
+            self._release_unsent_temp(temp_path)
             return
+        if temp_path:
+            self._queue_temp_once(temp_path)
         self._retire_current()
         _kill(process)
         self._reap_started_s = time.monotonic()
@@ -295,7 +301,7 @@ class ParseSession(QObject):
         self._closing = True
         self._timer.stop()
         if self._active is not None and self._active.temp_path:
-            self._temps_to_delete.append(self._active.temp_path)
+            self._queue_temp_once(self._active.temp_path)
         self._active = None
         self._pending = None
         if self._process is not None:
@@ -541,6 +547,31 @@ class ParseSession(QObject):
         self._pending = None
         unlink_temp(path)
         self.failed.emit(_failure_text(event))
+
+    def _release_unsent_temp(self, temp_path: str | None) -> None:
+        """Delete a temp that no worker has opened.
+
+        A child that is still being reaped keeps the paths already queued
+        for it. Those are removed once, when that child exits or when the
+        UI process shuts down. This does not start a replacement.
+        """
+        if self._retired_process is not None:
+            if not self._temp_is_queued(temp_path):
+                unlink_temp(temp_path)
+            return
+        if temp_path:
+            self._queue_temp_once(temp_path)
+        self._unlink_queued_temps()
+
+    def _queue_temp_once(self, path: str) -> None:
+        if self._temp_is_queued(path):
+            return
+        self._temps_to_delete.append(path)
+
+    def _temp_is_queued(self, path: str | None) -> bool:
+        if path is None:
+            return False
+        return path in self._temps_to_delete or path in self._deferred_temps
 
     def _unlink_queued_temps(self) -> None:
         while self._temps_to_delete:
