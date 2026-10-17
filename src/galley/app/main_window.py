@@ -1,8 +1,11 @@
 """Galley main window: menus, toolbar, panes, and status bar."""
 
-from PySide6.QtCore import QEvent, QPoint, Qt
+import time
+
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
+    QCloseEvent,
     QColor,
     QKeySequence,
     QPalette,
@@ -19,6 +22,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMenuBar,
+    QProgressBar,
     QPushButton,
     QToolButton,
     QVBoxLayout,
@@ -29,11 +33,13 @@ from galley.app.actions import ShellActions
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.pane import PaneRole, PaneWidget
+from galley.app.parse_session import ParseSession
 from galley.app.splitter import PaneSplitter
 from galley.app.style import (
     menu_style,
     muted_text_style,
     primary_button_style,
+    progress_style,
     status_bar_style,
 )
 from galley.app.theme import (
@@ -46,7 +52,15 @@ from galley.app.theme import (
 )
 
 NOT_YET_MESSAGE = "Not yet available."
+CANCELLED_MESSAGE = "Cancelled. Showing the previous result."
+FORMATTING_MESSAGE = "Formatting…"
+WRITING_MESSAGE = "Writing output…"
 _NOT_YET_MS = 4000
+
+# Placeholders until Isaac's benchmark (ADR 0001, UI spec §10). Not tuned.
+# The spinner and Cancel wait this long. The write bar waits longer.
+SPINNER_REVEAL_MS = 500
+PROGRESS_BAR_REVEAL_MS = 2000
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +71,17 @@ class MainWindow(QMainWindow):
         self._initial_show_done = False
         self._split_settled = False
         self._splitter: PaneSplitter | None = None
+        self._formatting = False
+        self._format_started_s = 0.0
+        self._pending_write: tuple[int, int] | None = None
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(self._apply_deferred_reveal)
+        self._output_before_format = ""
+        self._format_source = "JSON"
+        self._format_target = "JSON"
+        self._format_idle_text = ""
+        self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
@@ -78,6 +103,18 @@ class MainWindow(QMainWindow):
         self._sync_output_state()
         self._sync_direction()
         self._splitter.apply_even_split()
+
+    def start_parse_worker(self) -> None:
+        """Start the warm formatter after runtime configuration."""
+        self._session.start()
+
+    def shutdown_parse_worker(self) -> None:
+        """Reap the formatter when the window is done with it."""
+        self._session.shutdown()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._session.shutdown()
+        super().closeEvent(event)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -220,8 +257,10 @@ class MainWindow(QMainWindow):
         hint = self._actions.format.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText
         )
-        button.setText(f"{{·}} Format {hint}".rstrip())
-        self._actions.format.enabledChanged.connect(button.setEnabled)
+        self._format_idle_text = f"{{·}} Format {hint}".rstrip()
+        button.setText(self._format_idle_text)
+        self._format_button = button
+        self._actions.format.enabledChanged.connect(self._on_format_action_enabled)
         button.setEnabled(self._actions.format.isEnabled())
         button.clicked.connect(self._actions.format.trigger)
         return button
@@ -289,10 +328,33 @@ class MainWindow(QMainWindow):
         message = QLabel("Ready")
         message.setObjectName("statusMessage")
         message.setStyleSheet(muted_text_style())
+        self._format_spinner = QProgressBar()
+        self._format_spinner.setObjectName("formatSpinner")
+        self._format_spinner.setAccessibleName("Formatting")
+        self._format_spinner.setRange(0, 0)
+        self._format_spinner.setTextVisible(False)
+        self._format_spinner.setFixedWidth(48)
+        self._format_spinner.setStyleSheet(progress_style())
+        self._format_spinner.hide()
+        self._write_progress = QProgressBar()
+        self._write_progress.setObjectName("writeProgress")
+        self._write_progress.setAccessibleName("Writing output")
+        self._write_progress.setTextVisible(True)
+        self._write_progress.setFormat("%p%")
+        self._write_progress.setFixedWidth(120)
+        self._write_progress.setStyleSheet(progress_style())
+        self._write_progress.hide()
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.setObjectName("cancelButton")
+        self._cancel_button.setAccessibleName("Cancel")
+        self._cancel_button.hide()
         direction = QLabel("JSON → JSON")
         direction.setObjectName("directionLabel")
         direction.setStyleSheet(muted_text_style())
+        status.addWidget(self._format_spinner)
         status.addWidget(message, 1)
+        status.addWidget(self._write_progress)
+        status.addWidget(self._cancel_button)
         status.addPermanentWidget(direction)
         return message, direction
 
@@ -328,6 +390,11 @@ class MainWindow(QMainWindow):
         actions.smaller.triggered.connect(self._zoom_out)
         actions.actual_size.triggered.connect(self._actual_size)
         actions.full_screen.toggled.connect(self._set_full_screen)
+        actions.format.triggered.connect(self._format)
+        self._cancel_button.clicked.connect(self._cancel_format)
+        self._session.write_progress.connect(self._on_write_progress)
+        self._session.succeeded.connect(self._on_format_succeeded)
+        self._session.failed.connect(self._on_format_failed)
 
         self._input_pane.editor.textChanged.connect(self._sync_input_state)
         self._output_pane.editor.textChanged.connect(self._sync_output_state)
@@ -387,6 +454,117 @@ class MainWindow(QMainWindow):
 
     def _not_yet(self) -> None:
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)
+
+    def _format(self) -> None:
+        if self._formatting:
+            return
+        text = self._input_pane.editor.toPlainText()
+        if text == "":
+            return
+        self._formatting = True
+        self._format_started_s = _monotonic()
+        self._pending_write = None
+        self._reveal_timer.stop()
+        self._output_before_format = self._output_pane.editor.toPlainText()
+        self._format_source = self._input_pane.format_name()
+        self._format_target = self._output_pane.format_name()
+        self._write_progress.hide()
+        self._format_spinner.hide()
+        self._cancel_button.hide()
+        self._sync_format_button()
+        self._apply_deferred_reveal()
+        self._session.start()
+        self._session.submit(text, self._format_source, self._format_target)
+
+    def _cancel_format(self) -> None:
+        """Restore the previous output, then kill the worker."""
+        if not self._formatting:
+            return
+        self._output_pane.editor.setPlainText(self._output_before_format)
+        self._status_message.setText(CANCELLED_MESSAGE)
+        self._write_progress.hide()
+        self._format_spinner.hide()
+        self._cancel_button.hide()
+        self._formatting = False
+        self._pending_write = None
+        self._reveal_timer.stop()
+        self._sync_format_button()
+        self._session.cancel()
+
+    def _on_write_progress(self, written: int, total: int) -> None:
+        if not self._formatting:
+            return
+        self._pending_write = (written, total)
+        self._apply_deferred_reveal()
+
+    def _apply_deferred_reveal(self) -> None:
+        """Show the spinner status and the bar once their placeholders elapse."""
+        if not self._formatting:
+            return
+        spinner_due = _reveal_due(SPINNER_REVEAL_MS, self._format_started_s)
+        write_due = self._pending_write is not None and _reveal_due(
+            PROGRESS_BAR_REVEAL_MS, self._format_started_s
+        )
+        if write_due and self._pending_write is not None:
+            written, total = self._pending_write
+            maximum = total if total > 0 else 1
+            self._write_progress.setMaximum(maximum)
+            self._write_progress.setValue(min(written, maximum))
+            self._write_progress.show()
+            self._format_spinner.hide()
+            self._cancel_button.show()
+            self._status_message.setText(WRITING_MESSAGE)
+        elif spinner_due:
+            self._format_spinner.show()
+            self._cancel_button.show()
+            if not self._write_progress.isVisible():
+                self._status_message.setText(FORMATTING_MESSAGE)
+        self._arm_reveal_timer()
+
+    def _arm_reveal_timer(self) -> None:
+        if not self._formatting or self._reveal_timer.isActive():
+            return
+        elapsed = _elapsed_ms(self._format_started_s)
+        remaining: list[float] = []
+        if not _reveal_due(SPINNER_REVEAL_MS, self._format_started_s):
+            remaining.append(SPINNER_REVEAL_MS - elapsed)
+        if self._pending_write is not None and not _reveal_due(
+            PROGRESS_BAR_REVEAL_MS, self._format_started_s
+        ):
+            remaining.append(PROGRESS_BAR_REVEAL_MS - elapsed)
+        if not remaining:
+            return
+        self._reveal_timer.start(max(0, int(min(remaining))))
+
+    def _on_format_succeeded(self, text: str) -> None:
+        if not self._formatting:
+            return
+        self._output_pane.editor.setPlainText(text)
+        self._finish_format(self._success_status())
+
+    def _on_format_failed(self, message: str) -> None:
+        if not self._formatting:
+            return
+        self._finish_format(message)
+
+    def _finish_format(self, status: str) -> None:
+        self._formatting = False
+        self._pending_write = None
+        self._reveal_timer.stop()
+        self._status_message.setText(status)
+        self._write_progress.hide()
+        self._format_spinner.hide()
+        self._cancel_button.hide()
+        self._sync_format_button()
+
+    def _success_status(self) -> str:
+        source = self._format_source.casefold()
+        target = self._format_target.casefold()
+        if source != target:
+            return "Converted"
+        if target == "yaml":
+            return "Valid YAML"
+        return "Valid JSON"
 
     def _focus_input(self) -> None:
         self._input_pane.editor.setFocus()
@@ -499,6 +677,15 @@ class MainWindow(QMainWindow):
         else:
             self.showNormal()
 
+    def _on_format_action_enabled(self, _enabled: bool) -> None:
+        self._sync_format_button()
+
+    def _sync_format_button(self) -> None:
+        """Keep Format disabled for the whole job without changing its label."""
+        self._format_button.setEnabled(
+            self._actions.format.isEnabled() and not self._formatting
+        )
+
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
         text = editor.toPlainText()
@@ -546,6 +733,20 @@ def _tool_button(action: QAction) -> QToolButton:
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     button.setAutoRaise(True)
     return button
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _elapsed_ms(started_s: float) -> float:
+    return (_monotonic() - started_s) * 1000
+
+
+def _reveal_due(delay_ms: int, started_s: float) -> bool:
+    if delay_ms <= 0:
+        return True
+    return _elapsed_ms(started_s) >= delay_ms
 
 
 def _editor_from(widget: QWidget | None) -> CodeEditor | None:

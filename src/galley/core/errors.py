@@ -34,6 +34,28 @@ class InputError(Exception):
         self.colno = colno
         self.details = details
 
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        """Pickle ``kind``, line, column, and ``details`` for a spawn child.
+
+        ``Exception`` rebuilds from ``args`` only. That calls ``InputError``
+        with the kind and drops the keyword-only fields, so spawn would not
+        deliver a located error.
+        """
+        return (
+            _restore_input_error,
+            (self.kind, self.lineno, self.colno, dict(self.details)),
+        )
+
+
+def _restore_input_error(
+    kind: InputKind,
+    lineno: int | None,
+    colno: int | None,
+    details: dict[str, object],
+) -> InputError:
+    """Rebuild an ``InputError`` after it crosses a process boundary."""
+    return InputError(kind, lineno=lineno, colno=colno, details=details)
+
 
 def utf8_input_error(data: bytes, offset: int) -> InputError:
     """Build an ``invalid_utf8`` error for the byte at ``offset``.

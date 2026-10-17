@@ -196,5 +196,4 @@ class ShellActions:
             self.expand_all,
             self.collapse_all,
             self.validate,
-            self.format,
         ]

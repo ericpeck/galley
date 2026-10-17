@@ -1,13 +1,20 @@
-"""Banner sentences for located input errors.
+"""Banner sentences for located input errors and a dead worker.
 
 Core reports a ``kind`` and structured ``details``. The words a person reads
 are chosen here, from the copy already approved for these three cases.
+A worker that exits on its own has no line or column.
 """
 
 from typing import assert_never
 
 from galley.core import MAX_DEPTH
 from galley.core.errors import InputError
+
+FORMATTER_STOPPED = (
+    "The formatter stopped unexpectedly. "
+    "Your text and file weren't changed. "
+    "Press Format to try again."
+)
 
 
 def banner_text(error: InputError) -> str:

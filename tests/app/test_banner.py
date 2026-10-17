@@ -74,6 +74,17 @@ def test_bad_escape_banner_shows_the_escape_from_details() -> None:
     )
 
 
+def test_formatter_stopped_has_no_location() -> None:
+    assert banner.FORMATTER_STOPPED == (
+        "The formatter stopped unexpectedly. "
+        "Your text and file weren't changed. "
+        "Press Format to try again."
+    )
+    lowered = banner.FORMATTER_STOPPED.casefold()
+    assert "line" not in lowered
+    assert "column" not in lowered
+
+
 def test_banner_text_follows_errors_raised_by_the_formatters() -> None:
     try:
         format_json(b'{"a": "\xff"}')
