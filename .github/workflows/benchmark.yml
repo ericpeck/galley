@@ -31,7 +31,7 @@ jobs:
 
       # Not a project dependency. Tests stay on ruamel's pure-Python parser.
       - name: Install ruamel.yaml.clib for the safe+C comparison
-        run: uv pip install ruamel.yaml.clib
+        run: uv pip install ruamel.yaml.clib==0.2.15
 
       - name: Run file-size benchmark
         run: uv run python benchmarks/size_bench.py
