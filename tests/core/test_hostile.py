@@ -17,6 +17,7 @@ import pytest
 from ruamel.yaml import YAML
 
 import galley.core as core
+from galley.core.errors import InputError
 from galley.core.format import format_json, format_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -213,26 +214,35 @@ def test_yaml_deep_nesting_under_the_limit_round_trips() -> None:
     assert format_yaml(formatted) == formatted
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_json raises RecursionError with no line or column once "
-        "nesting exceeds the recursion limit"
-    ),
-    strict=True,
-)
 def test_json_excessive_nesting_names_line_and_column() -> None:
     _assert_excessive_nesting("json")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_yaml raises RecursionError with no line or column once "
-        "nesting exceeds the recursion limit"
-    ),
-    strict=True,
-)
 def test_yaml_excessive_nesting_names_line_and_column() -> None:
     _assert_excessive_nesting("yaml")
+
+
+def test_json_one_past_the_depth_limit_names_the_opening_line() -> None:
+    text = "[\n" * 65 + "0" + "]" * 65
+    with pytest.raises(InputError) as caught:
+        format_json(text)
+    assert caught.value.lineno == 65
+    assert caught.value.colno == 1
+    assert str(caught.value) == (
+        "This document is nested more than 64 levels deep, which is more "
+        "than Galley can format safely. The limit was reached at line 65."
+    )
+
+
+def test_yaml_one_past_the_depth_limit_names_the_opening_line() -> None:
+    with pytest.raises(InputError) as caught:
+        format_yaml(_nested_yaml(65))
+    assert caught.value.lineno == 65
+    assert caught.value.colno == 129
+    assert str(caught.value) == (
+        "This document is nested more than 64 levels deep, which is more "
+        "than Galley can format safely. The limit was reached at line 65."
+    )
 
 
 def test_yaml_alias_bomb_stays_shared() -> None:
@@ -419,19 +429,28 @@ def test_convert_python_syntax_error_names_line_and_column() -> None:
     assert "nt" not in str(caught.value)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "format_json emits a lone surrogate for a JSON unicode escape, and "
-        "that string cannot be encoded as UTF-8"
-    ),
-    strict=True,
-)
 def test_json_lone_surrogate_output_is_utf8() -> None:
-    try:
-        formatted = format_json('{"a": "\\uD800"}')
-    except json.JSONDecodeError as exc:
-        assert exc.lineno >= 1
-        assert exc.colno >= 1
-        return
-    encoded = formatted.encode("utf-8")
-    assert b"\\uD800" in encoded or b"\\ud800" in encoded
+    with pytest.raises(InputError) as caught:
+        format_json('{"a": "\\uD800"}')
+    assert caught.value.lineno == 1
+    assert caught.value.colno == 8
+    assert str(caught.value) == (
+        "Line 1, column 8 has an invalid character escape (\\uD800) "
+        "that can't be saved as UTF-8."
+    )
+    str(caught.value).encode("utf-8")
+
+
+def test_json_lone_surrogate_escape_keeps_the_source_spelling() -> None:
+    with pytest.raises(InputError) as caught:
+        format_json('{"a": "\\ud800"}')
+    assert str(caught.value) == (
+        "Line 1, column 8 has an invalid character escape (\\ud800) "
+        "that can't be saved as UTF-8."
+    )
+
+
+def test_json_surrogate_pair_formats_as_utf8() -> None:
+    formatted = format_json('{"a": "\\uD800\\uDC00"}')
+    assert json.loads(formatted) == {"a": "\U00010000"}
+    formatted.encode("utf-8")

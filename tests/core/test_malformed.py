@@ -2,7 +2,7 @@
 
 Truncated documents, bad escapes, invalid UTF-8, BOMs, mixed line endings,
 and tab indentation must not crash. Syntax errors name a 1-based line and
-column. Byte-decode failures that only expose an offset are expected failures.
+column. Invalid UTF-8 names the line and column of the first bad byte.
 """
 
 import json
@@ -10,6 +10,7 @@ import json
 import pytest
 from ruamel.yaml import YAML
 
+from galley.core.errors import utf8_input_error
 from galley.core.format import format_json, format_yaml
 
 
@@ -147,29 +148,55 @@ def test_yaml_invalid_utf8_does_not_crash() -> None:
     assert has_offset or has_line
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Invalid UTF-8 JSON bytes raise UnicodeDecodeError with a byte "
-        "offset and no line or column"
-    ),
-    strict=True,
-)
 def test_json_invalid_utf8_names_line_and_column() -> None:
     with pytest.raises(Exception) as caught:
         format_json(b'{"a": "\xff"}')
     # Byte 0xff sits at offset 7, which is column 8 on line 1.
     assert_location(caught.value, 1, 8)
+    assert str(caught.value) == (
+        "This file isn't valid UTF-8, so Galley can't read it. "
+        "The first bad byte is at line 1, column 8. "
+        "Save the file as UTF-8 and open it again."
+    )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Invalid UTF-8 YAML bytes raise ReaderError with a byte position "
-        "and no line or column"
-    ),
-    strict=True,
-)
 def test_yaml_invalid_utf8_names_line_and_column() -> None:
     with pytest.raises(Exception) as caught:
         format_yaml(b'a: "\xff"\n')
     # Byte 0xff sits at offset 4, which is column 5 on line 1.
     assert_location(caught.value, 1, 5)
+    assert str(caught.value) == (
+        "This file isn't valid UTF-8, so Galley can't read it. "
+        "The first bad byte is at line 1, column 5. "
+        "Save the file as UTF-8 and open it again."
+    )
+
+
+def test_json_invalid_utf8_counts_newlines_before_the_bad_byte() -> None:
+    with pytest.raises(Exception) as caught:
+        format_json(b'{\n  "a": "\xff"}')
+    # The bad byte is the 9th character on line 2.
+    assert_location(caught.value, 2, 9)
+
+
+def test_invalid_utf8_column_counts_characters_not_bytes() -> None:
+    # U+00E9 is two bytes. The bad byte is the next character, not the next byte.
+    with pytest.raises(Exception) as caught:
+        format_json(b'{"a": "\xc3\xa9\xff"}')
+    assert_location(caught.value, 1, 9)
+    with pytest.raises(Exception) as caught:
+        format_yaml(b'a: "\xc3\xa9\xff"\n')
+    assert_location(caught.value, 1, 6)
+
+
+def test_utf8_error_falls_back_to_the_byte_offset() -> None:
+    # Offset 1 cuts through an invalid prefix, so the line cannot be counted.
+    error = utf8_input_error(b"\xff" * 1500, 1234)
+    assert error.lineno is None
+    assert error.colno is None
+    assert error.position == 1234
+    assert str(error) == (
+        "This file isn't valid UTF-8, so Galley can't read it. "
+        "The first bad byte is at byte 1,234. "
+        "Save the file as UTF-8 and open it again."
+    )
