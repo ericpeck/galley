@@ -64,8 +64,30 @@ jobs:
             exit 1
           fi
           identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
-          if [[ "${identifier}" != "com.ericmercurypeck.galley" ]]; then
-            echo "Unexpected bundle identifier: ${identifier}"
+          expected="$(
+            uv run --frozen --no-dev --no-editable python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          tree = ast.parse(Path("packaging/galley.spec").read_text(encoding="utf-8"))
+          found = []
+          for node in ast.walk(tree):
+              if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                  continue
+              target = node.targets[0]
+              if not isinstance(target, ast.Name) or target.id != "BUNDLE_IDENTIFIER":
+                  continue
+              value = node.value
+              if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                  raise SystemExit("BUNDLE_IDENTIFIER must be a string constant")
+              found.append(value.value)
+          if len(found) != 1:
+              raise SystemExit("expected one BUNDLE_IDENTIFIER string")
+          print(found[0])
+          PY
+          )"
+          if [[ "${identifier}" != "${expected}" ]]; then
+            echo "Unexpected bundle identifier: ${identifier} (spec has ${expected})"
             exit 1
           fi
 
@@ -125,11 +147,19 @@ jobs:
               ;;
           esac
           dmg="Galley-${version}-arm64.dmg"
+          staging="build/dmg-staging"
+          rm -rf "${staging}"
+          mkdir -p "${staging}"
+          cp -R "dist/Galley.app" "${staging}/Galley.app"
+          (
+            cd "${staging}"
+            ln -s /Applications Applications
+          )
           attempt=1
           while [[ "${attempt}" -le 3 ]]; do
             if hdiutil create \
               -volname "Galley" \
-              -srcfolder "dist/Galley.app" \
+              -srcfolder "${staging}" \
               -ov \
               -format UDZO \
               "dist/${dmg}"; then
@@ -146,6 +176,53 @@ jobs:
             cd dist
             shasum -a 256 "${dmg}" | tee "${dmg}.sha256"
           )
+
+      - name: Check the disk image layout
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(dist/Galley-*-arm64.dmg)
+          if [[ "${#dmgs[@]}" -ne 1 ]]; then
+            echo "Expected one disk image, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          mount="build/dmg-mount"
+          rm -rf "${mount}"
+          mkdir -p "${mount}"
+          detach() {
+            hdiutil detach "${mount}" || hdiutil detach -force "${mount}" || true
+          }
+          trap detach EXIT
+          attempt=1
+          while [[ "${attempt}" -le 3 ]]; do
+            if hdiutil attach -readonly -nobrowse -mountpoint "${mount}" "${dmg}"; then
+              break
+            fi
+            detach
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "hdiutil attach failed"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 5
+          done
+          echo "Mounted ${dmg}:"
+          ls -la "${mount}"
+          if [[ ! -d "${mount}/Galley.app" ]]; then
+            echo "Galley.app is missing from the disk image"
+            exit 1
+          fi
+          if [[ ! -L "${mount}/Applications" ]]; then
+            echo "Applications shortcut is missing from the disk image"
+            exit 1
+          fi
+          target="$(readlink "${mount}/Applications")"
+          if [[ "${target}" != "/Applications" ]]; then
+            echo "Applications shortcut points at ${target}"
+            exit 1
+          fi
+          echo "Disk image contains Galley.app and an Applications shortcut"
 
       - name: Upload disk image and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -184,7 +261,14 @@ jobs:
             echo "No disk image to attach"
             exit 1
           fi
-          notes="Unsigned macOS Apple Silicon build. No Developer ID signature and no notarization. Drag Galley into Applications before opening it. On first launch, open System Settings > Privacy & Security and choose Open Anyway. macOS asks for your password."
+          notes="$(cat <<'EOF'
+          Unsigned macOS Apple Silicon build. No Developer ID signature and no notarization.
+          1. Drag Galley to Applications.
+          2. Open it once and dismiss the warning.
+          3. Go to System Settings > Privacy & Security and click Open Anyway (asks for your password).
+          4. Note: on macOS 14 and earlier, right-click > Open still works.
+          EOF
+          )"
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${files[@]}" --clobber
           else

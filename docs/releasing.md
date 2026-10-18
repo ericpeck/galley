@@ -26,16 +26,16 @@ Check the checksum from the directory that contains the disk image:
 shasum -a 256 -c Galley-<version>-arm64.dmg.sha256
 ```
 
-The image is a compressed `hdiutil` disk image (`UDZO`) whose volume contains `Galley.app`. The bundle identifier is `com.ericmercurypeck.galley`. The build spec is `packaging/galley.spec`.
+The image is a compressed `hdiutil` disk image (`UDZO`). Its volume contains `Galley.app` next to an Applications shortcut. The bundle identifier is the `BUNDLE_IDENTIFIER` constant in `packaging/galley.spec` (`com.ericmercurypeck.galley`).
 
 ## Open the app the first time
 
 After you download the disk image, macOS may refuse to open Galley because it cannot verify the developer.
 
-1. Drag Galley into Applications before opening it.
-2. Open **System Settings > Privacy & Security** and choose **Open Anyway**. macOS asks for your password.
-
-Later launches can use a normal double-click, once that first confirmation has been given for this copy of the app.
+1. Drag Galley to Applications.
+2. Open it once and dismiss the warning.
+3. Go to System Settings > Privacy & Security and click Open Anyway (asks for your password).
+4. Note: on macOS 14 and earlier, right-click > Open still works.
 
 ## ruamel.yaml.clib
 

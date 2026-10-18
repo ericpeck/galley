@@ -21,34 +21,54 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def _bundle_identifier(spec: Path) -> str:
-    tree = ast.parse(spec.read_text(encoding="utf-8"), filename=str(spec))
-    found: list[str] = []
-    for node in ast.walk(tree):
+FIRST_LAUNCH_STEPS = (
+    "1. Drag Galley to Applications.",
+    "2. Open it once and dismiss the warning.",
+    "3. Go to System Settings > Privacy & Security and click Open Anyway "
+    "(asks for your password).",
+    "4. Note: on macOS 14 and earlier, right-click > Open still works.",
+)
+SPEC = ROOT / "packaging" / "galley.spec"
+
+
+def _spec_tree() -> ast.AST:
+    return ast.parse(SPEC.read_text(encoding="utf-8"), filename=str(SPEC))
+
+
+def test_bundle_identifier_is_one_constant() -> None:
+    assignments: list[str] = []
+    uses: list[ast.expr] = []
+    for node in ast.walk(_spec_tree()):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "BUNDLE_IDENTIFIER"
+        ):
+            value = node.value
+            assert isinstance(value, ast.Constant)
+            assert isinstance(value.value, str)
+            assignments.append(value.value)
         if not isinstance(node, ast.Call):
             continue
         func = node.func
         if not isinstance(func, ast.Name) or func.id != "BUNDLE":
             continue
         for keyword in node.keywords:
-            if keyword.arg != "bundle_identifier":
-                continue
-            value = keyword.value
-            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
-                raise AssertionError("bundle_identifier must be a string constant")
-            found.append(value.value)
-    if len(found) != 1:
-        raise AssertionError(f"expected one bundle_identifier, found {found}")
-    return found[0]
+            if keyword.arg == "bundle_identifier":
+                uses.append(keyword.value)
+    assert assignments == [BUNDLE_ID]
+    assert len(uses) == 1
+    use = uses[0]
+    assert isinstance(use, ast.Name)
+    assert use.id == "BUNDLE_IDENTIFIER"
+    assert SPEC.read_text(encoding="utf-8").count(BUNDLE_ID) == 1
 
 
-def test_spec_bundle_identifier() -> None:
-    assert _bundle_identifier(ROOT / "packaging" / "galley.spec") == BUNDLE_ID
-
-
-def test_workflow_checks_info_plist_identifier() -> None:
-    expected = f'[[ "${{identifier}}" != "{BUNDLE_ID}" ]]'
-    assert expected in _workflow()
+def test_workflow_reads_bundle_identifier_from_the_spec() -> None:
+    workflow = _workflow()
+    assert "BUNDLE_IDENTIFIER" in workflow
+    assert BUNDLE_ID not in workflow
 
 
 def test_docs_name_the_bundle_identifier() -> None:
@@ -68,16 +88,15 @@ def test_old_bundle_identifier_is_not_used() -> None:
         assert old not in path.read_text(encoding="utf-8")
 
 
-def test_first_launch_is_open_anyway_only() -> None:
+def test_first_launch_steps() -> None:
     for path in FIRST_LAUNCH:
-        text = path.read_text(encoding="utf-8").lower()
-        assert "drag galley into applications before opening it" in text
-        assert "privacy & security" in text
-        assert "open anyway" in text
-        assert "password" in text
-        assert "xattr" not in text
-        assert "right-click" not in text
-        assert "right click" not in text
+        text = path.read_text(encoding="utf-8")
+        cursor = 0
+        for step in FIRST_LAUNCH_STEPS:
+            found = text.find(step, cursor)
+            assert found != -1, f"{path.name} missing {step!r}"
+            cursor = found + len(step)
+        assert "xattr" not in text.lower()
 
 
 def test_pull_request_builds_an_artifact_and_does_not_publish() -> None:
@@ -93,3 +112,10 @@ def test_pull_request_builds_an_artifact_and_does_not_publish() -> None:
     assert "contents: write" in workflow
     assert "github.event_name != 'pull_request'" in workflow
     assert "startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert 'staging="build/dmg-staging"' in workflow
+    assert "ln -s /Applications Applications" in workflow
+    assert '-srcfolder "${staging}"' in workflow
+    assert "hdiutil attach" in workflow
+    assert '[[ ! -d "${mount}/Galley.app" ]]' in workflow
+    assert '[[ ! -L "${mount}/Applications" ]]' in workflow
+    assert '[[ "${target}" != "/Applications" ]]' in workflow

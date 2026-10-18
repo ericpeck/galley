@@ -20,6 +20,9 @@ import PySide6
 
 from galley import __version__
 
+# Bundle id for Galley.app. Change this line to pick another identifier.
+BUNDLE_IDENTIFIER = "com.ericmercurypeck.galley"
+
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(SPEC), ".."))
 _ENTRY = os.path.join(_ROOT, "src", "galley", "__main__.py")
 
@@ -99,6 +102,6 @@ app = BUNDLE(
     coll,
     name="Galley.app",
     icon=None,
-    bundle_identifier="com.ericmercurypeck.galley",
+    bundle_identifier=BUNDLE_IDENTIFIER,
     version=__version__,
 )
