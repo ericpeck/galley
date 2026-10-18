@@ -42,4 +42,6 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           GALLEY_YAML_COMPARE_FULL: "1"
-        run: uv run pytest tests/core/test_yaml_clib.py::test_random_documents_match_pure_python_full
+        # This test does not use Qt. pytest-qt imports Qt at startup, and
+        # that import needs libEGL, which the Ubuntu runner does not have.
+        run: uv run pytest -p no:pytest-qt tests/core/test_yaml_clib.py::test_random_documents_match_pure_python_full
