@@ -34,8 +34,10 @@ After you download the disk image, macOS may refuse to open Galley because it ca
 
 1. Drag Galley to Applications.
 2. Open it once and dismiss the warning.
-3. Go to System Settings > Privacy & Security and click Open Anyway (asks for your password).
+3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley.
 4. Note: on macOS 14 and earlier, right-click > Open still works.
+
+After that, Galley opens with a normal double-click.
 
 ## ruamel.yaml.clib
 
