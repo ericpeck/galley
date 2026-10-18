@@ -49,6 +49,15 @@ jobs:
             exit 1
           fi
 
+      - name: Check tag matches version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          package="$(uv run --frozen --no-dev --no-editable python -c 'from galley import __version__; print(__version__)')"
+          uv run --frozen --no-dev --no-editable python packaging/check_release_version.py \
+            --package "${package}" \
+            --tag "${GITHUB_REF_NAME#v}"
+
       - name: Build Galley.app
         run: >
           uv run --frozen --no-dev --no-editable

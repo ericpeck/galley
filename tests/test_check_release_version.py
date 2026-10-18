@@ -54,6 +54,52 @@ def test_plist_mismatch_names_every_value_and_the_fix() -> None:
     )
 
 
+def test_no_plist_compares_only_the_tag() -> None:
+    checker = _checker()
+    assert checker.failure_message("0.1.0", None, "0.1.0") is None
+    message = checker.failure_message("0.1.0", None, "0.2.0")
+    assert message == "\n".join(
+        [
+            "Check release version failed.",
+            "galley.__version__ is 0.1.0",
+            "tag is 0.2.0",
+            "Bump galley.__version__ or re-tag.",
+        ]
+    )
+    assert "CFBundleShortVersionString" not in message
+
+
+def test_main_no_plist_reports_a_tag_mismatch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    checker = _checker()
+    status = checker.main(["--package", "0.1.0", "--tag", "0.2.0"])
+    assert status == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "CFBundleShortVersionString" not in captured.out
+    assert "galley.__version__ is 0.1.0" in captured.out
+    assert "tag is 0.2.0" in captured.out
+    assert "Bump galley.__version__ or re-tag." in captured.out
+
+
+def test_main_no_plist_match_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    checker = _checker()
+    assert checker.main(["--package", "0.1.0", "--tag", "0.1.0"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "CFBundleShortVersionString" not in captured.out
+
+
+def test_main_requires_plist_or_tag(capsys: pytest.CaptureFixture[str]) -> None:
+    checker = _checker()
+    with pytest.raises(SystemExit) as raised:
+        checker.main(["--package", "0.1.0"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert "pass --plist, --tag, or both" in captured.err
+
+
 def test_non_tag_run_skips_the_tag_comparison() -> None:
     checker = _checker()
     assert checker.failure_message("0.1.0", "0.1.0", None) is None
@@ -108,11 +154,24 @@ def test_spec_sets_short_version_from_package_version() -> None:
 
 def test_check_release_version_step_follows_the_build() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    install = workflow.find("- name: Install Galley")
+    tag_check = workflow.find("- name: Check tag matches version")
     build = workflow.find("- name: Build Galley.app")
     check = workflow.find("- name: Check release version")
     bundle = workflow.find("- name: Check the app bundle")
-    assert build != -1
-    assert build < check < bundle
+    assert install != -1
+    assert install < tag_check < build < check < bundle
+    early = workflow[tag_check:build]
+    assert "if: startsWith(github.ref, 'refs/tags/v')" in early
+    assert "packaging/check_release_version.py" in early
+    assert '--package "${package}"' in early
+    assert '--tag "${GITHUB_REF_NAME#v}"' in early
+    assert "--plist" not in early
+    assert "CFBundleShortVersionString" not in early
+    assert (
+        "uv run --frozen --no-dev --no-editable python -c "
+        "'from galley import __version__; print(__version__)'"
+    ) in early
     block = workflow[check:bundle]
     assert (
         "uv run --frozen --no-dev --no-editable python -c "
