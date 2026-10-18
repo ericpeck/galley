@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.8",
     "ruamel.yaml>=0.18",
+    # Bumping ruamel.yaml.clib requires re-running the pure-Python comparison
+    # test in tests/core/test_yaml_clib.py first.
+    "ruamel.yaml.clib==0.2.15",
 ]
 
 [project.scripts]

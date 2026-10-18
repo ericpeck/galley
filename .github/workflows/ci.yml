@@ -51,12 +51,31 @@ jobs:
           enable-cache: false
 
       - name: Sync dependencies
+        # Installs ruamel.yaml.clib so the C path and the skip-if-no-clib tests run.
         run: uv sync
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest
+        run: |
+          uv run pytest --junitxml="${RUNNER_TEMP}/pytest.xml"
+          uv run python - "${RUNNER_TEMP}/pytest.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse(sys.argv[1])
+          skipped = []
+          for case in tree.iter("testcase"):
+              for node in case.findall("skipped"):
+                  message = node.get("message") or (node.text or "")
+                  if "ruamel.yaml.clib is not installed" in message:
+                      skipped.append(f"{case.get('classname')}::{case.get('name')}")
+          if skipped:
+              print("clib tests skipped on macOS:")
+              print("\n".join(skipped))
+              sys.exit(1)
+          print("clib-only tests ran")
+          PY
 
   test-windows:
     name: Test (Windows)
@@ -72,12 +91,14 @@ jobs:
           enable-cache: false
 
       - name: Sync dependencies
-        run: uv sync
+        # Pure Python on purpose, so the no-clib fallback stays covered.
+        # --no-sync on the next step stops uv run from installing clib again.
+        run: uv sync --no-install-package ruamel.yaml.clib
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest
+        run: uv run --no-sync pytest
 
   secret-scan:
     name: Secret scan
