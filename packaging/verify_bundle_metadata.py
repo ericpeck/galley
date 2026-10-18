@@ -173,15 +173,8 @@ def _arch_name(cputype: int, cpusubtype: int) -> str | None:
     if cputype == 0x0100000C:
         return "arm64e" if subtype == 2 else "arm64"
     if cputype == 0x01000007:
-        return "x86_64h" if subtype == 8 else "x86_64"
-    names = {
-        7: "i386",
-        12: "arm",
-        18: "ppc",
-        0x01000012: "ppc64",
-        0x0200000C: "arm64_32",
-    }
-    return names.get(cputype)
+        return "x86_64"
+    return None
 
 
 def macho_archs(path: Path) -> list[str]:
@@ -262,13 +255,6 @@ def _excerpt(text: str, binary: Path) -> str:
     return excerpt
 
 
-def _rejected_arch(text: str) -> bool:
-    lowered = text.lower()
-    return (
-        "does not contain architecture" in lowered or "unknown architecture" in lowered
-    )
-
-
 def _vtool_args(mode: str, path: Path, arch: str) -> list[str]:
     args = [mode]
     if arch:
@@ -289,12 +275,6 @@ def _minima_for_arch(
         minima = chosen_minima(parse_vtool_output(text), arch)
         if minima:
             return minima, ""
-        if arch and _rejected_arch(text):
-            plain = runner(_vtool_args(mode, path, ""))
-            outputs.append(plain)
-            minima = chosen_minima(parse_vtool_output(plain), arch)
-            if minima:
-                return minima, ""
     return [], _excerpt("\n".join(outputs), path)
 
 
@@ -303,23 +283,21 @@ def macho_minimum_violations(
     floor: str,
     *,
     run_vtool: Callable[[list[str]], str] | None = None,
-) -> tuple[list[MachOViolation], list[str], int]:
-    """Return minima above ``floor``, unreadable files, and files checked.
+) -> tuple[list[MachOViolation], list[str]]:
+    """Return minima above ``floor`` and files with no readable minimum.
 
     ``floor`` is ``LSMinimumSystemVersion`` from the app's Info.plist.
     ``run_vtool`` receives the arguments after the ``vtool`` executable.
-    The count is Mach-O files, not architectures.
     """
     try:
         _version_parts(floor)
     except ValueError:
-        return [], [f"LSMinimumSystemVersion {floor!r} is not a dotted version"], 0
+        return [], [f"LSMinimumSystemVersion {floor!r} is not a dotted version"]
     runner = _default_vtool if run_vtool is None else run_vtool
     violations: set[MachOViolation] = set()
     unread: list[str] = []
-    checked = 0
     if not app.is_dir():
-        return [], unread, checked
+        return [], unread
     for path in sorted(app.rglob("*")):
         try:
             if path.is_symlink() or not path.is_file():
@@ -329,7 +307,6 @@ def macho_minimum_violations(
         archs = macho_archs(path)
         if not archs:
             continue
-        checked += 1
         relative = path.relative_to(app).as_posix()
         for arch in archs:
             minima, note = _minima_for_arch(runner, path, arch)
@@ -346,7 +323,7 @@ def macho_minimum_violations(
             for minimum in minima:
                 if version_is_above(minimum, floor):
                     violations.add(MachOViolation(relative, label, minimum, floor))
-    return sorted(violations), unread, checked
+    return sorted(violations), unread
 
 
 def format_macho_violations(violations: list[MachOViolation]) -> str:
@@ -457,7 +434,6 @@ def main(
     problems = bundle_problems(app, expected)
     floor = plist_minimum(app)
     violations: list[MachOViolation] = []
-    checked = 0
     if floor is None:
         if not problems:
             problems.append(
@@ -466,7 +442,7 @@ def main(
             )
     else:
         try:
-            violations, unread, checked = macho_minimum_violations(
+            violations, unread = macho_minimum_violations(
                 app, floor, run_vtool=run_vtool
             )
         except VtoolUnavailable:
@@ -484,7 +460,6 @@ def main(
         f"LSMinimumSystemVersion is {expected!r} and "
         "Contents/Resources/LICENSES is present."
     )
-    print(f"Mach-O minimums are at or below {floor} ({checked} files checked).")
     return 0
 
 
