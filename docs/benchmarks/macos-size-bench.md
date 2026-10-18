@@ -38,4 +38,6 @@ The 10 MB pure-Python YAML timing is noisy. The three runs were 62.324402 s, 78.
 
 ## How to rerun
 
-The Benchmark workflow (`.github/workflows/benchmark.yml`) runs only when someone dispatches it. In Actions, choose Benchmark and run it on the commit you want. The job uses `macos-14` and Python 3.12, runs `uv sync`, installs `ruamel.yaml.clib==0.2.15` for the safe-plus-C comparison, and runs `uv run python benchmarks/size_bench.py`. Results upload as the `size-bench-macos-14` artifact.
+The Benchmark workflow (`.github/workflows/benchmark.yml`) runs only when someone dispatches it. In Actions, choose Benchmark and run it on the commit you want. The job uses `macos-14` and Python 3.12, runs `uv sync`, and runs `uv run python benchmarks/size_bench.py`. Results upload as the `size-bench-macos-14` artifact.
+
+The shipped YAML row is pure Python. Its worker is `uv run --isolated`, so that row runs with no C extension. Only the safe+C row gets the C library, with `uv run --with ruamel.yaml.clib==0.2.15`.
