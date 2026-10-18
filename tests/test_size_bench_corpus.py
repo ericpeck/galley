@@ -1,5 +1,6 @@
 """Realistic YAML corpus shape, and the rows that time it."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -120,8 +121,36 @@ def test_shipped_clib_rows_use_the_pinned_extension() -> None:
     by_id = {operation.operation_id: operation for operation in operations}
     path = Path("sample.yaml")
     shipped = _worker_command(by_id["format_yaml"], path, 0.1, 1, 1)
-    assert shipped[1:4] == ["run", "--isolated", "--"]
+    again = _worker_command(by_id["format_yaml"], path, 1, 3, 2)
+    script = str(Path(__file__).resolve().parents[1] / "benchmarks" / "size_bench.py")
+    assert shipped[0] == again[0]
+    assert Path(shipped[0]).name in {"python", "python.exe"}
+    assert "--isolated" not in shipped
     assert "--with" not in shipped
+    assert shipped[1:] == [
+        script,
+        "--worker",
+        "--operation",
+        "format_yaml",
+        "--input-file",
+        str(path),
+        "--size-mb",
+        "0.1",
+        "--runs",
+        "1",
+        "--item-count",
+        "1",
+    ]
+    subprocess.run(
+        [
+            shipped[0],
+            "-c",
+            "import galley.core.format as format_module\n"
+            "raise SystemExit(0 if format_module._clib_available() else 1)\n",
+        ],
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
     for operation_id in (
         "yaml_safe_c",
         "yaml_safe_c_realistic",
