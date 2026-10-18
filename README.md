@@ -39,6 +39,7 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
    If ruff reports a problem, fix the file it names, then run `uv run ruff check` again. Check formatting with `uv run ruff format --check`. If that fails, run `uv run ruff format`, then run `uv run ruff format --check` again.
 
 An unsigned Apple Silicon disk image is built by the Release macOS workflow. See [docs/releasing.md](docs/releasing.md) for how to run it and how to open the app the first time. The app has no Developer ID signature and is not notarized.
+
 Requires macOS 14 (Sonoma) or later, Apple Silicon.
 
 1. Drag Galley to Applications.
