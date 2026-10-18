@@ -21,7 +21,8 @@ from galley.core.format import _RUAMEL_SAFE_DEPTH, _dump_block, _dump_yaml_value
 
 _TUPLE_ONE = "1 tuple was converted to a list."
 _KEY_ONE = "1 dictionary key was converted to a string."
-_DUPLICATE_ONE = "1 duplicate key found. The last value was kept."
+_COLLISION_ONE = "1 key matched another after conversion. The last value was kept."
+_DUPLICATE_ONE = "1 duplicate key. The last value was kept."
 
 
 @dataclass(frozen=True)
@@ -111,8 +112,9 @@ def convert_python(text: str, target: str = "json") -> ConvertResult | ConvertEr
 
     ``target`` is ``json`` or ``yaml``, compared without case. Tuples become
     lists, and ``int``, ``float``, ``bool``, and ``None`` dictionary keys
-    become strings. A repeated key, including one that only matches after
-    it becomes a string, keeps the last value and shows up as one notice.
+    become strings. An exact repeat of a key keeps the last value. So does a
+    key that only matches another after it becomes a string. Each case has
+    its own notice.
     ``NaN`` and infinity are rejected for JSON and kept for YAML.
     """
     kind = _normalize_target(target)
@@ -199,6 +201,7 @@ class _Walker:
         self._tuples = 0
         self._keys = 0
         self._duplicates = 0
+        self._collisions = 0
 
     def notices(self) -> tuple[ConvertNotice, ...]:
         found: list[ConvertNotice] = []
@@ -221,7 +224,16 @@ class _Walker:
         elif self._duplicates > 1:
             found.append(
                 ConvertNotice(
-                    f"{self._duplicates} duplicate keys found. The last value was kept."
+                    f"{self._duplicates} duplicate keys. The last value was kept."
+                )
+            )
+        if self._collisions == 1:
+            found.append(ConvertNotice(_COLLISION_ONE))
+        elif self._collisions > 1:
+            found.append(
+                ConvertNotice(
+                    f"{self._collisions} keys matched another after conversion. "
+                    "The last value was kept."
                 )
             )
         return tuple(found)
@@ -358,6 +370,7 @@ class _Walker:
             pairs.append((key, value))
         pairs.reverse()
         built: dict[str, object] = {}
+        seen: set[tuple[str, str]] = set()
         for key, value in pairs:
             if type(key) is str:
                 text = key
@@ -367,8 +380,12 @@ class _Walker:
                     return _problem(_KEY_TYPES, 1, 1)
                 text = spelled
                 self._keys += 1
-            if text in built:
+            identity = _key_identity(key, text)
+            if identity in seen:
                 self._duplicates += 1
+            elif text in built:
+                self._collisions += 1
+            seen.add(identity)
             built[text] = value
         self.values.append(built)
         return None
@@ -378,6 +395,21 @@ def _pop_sequence(values: list[object], count: int) -> list[object]:
     items = [values.pop() for _ in range(count)]
     items.reverse()
     return items
+
+
+def _key_identity(key: object, text: str) -> tuple[str, str]:
+    """Identity of a key before its spelling is shared with another type."""
+    if type(key) is str:
+        return ("str", text)
+    if key is None:
+        return ("none", text)
+    if type(key) is bool:
+        return ("bool", text)
+    if type(key) is int:
+        return ("int", text)
+    if type(key) is float:
+        return ("float", text)
+    return ("value", text)
 
 
 def _string_key(key: object) -> str | None:
