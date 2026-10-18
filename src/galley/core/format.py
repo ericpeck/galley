@@ -6,7 +6,9 @@ from the parser. Banner sentences are not built here.
 """
 
 import json
+import os
 import re
+import time
 from io import StringIO
 
 from ruamel.yaml import YAML
@@ -19,6 +21,7 @@ from ruamel.yaml.events import (
     SequenceEndEvent,
     SequenceStartEvent,
 )
+from ruamel.yaml.main import CEmitter, CParser
 from ruamel.yaml.nodes import ScalarNode
 from ruamel.yaml.reader import ReaderError
 from ruamel.yaml.tokens import (
@@ -43,6 +46,19 @@ from galley.core.errors import (
 # Past this depth a document that is still within MAX_DEPTH would hit
 # Python's recursion limit, so it is built with an explicit stack instead.
 _RUAMEL_SAFE_DEPTH = 256
+
+# Test seam for the pure-Python retry. Unset during normal use. The spinner
+# test sets the force flag so the C attempt fails, and the gate path so that
+# retry stays in progress long enough to observe the busy indicator.
+YAML_FORCE_C_PARSER_ERROR = "GALLEY_YAML_FORCE_C_PARSER_ERROR"
+YAML_PURE_RETRY_GATE = "GALLEY_YAML_PURE_RETRY_GATE"
+_PURE_RETRY_GATE_TIMEOUT_S = 30.0
+
+# Characters where the C parser accepts text the pure parser rejects, or the
+# C emitter's text differs from the pure emitter. Probed against
+# ruamel.yaml.clib 0.2.15: tabs and a few block scalars are accepted only by
+# libyaml; directives, tags, escapes, and non-ASCII change the dump.
+_PURE_CONFIRM_MARKS = ("\t", "|", ">", "%", "!", "\\")
 
 _HEX = frozenset("0123456789abcdefABCDEF")
 _HIGH_MIN = 0xD800
@@ -89,16 +105,117 @@ def format_json(text: str | bytes) -> str:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
 
+def _detect_clib() -> bool:
+    """Return True when safe mode selects the C parser and emitter."""
+    if CParser is None or CEmitter is None:
+        return False
+    probe = YAML(typ="safe")
+    return probe.Parser is CParser and probe.Emitter is CEmitter
+
+
+_CLIB_READY = _detect_clib()
+
+
+def _clib_available() -> bool:
+    """Return True when ``ruamel.yaml.clib`` is installed and selected."""
+    return _CLIB_READY
+
+
+def _safe_yaml(*, pure: bool) -> YAML:
+    """Safe YAML. ``pure`` forces the Python parser and emitter."""
+    if pure:
+        return YAML(typ="safe", pure=True)
+    return YAML(typ="safe")
+
+
+def _force_c_parser_error() -> bool:
+    return bool(os.environ.get(YAML_FORCE_C_PARSER_ERROR))
+
+
+def _wait_for_pure_retry_gate() -> None:
+    """Block the pure-Python retry while a test holds the gate file."""
+    gate = os.environ.get(YAML_PURE_RETRY_GATE)
+    if not gate:
+        return
+    ready = gate + ".ready"
+    go = gate + ".go"
+    try:
+        descriptor = os.open(ready, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except OSError:
+        descriptor = -1
+    if descriptor >= 0:
+        os.close(descriptor)
+    deadline = time.monotonic() + _PURE_RETRY_GATE_TIMEOUT_S
+    while not os.path.exists(go):
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(0.01)
+
+
+def _pure_python_yaml(text: str | bytes) -> str:
+    """Re-parse with pure Python and return that result, success or error."""
+    _wait_for_pure_retry_gate()
+    return _format_yaml_impl(text, pure=True)
+
+
+def _pure_result_required(text: str | bytes) -> bool:
+    """Return True when the C result can disagree with pure Python.
+
+    Ordinary ASCII documents stay on the C loader and dumper. Tabs, block
+    scalars, tags, directives, backslash escapes, and non-ASCII text are
+    formatted again with the pure parser so the caller sees that result.
+    """
+    if isinstance(text, bytes):
+        try:
+            source = text.decode("utf-8")
+        except UnicodeDecodeError:
+            return True
+    else:
+        source = text
+    if not source.isascii():
+        return True
+    return any(mark in source for mark in _PURE_CONFIRM_MARKS)
+
+
 def format_yaml(text: str | bytes) -> str:
-    """Return ``text`` parsed as YAML and dumped as a block document."""
-    opened = _yaml_limits(text)
+    """Return ``text`` parsed as YAML and dumped as a block document.
+
+    When ``ruamel.yaml.clib`` is installed, the C loader and dumper run
+    first. If the C parser raises, the pure-Python safe parser runs and its
+    result is returned, whether that is formatted text or an error. The
+    message, line, and column shown to the user come from that pure-Python
+    parse. Input the C parser accepts and the pure parser rejects uses the
+    pure-Python rejection. Without the C library this is the pure-Python
+    safe parser and it does not warn.
+    """
+    if not _clib_available():
+        # The spinner test forces the retry even on the pure-Python CI leg.
+        if _force_c_parser_error():
+            return _pure_python_yaml(text)
+        return _format_yaml_impl(text, pure=False)
+    try:
+        if _force_c_parser_error():
+            raise YAMLError("forced C parser failure")
+        rendered = _format_yaml_impl(text, pure=False)
+    except Exception:
+        return _pure_python_yaml(text)
+    # A scalar that is only quote characters is single-quoted by the C
+    # emitter (`''''`) and double-quoted by the pure emitter (`"'"`).
+    if _pure_result_required(text) or "'''" in rendered:
+        return _format_yaml_impl(text, pure=True)
+    return rendered
+
+
+def _format_yaml_impl(text: str | bytes, *, pure: bool) -> str:
+    """Parse and dump ``text`` with safe YAML, optionally forcing pure Python."""
+    opened = _yaml_limits(text, pure=pure)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
-            parsed = _yaml_from_events(text)
+            parsed = _yaml_from_events(text, pure=pure)
             return _dump_block(parsed)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    yaml = YAML(typ="safe")
+    yaml = _safe_yaml(pure=pure)
     yaml.default_flow_style = False
     try:
         parsed = yaml.load(text)
@@ -316,7 +433,7 @@ def _advance(
     return index, line, column
 
 
-def _yaml_limits(text: str | bytes) -> tuple[int, int, int]:
+def _yaml_limits(text: str | bytes, *, pure: bool = False) -> tuple[int, int, int]:
     """Reject UTF-8 bytes and nesting past the limit before the composer runs.
 
     The scanner walks tokens in a loop. Stopping at ``MAX_DEPTH`` keeps the
@@ -324,7 +441,7 @@ def _yaml_limits(text: str | bytes) -> tuple[int, int, int]:
     Windows stack. The returned line, column, and depth are the last
     container the scanner opened.
     """
-    yaml = YAML(typ="safe")
+    yaml = _safe_yaml(pure=pure)
     depth = 0
     deepest = 0
     opened = (1, 1, 0)
@@ -371,9 +488,9 @@ def _reader_utf8_error(text: str | bytes, exc: ReaderError) -> InputError | None
     return utf8_input_error(text, position)
 
 
-def _yaml_from_events(text: str | bytes) -> object:
+def _yaml_from_events(text: str | bytes, *, pure: bool = False) -> object:
     """Build one document from parser events with an explicit stack."""
-    yaml = YAML(typ="safe")
+    yaml = _safe_yaml(pure=pure)
     anchors: dict[str, object] = {}
     stack: list[list[object]] = []
     root: object = None

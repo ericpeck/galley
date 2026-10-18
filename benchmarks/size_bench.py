@@ -6,10 +6,11 @@ markdown table plus JSON. Generated inputs are deleted with the temp directory.
 Both result files are rewritten after every completed size, including the
 cutoff summary computed from the rows so far.
 
-``format_yaml`` is timed as shipped: ruamel ``typ="safe"``, pure Python, in a
-process where ``ruamel.yaml.clib`` is not importable. YAML UI cutoffs use that
-row. Round-trip and safe+C are labeled comparisons. Each call reports load and
-dump wall time. Nothing here changes ``galley.core``.
+``format_yaml`` is timed as shipped: ruamel ``typ="safe"``, which uses the C
+loader and dumper when ``ruamel.yaml.clib`` imports and the pure-Python parser
+otherwise. YAML UI cutoffs use that row. Round-trip and safe+C are labeled
+comparisons. Each call reports load and dump wall time. Nothing here changes
+``galley.core``.
 
 Default ladders keep a three-run macos-14 job near 20 minutes. JSON is
 1, 5, 10, 50, and 100 MB. Shipped YAML, round-trip, and safe+C are
@@ -59,7 +60,7 @@ DEFAULT_JSON_SIZES_MB = (1, 5, 10, 50, 100)
 DEFAULT_YAML_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5, 10)
 # Same grid as pure-Python YAML so the 0.5 s and 2 s bands can be interpolated.
 DEFAULT_SAFE_C_SIZES_MB = DEFAULT_YAML_SIZES_MB
-# Pinned so later safe+C runs stay comparable. Not a project dependency.
+# Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
@@ -275,25 +276,21 @@ def _json_phases(text: str) -> PhaseResult:
 
 
 def _assert_shipped_yaml_environment() -> None:
-    """Fail when this process can see the ruamel C extension.
+    """Fail when the C extension is only half installed.
 
-    Shipped ``format_yaml`` uses ``YAML(typ="safe")``, which selects the C
-    parser whenever ``ruamel.yaml.clib`` imports. The timing process must not
-    be able to import it.
+    Shipped ``format_yaml`` uses the C parser when ``ruamel.yaml.clib``
+    imports, and the pure-Python parser when it does not. A distribution
+    with no loaded parser would time neither path.
     """
     clib_spec = importlib.util.find_spec("ruamel.yaml.clib")
     extension_spec = importlib.util.find_spec("_ruamel_yaml")
-    if clib_spec is not None or extension_spec is not None:
-        message = (
-            "format_yaml must run where ruamel.yaml.clib is not importable. "
-            "This process can import the C extension."
-        )
+    installed = clib_spec is not None or extension_spec is not None
+    loaded = CParser is not None or CEmitter is not None
+    if installed and not loaded:
+        message = "ruamel.yaml.clib is importable, but the C parser is not loaded."
         raise RuntimeError(message)
-    if CParser is not None or CEmitter is not None:
-        message = (
-            "format_yaml must run where ruamel.yaml.clib is not importable. "
-            "This process already loaded the C parser."
-        )
+    if loaded and not installed:
+        message = "The C parser is loaded, but ruamel.yaml.clib is not importable."
         raise RuntimeError(message)
 
 
@@ -811,9 +808,9 @@ def _worker_command(
 ) -> list[str]:
     """Command for one size.
 
-    Shipped ``format_yaml`` uses ``uv run --isolated`` so an ambient
-    ``ruamel.yaml.clib`` install is not importable. Safe+C uses
-    ``uv run --with`` at the pinned version.
+    Shipped ``format_yaml`` uses ``uv run --isolated`` so the timing process
+    installs the project lock, including ``ruamel.yaml.clib`` when that
+    dependency is present. Safe+C uses ``uv run --with`` at the pinned version.
     """
     script = str(Path(__file__).resolve())
     worker = [
@@ -1288,9 +1285,9 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "resident set during those runs (sampled from the process, and "
                 "`resource` ru_maxrss when the run sets a new high-water mark). "
                 "`format_json` and `format_yaml` are galley.core. "
-                '`format_yaml` is ruamel `typ="safe"` as shipped, pure Python, '
-                "in a process where `ruamel.yaml.clib` is not importable. "
-                "YAML UI cutoffs use that row. "
+                '`format_yaml` is ruamel `typ="safe"` as shipped: the C loader '
+                "and dumper when `ruamel.yaml.clib` imports, and the pure-Python "
+                "parser otherwise. YAML UI cutoffs use that row. "
                 "Default JSON sizes are 1, 5, 10, 50, and 100 MB. "
                 "Default shipped YAML, round-trip, and safe+C sizes are "
                 "0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. "
@@ -1334,7 +1331,8 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(
         "Formatting time bands: under 0.5 s no indicator, "
         "0.5 s to 2 s spinner only, over 2 s progress bar with Cancel. "
-        'YAML bands use shipped `format_yaml` (`typ="safe"`, no C extension).'
+        "YAML bands use shipped `format_yaml` "
+        '(`typ="safe"`, C extension when installed).'
     )
     lines.extend(
         _cutoff_section(

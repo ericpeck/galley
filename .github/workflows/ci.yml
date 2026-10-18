@@ -51,16 +51,41 @@ jobs:
           enable-cache: false
 
       - name: Sync dependencies
-        run: uv sync
+        # This leg keeps the pure-Python parser. The clib job installs it.
+        # --no-sync on the next step stops uv run from installing it again.
+        run: uv sync --no-install-package ruamel.yaml.clib
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest
+        run: uv run --no-sync pytest
 
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Sync dependencies
+        # This leg keeps the pure-Python parser. The clib job installs it.
+        # --no-sync on the next step stops uv run from installing it again.
+        run: uv sync --no-install-package ruamel.yaml.clib
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --no-sync pytest
+
+  test-clib:
+    name: Test (ruamel.yaml.clib)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
