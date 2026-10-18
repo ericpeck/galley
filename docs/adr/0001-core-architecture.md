@@ -76,7 +76,7 @@ The starter depends on PySide6 and ruamel.yaml, both cross-platform, and it has 
 
 ### 6. Large-file size bands
 
-macOS measurements are in `docs/benchmarks/macos-size-bench.md` (commit `46d7ddc`). Pure-Python YAML is the worst case. The C-library row applies only once the clib fallback PR merges and clib ships. Windows numbers are not measured yet.
+macOS measurements are in `docs/benchmarks/macos-size-bench.md` (commit `46d7ddc`). Pure-Python YAML is the worst case. The C-library row is that benchmark's ruamel.yaml.clib measurement. Windows numbers are not measured yet.
 
 `SPINNER_REVEAL_MS` is 500 and `PROGRESS_BAR_REVEAL_MS` is 2000. Those values are final.
 
@@ -114,7 +114,7 @@ UI spec §10 sets no file-size cap. Thresholds for word wrap, syntax colors, ind
 
 ## Open questions
 
-- Size-band thresholds. macOS measurements are in `docs/benchmarks/macos-size-bench.md` (UI spec §10, open question 13). Pure-Python YAML is the worst case. The C-library row applies only once the clib fallback PR merges and clib ships. Windows numbers are not measured yet. No code path reads a file-size cutoff, so this record still sets none. Word wrap, syntax colors, indent guides, and warning sizes stay open for a later UI PR. `SPINNER_REVEAL_MS` is 500 and `PROGRESS_BAR_REVEAL_MS` is 2000. Those two values are final.
+- Size-band thresholds. macOS measurements are in `docs/benchmarks/macos-size-bench.md` (UI spec §10, open question 13). Pure-Python YAML is the worst case. The C-library row is that benchmark's ruamel.yaml.clib measurement. Windows numbers are not measured yet. No code path reads a file-size cutoff, so this record still sets none. Word wrap, syntax colors, indent guides, and warning sizes stay open for a later UI PR. `SPINNER_REVEAL_MS` is 500 and `PROGRESS_BAR_REVEAL_MS` is 2000. Those two values are final.
 - Resolved. How long Format runs before the spinner or the progress bar appears: `SPINNER_REVEAL_MS` is 500 and `PROGRESS_BAR_REVEAL_MS` is 2000. Those values are final.
 - Whether large documents should skip pickle and use a temp file or shared memory.
 - How often to send a write-progress event after Isaac's benchmark. The fields are phase, written, total, and the temp path. The placeholder `WRITE_PROGRESS_EVERY_CHUNKS` is `1`.
