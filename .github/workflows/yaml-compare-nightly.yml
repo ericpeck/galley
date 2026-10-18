@@ -1,0 +1,39 @@
+name: Nightly YAML comparison
+
+on:
+  schedule:
+    # 06:17 UTC. The 48-document sample stays in CI; this run is the full set.
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: YAML parser comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          # The workflow token is contents: read, which cannot write the Actions cache.
+          enable-cache: false
+
+      - name: Sync dependencies
+        # Installs ruamel.yaml.clib so the C parser is actually compared.
+        run: uv sync
+
+      - name: Compare 20000 documents
+        env:
+          QT_QPA_PLATFORM: offscreen
+          GALLEY_YAML_COMPARE_FULL: "1"
+        run: uv run pytest tests/core/test_yaml_clib.py::test_random_documents_match_pure_python_full

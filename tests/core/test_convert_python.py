@@ -328,10 +328,7 @@ def test_rejected_node_names_line_and_column(
     error = _error(source)
     assert error.lineno == line
     assert error.colno == column
-    message = f"{problem}: line {line} column {column}"
-    if problem == "Function calls can't be converted":
-        message += '. Use a string instead, such as "2026-10-18".'
-    assert error.message == message
+    assert error.message == f"{problem}: line {line} column {column}"
 
 
 def test_datetime_call_is_rejected_with_a_string_hint() -> None:
@@ -341,6 +338,44 @@ def test_datetime_call_is_rejected_with_a_string_hint() -> None:
     assert error.message == (
         "Function calls can't be converted: line 2 column 3. "
         'Use a string instead, such as "2026-10-18".'
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "datetime(2026, 10, 18)",
+        "date(2026, 10, 18)",
+        "time(12, 30)",
+        "datetime.datetime(2026, 10, 18)",
+        "datetime.date(2026, 10, 18)",
+        "datetime.time(12, 30)",
+    ],
+)
+def test_date_and_time_calls_include_the_string_example(source: str) -> None:
+    error = _error(source)
+    assert error.message == (
+        "Function calls can't be converted: "
+        f"line {error.lineno} column {error.colno}. "
+        'Use a string instead, such as "2026-10-18".'
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Decimal('1.50')",
+        "len('abc')",
+        "print(1)",
+        "datetime.now()",
+        "__import__('os')",
+    ],
+)
+def test_other_calls_omit_the_date_example(source: str) -> None:
+    error = _error(source)
+    assert "2026-10-18" not in error.message
+    assert error.message == (
+        f"Function calls can't be converted: line {error.lineno} column {error.colno}"
     )
 
 
