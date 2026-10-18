@@ -31,11 +31,14 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      # The project depends on ruamel.yaml.clib. yaml_safe_c also passes
-      # uv run --with ruamel.yaml.clib==0.2.15 for that comparison row.
+      # The project depends on ruamel.yaml.clib. yaml_safe_c and the shipped
+      # C-path rows also pass uv run --with ruamel.yaml.clib==0.2.15.
+      # --corpus all keeps the historical rows and adds the realistic corpus
+      # (capped at 5 MB): shipped pure, shipped C, forced pure re-parse,
+      # plain shipped C, and realistic safe+C. The script default stays plain.
       - name: Run file-size benchmark
         timeout-minutes: 60
-        run: uv run python benchmarks/size_bench.py
+        run: uv run python benchmarks/size_bench.py --corpus all
 
       - name: Upload benchmark results
         if: always()
