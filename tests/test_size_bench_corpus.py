@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from benchmarks.size_bench import (
     DEFAULT_REALISTIC_SIZES_MB,
+    DEFAULT_TRIGGER_SIZES_MB,
     DEFAULT_YAML_SIZES_MB,
     PATH_C_ONLY,
     PATH_C_PARSE_C_WRITER,
@@ -36,6 +37,25 @@ _REALISTIC_ROWS = [
     "format_yaml_realistic_clib_reparse",
     "format_yaml_plain_clib",
     "yaml_safe_c_realistic",
+    "format_yaml_realistic_clean_pure",
+    "format_yaml_realistic_clean_clib",
+    "format_yaml_realistic_only_bare_tag_clib",
+    "format_yaml_realistic_only_tab_in_quotes_clib",
+    "format_yaml_realistic_only_directive_clib",
+]
+_TRIGGER_ROWS = [
+    "format_yaml_realistic_only_bare_tag_clib",
+    "format_yaml_realistic_only_tab_in_quotes_clib",
+    "format_yaml_realistic_only_directive_clib",
+]
+_FIVE_MB_ROWS = [
+    "format_yaml_realistic_pure",
+    "format_yaml_realistic_clib",
+    "format_yaml_realistic_clib_reparse",
+    "format_yaml_plain_clib",
+    "yaml_safe_c_realistic",
+    "format_yaml_realistic_clean_pure",
+    "format_yaml_realistic_clean_clib",
 ]
 
 
@@ -62,17 +82,28 @@ def test_realistic_rows_are_opt_in_and_capped() -> None:
     assert "yaml_safe_c" in plain
     assert "format_yaml_realistic_pure" not in plain
     assert realistic == _REALISTIC_ROWS
-    expected = [float(size) for size in DEFAULT_REALISTIC_SIZES_MB]
+    five_mb = [float(size) for size in DEFAULT_REALISTIC_SIZES_MB]
+    one_mb = [float(size) for size in DEFAULT_TRIGGER_SIZES_MB]
     historical = [float(size) for size in DEFAULT_YAML_SIZES_MB]
-    for operation_id in realistic:
-        assert _sizes_for_operation(by_id[operation_id], None) == expected
+    for operation_id in _FIVE_MB_ROWS:
+        assert _sizes_for_operation(by_id[operation_id], None) == five_mb
+    for operation_id in _TRIGGER_ROWS:
+        assert _sizes_for_operation(by_id[operation_id], None) == one_mb
     assert _sizes_for_operation(by_id["format_yaml"], None) == historical
     assert _sizes_for_operation(by_id["yaml_safe_c"], None) == historical
     assert 10.0 in historical
-    assert 10.0 not in expected
+    assert 5.0 in five_mb
+    assert 5.0 not in one_mb
+    assert 10.0 not in five_mb
     reparse = by_id["format_yaml_realistic_clib_reparse"]
     assert reparse.require_path == PATH_PURE_REPARSE
     assert reparse.cutoff_role == "comparison"
+    clean = by_id["format_yaml_realistic_clean_clib"]
+    assert clean.require_path == PATH_C_PARSE_PURE_WRITER
+    for operation_id in _TRIGGER_ROWS:
+        trigger = by_id[operation_id]
+        assert trigger.expect_path == PATH_PURE_REPARSE
+        assert trigger.require_path is None
     assert by_id["yaml_safe_c_realistic"].reported_path == PATH_C_PARSE_C_WRITER
 
 
@@ -89,6 +120,8 @@ def test_shipped_clib_rows_use_the_pinned_extension() -> None:
         "format_yaml_realistic_clib",
         "format_yaml_realistic_clib_reparse",
         "format_yaml_plain_clib",
+        "format_yaml_realistic_clean_clib",
+        *_TRIGGER_ROWS,
     ):
         command = _worker_command(by_id[operation_id], path, 0.1, 1, 1)
         assert command[1:3] == ["run", "--with"]
@@ -134,6 +167,55 @@ def test_realistic_generator_is_deterministic_and_marked() -> None:
     assert isinstance(parsed, dict)
     items = parsed["items"]
     assert isinstance(items, list) and items
+
+
+def _parsed_items(text: str) -> list[object]:
+    parsed = YAML(typ="safe").load(text)
+    items = parsed["items"]
+    assert isinstance(items, list) and items
+    return items
+
+
+def test_clean_and_single_trigger_corpora_are_deterministic() -> None:
+    target = 16 * 1024
+    clean = render_realistic_yaml(target, profile="clean")
+    assert clean == render_realistic_yaml(target, profile="clean")
+    assert len(clean.encode("utf-8")) == target
+    assert any(line.endswith("|") for line in clean.splitlines())
+    assert any(line.endswith(">") for line in clean.splitlines())
+    assert "café" in clean or "São" in clean
+    assert ": ! " not in clean
+    assert "\t" not in clean
+    assert "%YAML" not in clean
+    assert "%TAG" not in clean
+    for line in clean.splitlines():
+        indent = line[: len(line) - len(line.lstrip(" "))]
+        assert "\t" not in indent
+    clean_items = _parsed_items(clean)
+
+    bare = render_realistic_yaml(target, profile="bare_tag")
+    assert bare == render_realistic_yaml(target, profile="bare_tag")
+    assert bare.count(": ! ") == 1
+    assert "\t" not in bare
+    assert "%YAML" not in bare
+    assert "channel: ! stable" in bare.split("items:", 1)[0]
+    assert _parsed_items(bare) == clean_items[: len(_parsed_items(bare))]
+
+    tabbed = render_realistic_yaml(target, profile="quoted_tab")
+    assert tabbed == render_realistic_yaml(target, profile="quoted_tab")
+    assert tabbed.count("\t") == 1
+    assert ": ! " not in tabbed
+    assert "%YAML" not in tabbed
+    assert '"name\tregion"' in tabbed.split("items:", 1)[0]
+    assert _parsed_items(tabbed) == clean_items[: len(_parsed_items(tabbed))]
+
+    directed = render_realistic_yaml(target, profile="directive")
+    assert directed == render_realistic_yaml(target, profile="directive")
+    assert directed.startswith("%YAML 1.2\n---\n")
+    assert directed.count("%YAML") == 1
+    assert ": ! " not in directed
+    assert "\t" not in directed
+    assert _parsed_items(directed) == clean_items[: len(_parsed_items(directed))]
 
 
 def test_reparse_directive_keeps_the_same_items() -> None:
@@ -260,6 +342,33 @@ def test_shipped_clib_paths_match_the_document() -> None:
         1,
     )
     assert forced_row["yaml_path"] == PATH_PURE_REPARSE
+    clean = render_realistic_yaml(8 * 1024, profile="clean")
+    clean_row = _measure_loaded(
+        by_id["format_yaml_realistic_clean_clib"],
+        clean,
+        0.01,
+        1,
+        1,
+    )
+    assert clean_row["yaml_path"] == PATH_C_PARSE_PURE_WRITER
+    for profile, operation_id in (
+        ("bare_tag", "format_yaml_realistic_only_bare_tag_clib"),
+        ("quoted_tab", "format_yaml_realistic_only_tab_in_quotes_clib"),
+        ("directive", "format_yaml_realistic_only_directive_clib"),
+    ):
+        triggered = render_realistic_yaml(8 * 1024, profile=profile)
+        triggered_row = _measure_loaded(by_id[operation_id], triggered, 0.01, 1, 1)
+        assert triggered_row["yaml_path"] == PATH_PURE_REPARSE
+        assert triggered_row["path_mismatch"] is False
+    missed = _measure_loaded(
+        by_id["format_yaml_realistic_only_bare_tag_clib"],
+        plain,
+        0.01,
+        1,
+        1,
+    )
+    assert missed["path_mismatch"] is True
+    assert missed["yaml_path"] == PATH_C_PARSE_PURE_WRITER
     with pytest.raises(RuntimeError, match="expected pure re-parse"):
         _measure_loaded(
             by_id["format_yaml_realistic_clib_reparse"],

@@ -16,34 +16,59 @@ call reports load and dump wall time. Nothing here changes ``galley.core``.
 ``--corpus plain`` (the default) is the historical synthetic catalog and the
 historical rows, so those results stay comparable with earlier runs.
 ``--corpus realistic`` times the realistic-corpus rows and the plain shipped
-C-path row. ``--corpus all`` runs both. Realistic sizes stop at 5 MB.
+C-path row. ``--corpus all`` runs both.
 
 The realistic corpus is seeded (``REALISTIC_SEED``) so a size is the same
 UTF-8 bytes on every run. Each file is one ``kind: List`` document of nested
 maps and lists shaped like Kubernetes manifests, application config, and CI
 jobs. A trailing ``padding`` value is ASCII ``x`` and only exists to make the
-file an exact size. Indentation is spaces. A tab may appear inside a quoted
-string and never in the indent. The mix, by item index, is:
+file an exact size. Indentation is spaces. Trigger features are chosen here.
+They are not something the benchmark discovered by measuring.
+
+Natural mix, on by item index:
 
 - nested maps and lists, and an ASCII comment, on every item
 - a block scalar on most items (``index % 5 != 4``, about 4/5). Even indexes
-  use a ``|`` literal script. Odd indexes use a ``>`` folded summary
+  use a ``|`` literal script. Odd indexes use a ``>`` folded summary. The
+  indent is the normal four-space body. This generator does not emit the
+  rule-1 block-scalar case (a whitespace-only first content line with a
+  later line indented further). That shape is rejected by the pure parser,
+  so there is no single-trigger row for it
 - accented Latin in a title when ``index % 4 != 3`` (about 3/4), and an
   accented comment when ``index % 6 == 5``
 - a small CJK value when ``index % 20 == 17``
 - an emoji when ``index % 12 == 7``
-- ``!!binary`` when ``index % 13 == 5``
+- ``!!binary`` (a core tag) when ``index % 13 == 5``
 - a ``%YAML 1.2`` document embedded in a ``|`` block when ``index % 17 == 4``
-  (content of the scalar, not a second document)
-- a bare tag ``channel: ! stable`` when ``index % 15 == 11``
+  (about 1/17). That text is scalar content, not a ``%YAML`` directive
+- a bare tag ``channel: ! stable`` when ``index % 15 == 11`` (1/15)
 - a double-quoted ``\\`` path when ``index % 5 == 0``
-- a tab inside a double-quoted string when ``index % 16 == 13``
+- a tab inside a double-quoted string when ``index % 16 == 13`` (1/16).
+  The tab is never in the indent
 
-``format_yaml_realistic_clib_reparse`` uses that same item sequence with a
-leading ``%YAML 1.2`` directive and ``---``. The directive does not change
-parsed item values. It is a rule-1 trigger, so the row is a C parse followed
-by a full pure-Python re-parse. The unforced realistic clib row is not
-rewritten and reports whichever path the file actually took.
+The bare tag and the quoted tab are rule-1 re-parse triggers, and the check
+is file-level, so every natural size file re-parses. The clean profile turns
+those three switches off (no bare or non-core tag, no ``%YAML``/``%TAG``
+directive, no tab outside a comment, no odd block-scalar indent) and keeps
+the block scalars, accented text, emoji, CJK, ``!!binary``, and escapes.
+``format_yaml_realistic_clean_pure`` and ``format_yaml_realistic_clean_clib``
+time that profile. Clean clib must be C parse plus pure writer at every size.
+
+Each single-trigger row is the clean profile plus one injection in the
+document header, once:
+
+- ``format_yaml_realistic_only_bare_tag_clib`` adds ``channel: ! stable``
+- ``format_yaml_realistic_only_tab_in_quotes_clib`` adds a quoted tab
+- ``format_yaml_realistic_only_directive_clib`` prefixes ``%YAML 1.2`` and
+  ``---``
+
+Those rows stop at 1 MB. A size that does not re-parse is recorded and called
+out. It does not fail the bench.
+
+``format_yaml_realistic_clib_reparse`` keeps the natural item sequence and
+adds a leading ``%YAML 1.2`` directive and ``---``. Parsed item values stay
+the same. That row keeps the 0.05–5 MB ladder. The UI warning size comes
+from it.
 
 Shipped C-path rows classify that path by wrapping ``YAML.scan``,
 ``YAML.load``, and ``YAML.dump`` and reading whether the parser and emitter
@@ -56,10 +81,12 @@ is benchmark-local C parse plus C writer on the realistic corpus, not
 ``format_yaml``.
 
 Default ladders keep a three-run macos-14 ``--corpus plain`` job near 20
-minutes. JSON is 1, 5, 10, 50, and 100 MB. Shipped YAML, round-trip, and
-safe+C are 0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. The realistic rows,
-including the forced reparse row and realistic safe+C, and
-``format_yaml_plain_clib`` are 0.05, 0.1, 0.25, 0.5, 1, and 5 MB.
+minutes. ``--corpus all`` adds the realistic rows and is sized to stay under
+about 45 minutes on macos-14. JSON is 1, 5, 10, 50, and 100 MB. Shipped
+YAML, round-trip, and safe+C are 0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB.
+The natural realistic rows, the clean rows, the forced reparse row,
+realistic safe+C, and ``format_yaml_plain_clib`` are 0.05, 0.1, 0.25, 0.5,
+1, and 5 MB. Each single-trigger row is 0.05, 0.1, 0.25, 0.5, and 1 MB.
 ``--sizes`` replaces those ladders for every selected row, including sizes
 above the caps.
 
@@ -110,24 +137,44 @@ DEFAULT_JSON_SIZES_MB = (1, 5, 10, 50, 100)
 DEFAULT_YAML_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5, 10)
 # Same grid as pure-Python YAML so the 0.5 s and 2 s bands can be interpolated.
 DEFAULT_SAFE_C_SIZES_MB = DEFAULT_YAML_SIZES_MB
-# Realistic corpus and the shipped C-path rows. Capped at 5 MB so a
-# three-run macos-14 `--corpus all` job stays near 20 minutes.
+# Natural realistic rows, clean rows, and the forced reparse row.
+# Capped at 5 MB. The forced reparse ladder stays through 5 MB because the
+# UI warning size is read from it and can land above 1 MB.
 DEFAULT_REALISTIC_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5)
+# One rule-1 trigger, injected once. Same curve as the forced reparse row
+# through 1 MB, so the 5 MB point is not repeated for each trigger.
+DEFAULT_TRIGGER_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1)
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 # Realistic documents replay this seed. Item ``i`` uses ``REALISTIC_SEED + i``.
 REALISTIC_SEED = 1729
+_TRIGGER_OPERATION_IDS = (
+    "format_yaml_realistic_only_bare_tag_clib",
+    "format_yaml_realistic_only_tab_in_quotes_clib",
+    "format_yaml_realistic_only_directive_clib",
+)
 _NEW_OPERATION_IDS = (
     "format_yaml_realistic_pure",
     "format_yaml_realistic_clib",
     "format_yaml_realistic_clib_reparse",
     "format_yaml_plain_clib",
     "yaml_safe_c_realistic",
+    "format_yaml_realistic_clean_pure",
+    "format_yaml_realistic_clean_clib",
+    *_TRIGGER_OPERATION_IDS,
+)
+_PURE_OPERATION_IDS = frozenset(
+    {
+        "format_yaml_realistic_pure",
+        "format_yaml_realistic_clean_pure",
+    }
 )
 _SHIPPED_CLIB_IDS = (
     "format_yaml_realistic_clib",
     "format_yaml_realistic_clib_reparse",
     "format_yaml_plain_clib",
+    "format_yaml_realistic_clean_clib",
+    *_TRIGGER_OPERATION_IDS,
 )
 _CLIB_WORKER_IDS = frozenset(
     {
@@ -229,6 +276,8 @@ class Operation:
     track_path: bool = False
     # When set, every measured run must take this path or the bench fails.
     require_path: str | None = None
+    # When set, a different path is recorded and called out. The bench continues.
+    expect_path: str | None = None
     # Benchmark-local rows that are one path by construction, not detected.
     reported_path: str | None = None
 
@@ -385,9 +434,68 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 corpus="realistic",
                 reported_path=PATH_C_PARSE_C_WRITER,
             ),
+            _shipped_pure_operation(
+                "format_yaml_realistic_clean_pure",
+                corpus="realistic-clean",
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_clean_clib",
+                corpus="realistic-clean",
+                require_path=PATH_C_PARSE_PURE_WRITER,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_bare_tag_clib",
+                corpus="realistic-only-bare-tag",
+                expect_path=PATH_PURE_REPARSE,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_tab_in_quotes_clib",
+                corpus="realistic-only-tab",
+                expect_path=PATH_PURE_REPARSE,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_directive_clib",
+                corpus="realistic-only-directive",
+                expect_path=PATH_PURE_REPARSE,
+            ),
         )
     )
     return scheduled, skipped
+
+
+def _shipped_pure_operation(operation_id: str, *, corpus: str) -> Operation:
+    return Operation(
+        operation_id=operation_id,
+        group="format",
+        source_format="yaml",
+        fn=core_format.format_yaml,
+        phases=_format_yaml_realistic_pure_phases,
+        yaml_typ="safe",
+        cutoff_role="comparison",
+        corpus=corpus,
+    )
+
+
+def _shipped_clib_operation(
+    operation_id: str,
+    *,
+    corpus: str,
+    require_path: str | None = None,
+    expect_path: str | None = None,
+) -> Operation:
+    return Operation(
+        operation_id=operation_id,
+        group="format",
+        source_format="yaml",
+        fn=core_format.format_yaml,
+        phases=_format_yaml_shipped_clib_phases,
+        yaml_typ="safe-clib",
+        cutoff_role="comparison",
+        corpus=corpus,
+        track_path=True,
+        require_path=require_path,
+        expect_path=expect_path,
+    )
 
 
 def _phases_for(operation_id: str, fn: Callable[..., object]) -> PhaseFn:
@@ -837,8 +945,52 @@ REALISTIC_HEADER = (
     "  name: galley-size-bench\n"
     "items:\n"
 )
-# Rule-1 trigger for the forced reparse row. Parsed items stay the same.
+# Rule-1 trigger for the forced reparse row and the directive-only row.
+# Parsed items stay the same.
 REALISTIC_DIRECTIVE = "%YAML 1.2\n---\n"
+
+
+@dataclass(frozen=True)
+class _RealisticMix:
+    """Which chosen trigger features a realistic file includes.
+
+    ``inject`` adds one trigger in the header. Item flags are the natural
+    rates. The clean mix leaves every flag off and injects nothing.
+    """
+
+    bare_tag: bool = False
+    quoted_tab: bool = False
+    embedded_directive_text: bool = False
+    inject: str | None = None
+
+
+_NATURAL_MIX = _RealisticMix(
+    bare_tag=True,
+    quoted_tab=True,
+    embedded_directive_text=True,
+)
+_CLEAN_MIX = _RealisticMix()
+_REALISTIC_MIXES = {
+    "natural": _NATURAL_MIX,
+    "reparse": _RealisticMix(
+        bare_tag=True,
+        quoted_tab=True,
+        embedded_directive_text=True,
+        inject="directive",
+    ),
+    "clean": _CLEAN_MIX,
+    "bare_tag": _RealisticMix(inject="bare_tag"),
+    "quoted_tab": _RealisticMix(inject="quoted_tab"),
+    "directive": _RealisticMix(inject="directive"),
+}
+_CORPUS_PROFILE = {
+    "realistic": "natural",
+    "realistic-reparse": "reparse",
+    "realistic-clean": "clean",
+    "realistic-only-bare-tag": "bare_tag",
+    "realistic-only-tab": "quoted_tab",
+    "realistic-only-directive": "directive",
+}
 
 
 def _yaml_quote(value: str) -> str:
@@ -968,8 +1120,25 @@ def _service_lines(name: str, service: str, port: int) -> list[str]:
     ]
 
 
-def _realistic_item(index: int) -> str:
+def _realistic_header(mix: _RealisticMix) -> str:
+    """Document header, including one optional trigger injection."""
+    extra = ""
+    if mix.inject == "bare_tag":
+        extra = "  channel: ! stable\n"
+    elif mix.inject == "quoted_tab":
+        extra = f"  column: {_yaml_quote('name\tregion')}\n"
+    header = REALISTIC_HEADER
+    if extra:
+        header = header.replace("items:\n", extra + "items:\n", 1)
+    if mix.inject == "directive":
+        header = REALISTIC_DIRECTIVE + header
+    return header
+
+
+def _realistic_item(index: int, mix: _RealisticMix | None = None) -> str:
     """One seeded config-shaped list item. See the module docstring for the mix."""
+    if mix is None:
+        mix = _NATURAL_MIX
     rng = random.Random(REALISTIC_SEED + index)
     service = _REALISTIC_SERVICES[index % len(_REALISTIC_SERVICES)]
     name = f"{service}-{index:06d}"
@@ -988,8 +1157,9 @@ def _realistic_item(index: int) -> str:
     lines.insert(1, f"  # record {index} for the size bench")
     if index % 6 == 5:
         lines.insert(2, "  # équipe")
-    if index % 5 != 4 or index % 17 == 4:
-        if index % 17 == 4:
+    embedded = mix.embedded_directive_text and index % 17 == 4
+    if index % 5 != 4 or embedded:
+        if embedded:
             lines.extend(_block_lines("script", "|", _EMBEDDED_DIRECTIVE))
         elif index % 2 == 0:
             script = _REALISTIC_SCRIPTS[index % len(_REALISTIC_SCRIPTS)]
@@ -1009,9 +1179,9 @@ def _realistic_item(index: int) -> str:
         lines.append(f"  windows_path: {_yaml_quote(windows)}")
     if index % 13 == 5:
         lines.append("  payload: !!binary aGVsbG8=")
-    if index % 15 == 11:
+    if mix.bare_tag and index % 15 == 11:
         lines.append("  channel: ! stable")
-    if index % 16 == 13:
+    if mix.quoted_tab and index % 16 == 13:
         lines.append(f"  column: {_yaml_quote('name\tregion')}")
     return "\n".join(lines) + "\n"
 
@@ -1121,6 +1291,8 @@ def ruamel_environment() -> dict[str, Any]:
 
 
 def _default_sizes(operation: Operation) -> tuple[float, ...]:
+    if operation.operation_id in _TRIGGER_OPERATION_IDS:
+        return DEFAULT_TRIGGER_SIZES_MB
     if operation.operation_id in _NEW_OPERATION_IDS:
         return DEFAULT_REALISTIC_SIZES_MB
     if operation.source_format == "json":
@@ -1181,15 +1353,14 @@ def generate_files(
         footer_prefix = JSON_FOOTER_PREFIX
         footer_suffix = JSON_FOOTER_SUFFIX
         render_item = _json_item
-    elif source_format == "yaml" and corpus in ("realistic", "realistic-reparse"):
+    elif source_format == "yaml" and corpus in _CORPUS_PROFILE:
         suffix = ".yaml"
-        header = REALISTIC_HEADER
-        if corpus == "realistic-reparse":
-            header = REALISTIC_DIRECTIVE + header
+        mix = _REALISTIC_MIXES[_CORPUS_PROFILE[corpus]]
+        header = _realistic_header(mix)
         separator = YAML_SEPARATOR
         footer_prefix = YAML_FOOTER_PREFIX
         footer_suffix = YAML_FOOTER_SUFFIX
-        render_item = _realistic_item
+        render_item = _render_realistic_item(mix)
         encoding = "utf-8"
     elif source_format == "yaml":
         suffix = ".yaml"
@@ -1224,23 +1395,38 @@ def generate_files(
     return written
 
 
-def render_realistic_yaml(target_bytes: int, *, directive: bool = False) -> str:
+def _render_realistic_item(mix: _RealisticMix) -> Callable[[int], str]:
+    def render(index: int) -> str:
+        return _realistic_item(index, mix)
+
+    return render
+
+
+def render_realistic_yaml(
+    target_bytes: int,
+    *,
+    profile: str = "natural",
+    directive: bool = False,
+) -> str:
     """Return one realistic document of exactly ``target_bytes`` UTF-8 bytes.
 
-    ``directive`` prefixes ``%YAML 1.2`` and ``---``. The list items are the
-    same sequence either way.
+    ``profile`` selects the mix in ``_REALISTIC_MIXES``. ``directive`` is the
+    natural mix plus a leading ``%YAML 1.2`` directive. List items follow that
+    mix either way.
     """
-    header = REALISTIC_DIRECTIVE + REALISTIC_HEADER if directive else REALISTIC_HEADER
+    if directive:
+        profile = "reparse"
+    mix = _REALISTIC_MIXES[profile]
     with tempfile.TemporaryDirectory(prefix="galley-realistic-yaml-") as temporary:
         path = Path(temporary) / "realistic.yaml"
         _write_document(
             path,
             target_bytes,
-            header=header,
+            header=_realistic_header(mix),
             separator=YAML_SEPARATOR,
             footer_prefix=YAML_FOOTER_PREFIX,
             footer_suffix=YAML_FOOTER_SUFFIX,
-            render_item=_realistic_item,
+            render_item=_render_realistic_item(mix),
             encoding="utf-8",
         )
         return path.read_text(encoding="utf-8")
@@ -1413,6 +1599,12 @@ def _measure_loaded(
                 f"ran {observed}; expected {expected}."
             )
             raise RuntimeError(message)
+        if operation.expect_path is not None and path != operation.expect_path:
+            observed = _PATH_LABELS.get(path or "", path or "unknown")
+            expected = _PATH_LABELS[operation.expect_path]
+            path_note_mismatch = f", expected {expected}, observed {observed}"
+        else:
+            path_note_mismatch = ""
         sample: dict[str, float | int | str | None] = {
             "seconds": round(elapsed, 6),
             "load_s": round(load_s, 6),
@@ -1427,7 +1619,8 @@ def _measure_loaded(
         print(
             f"{operation.operation_id} {_format_mb(size_mb)} MB "
             f"run {run_index + 1}/{runs}: {elapsed:.4f} s "
-            f"(load {load_s:.4f} s, dump {dump_s:.4f} s){path_note}",
+            f"(load {load_s:.4f} s, dump {dump_s:.4f} s)"
+            f"{path_note}{path_note_mismatch}",
             file=sys.stderr,
         )
     after_rss = process_ru_maxrss_bytes()
@@ -1474,6 +1667,9 @@ def _measure_loaded(
             row["yaml_path_label"] = ", ".join(
                 _PATH_LABELS.get(item, item) for item in unique
             )
+    if operation.expect_path is not None:
+        row["path_expected"] = operation.expect_path
+        row["path_mismatch"] = row.get("yaml_path") != operation.expect_path
     return row
 
 
@@ -1596,13 +1792,13 @@ def _worker_command(
         return [_uv_executable(), "run", "--isolated", "--", *worker]
     if operation.operation_id in _CLIB_WORKER_IDS:
         return [*_clib_worker_prefix(), *worker]
-    if operation.operation_id == "format_yaml_realistic_pure":
+    if operation.operation_id in _PURE_OPERATION_IDS:
         return [_pure_interpreter(), *worker[1:]]
     return [sys.executable, *worker[1:]]
 
 
 def _worker_env(operation: Operation) -> dict[str, str] | None:
-    if operation.operation_id != "format_yaml_realistic_pure":
+    if operation.operation_id not in _PURE_OPERATION_IDS:
         return None
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -2143,7 +2339,13 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "`format_yaml_plain_clib` is shipped `format_yaml` with the C "
                 "extension on the plain corpus. "
                 "`yaml_safe_c_realistic` is benchmark-local C parse plus C "
-                "writer on the realistic corpus. Realistic sizes stop at 5 MB."
+                "writer on the realistic corpus. "
+                "`format_yaml_realistic_clean_pure` and "
+                "`format_yaml_realistic_clean_clib` use the same shape with "
+                "the rule-1 triggers turned off. Each `only_*` row is that "
+                "clean file plus one header injection and stops at 1 MB. "
+                "The natural rows, the clean rows, and the forced reparse "
+                "row stop at 5 MB."
             )
         for index, note in enumerate(notes):
             if index:
@@ -2166,6 +2368,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         speedup = _realistic_speedup_line(report["measurements"])
         if speedup:
             lines.extend(["", speedup])
+        clean_speedup = _clean_speedup_line(report["measurements"])
+        if clean_speedup:
+            lines.extend(["", clean_speedup])
         writer_cost = _realistic_writer_cost_line(report["measurements"])
         if writer_cost:
             lines.extend(["", writer_cost])
@@ -2214,6 +2419,38 @@ def _realistic_speedup_line(measurements: list[dict[str, Any]]) -> str | None:
     )
 
 
+def _clean_speedup_line(measurements: list[dict[str, Any]]) -> str | None:
+    """Clean pure median / clean clib median at 0.1 MB and 1 MB."""
+    pure: dict[str, dict[str, Any]] = {}
+    clib: dict[str, dict[str, Any]] = {}
+    for row in measurements:
+        if "median_s" not in row:
+            continue
+        size = _format_mb(float(row["size_mb"]))
+        if row["operation_id"] == "format_yaml_realistic_clean_pure":
+            pure[size] = row
+        elif row["operation_id"] == "format_yaml_realistic_clean_clib":
+            clib[size] = row
+    parts: list[str] = []
+    for size in ("0.1", "1"):
+        if size not in pure or size not in clib:
+            continue
+        pure_s = float(pure[size]["median_s"])
+        clib_s = float(clib[size]["median_s"])
+        if clib_s <= 0:
+            continue
+        parts.append(
+            f"{size} MB {pure_s / clib_s:.2f}x "
+            f"(pure {pure_s:.4f} s, clib {clib_s:.4f} s)"
+        )
+    if not parts:
+        return None
+    joined = "; ".join(parts)
+    return (
+        f"Clean clib versus clean pure speedup (pure median / clib median): {joined}."
+    )
+
+
 def _realistic_writer_cost_line(measurements: list[dict[str, Any]]) -> str | None:
     """Shipped realistic clib median / realistic safe+C median."""
     shipped: dict[str, dict[str, Any]] = {}
@@ -2252,6 +2489,7 @@ def _path_section(report: dict[str, Any]) -> list[str]:
     rows: list[list[str]] = []
     natural: list[dict[str, Any]] = []
     forced: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
     for row in report["measurements"]:
         if "yaml_path" not in row:
             continue
@@ -2266,6 +2504,8 @@ def _path_section(report: dict[str, Any]) -> list[str]:
             natural.append(row)
         elif row["operation_id"] == "format_yaml_realistic_clib_reparse":
             forced.append(row)
+        if row.get("path_mismatch"):
+            mismatches.append(row)
     if not rows:
         return []
     lines = [
@@ -2281,7 +2521,10 @@ def _path_section(report: dict[str, Any]) -> list[str]:
             "and a C dump. "
             "`yaml_safe_c_realistic` is C parse plus C writer by construction. "
             "The forced reparse row must take the pure re-parse path at every "
-            "size. The unforced realistic row is the path the file took."
+            "size. The clean clib row must be C parse plus pure writer. "
+            "Each single-trigger row is expected to pure re-parse. A miss is "
+            "recorded below and does not fail the bench. The unforced "
+            "realistic row is the path the file took."
         ),
         "",
         *_markdown_table(
@@ -2301,6 +2544,24 @@ def _path_section(report: dict[str, Any]) -> list[str]:
         lines.append(
             f"Forced reparse sizes on the pure re-parse path: {fired}/{len(forced)}."
         )
+    if mismatches:
+        lines.append("Single-trigger sizes that did not take the pure re-parse path:")
+        for row in mismatches:
+            expected = _PATH_LABELS.get(
+                str(row.get("path_expected", "")),
+                str(row.get("path_expected", "")),
+            )
+            lines.append(
+                f"- `{row['operation_id']}` {_format_mb(float(row['size_mb']))} MB "
+                f"ran {row.get('yaml_path_label', row['yaml_path'])}; "
+                f"expected {expected}."
+            )
+    elif any(
+        row.get("operation_id") in _TRIGGER_OPERATION_IDS
+        for row in report["measurements"]
+        if "yaml_path" in row
+    ):
+        lines.append("Every single-trigger size took the pure re-parse path.")
     triggers = report.get("realistic_triggers")
     if isinstance(triggers, dict) and triggers.get("items"):
         total = int(triggers["items"])
@@ -2357,10 +2618,14 @@ def _yaml_mode(row: dict[str, Any]) -> str:
     operation_id = row.get("operation_id")
     if operation_id == "format_yaml":
         return "safe, shipped"
-    if operation_id == "format_yaml_realistic_pure":
+    if operation_id in _PURE_OPERATION_IDS:
         return "safe, shipped, no C"
     if operation_id == "format_yaml_realistic_clib_reparse":
         return "safe, shipped, C, reparse"
+    if operation_id == "format_yaml_realistic_clean_clib":
+        return "safe, shipped, C, clean"
+    if operation_id in _TRIGGER_OPERATION_IDS:
+        return "safe, shipped, C, one trigger"
     if operation_id in _SHIPPED_CLIB_IDS:
         return "safe, shipped, C"
     if row.get("yaml_typ") == "safe":
@@ -2591,8 +2856,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Omit to use the default ladders: JSON 1, 5, 10, 50, 100; "
             "shipped YAML, round-trip, and safe+C "
             "0.05, 0.1, 0.25, 0.5, 1, 5, 10; "
-            "realistic rows and plain shipped C "
-            "0.05, 0.1, 0.25, 0.5, 1, 5. "
+            "natural realistic rows, clean rows, forced reparse, "
+            "plain shipped C, and realistic safe+C "
+            "0.05, 0.1, 0.25, 0.5, 1, 5; "
+            "single-trigger rows "
+            "0.05, 0.1, 0.25, 0.5, 1. "
             "Sizes above those caps are timed when passed here."
         ),
     )
@@ -2602,7 +2870,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="plain",
         help=(
             "plain (default): historical rows on the synthetic catalog. "
-            "realistic: realistic pure, realistic clib, forced reparse, "
+            "realistic: natural, clean, single-trigger, forced reparse, "
             "plain clib, and realistic safe+C. "
             "all: historical rows and those new rows."
         ),
