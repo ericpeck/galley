@@ -28,10 +28,13 @@ from ruamel.yaml.tokens import (
     BlockEndToken,
     BlockMappingStartToken,
     BlockSequenceStartToken,
+    DirectiveToken,
     FlowMappingEndToken,
     FlowMappingStartToken,
     FlowSequenceEndToken,
     FlowSequenceStartToken,
+    ScalarToken,
+    TagToken,
 )
 
 from galley.core.errors import (
@@ -54,11 +57,10 @@ YAML_FORCE_C_PARSER_ERROR = "GALLEY_YAML_FORCE_C_PARSER_ERROR"
 YAML_PURE_RETRY_GATE = "GALLEY_YAML_PURE_RETRY_GATE"
 _PURE_RETRY_GATE_TIMEOUT_S = 30.0
 
-# Characters where the C parser accepts text the pure parser rejects, or the
-# C emitter's text differs from the pure emitter. Probed against
-# ruamel.yaml.clib 0.2.15: tabs and a few block scalars are accepted only by
-# libyaml; directives, tags, escapes, and non-ASCII change the dump.
-_PURE_CONFIRM_MARKS = ("\t", "|", ">", "%", "!", "\\")
+# YAML 1.1 core tags whose C load and pure dump already match pure Python.
+# Any other tag, including a bare ``!``, is parsed again with pure Python.
+# Probed against ruamel.yaml.clib 0.2.15.
+_CORE_TAG_NAMES = frozenset({"str", "int", "float", "bool", "null", "binary"})
 
 _HEX = frozenset("0123456789abcdefABCDEF")
 _HIGH_MIN = 0xD800
@@ -158,52 +160,41 @@ def _pure_python_yaml(text: str | bytes) -> str:
     return _format_yaml_impl(text, pure=True)
 
 
-def _pure_result_required(text: str | bytes) -> bool:
-    """Return True when the C result can disagree with pure Python.
-
-    Ordinary ASCII documents stay on the C loader and dumper. Tabs, block
-    scalars, tags, directives, backslash escapes, and non-ASCII text are
-    formatted again with the pure parser so the caller sees that result.
-    """
-    if isinstance(text, bytes):
-        try:
-            source = text.decode("utf-8")
-        except UnicodeDecodeError:
-            return True
-    else:
-        source = text
-    if not source.isascii():
-        return True
-    return any(mark in source for mark in _PURE_CONFIRM_MARKS)
-
-
 def format_yaml(text: str | bytes) -> str:
     """Return ``text`` parsed as YAML and dumped as a block document.
 
-    When ``ruamel.yaml.clib`` is installed, the C loader and dumper run
-    first. If the C parser raises, the pure-Python safe parser runs and its
-    result is returned, whether that is formatted text or an error. The
-    message, line, and column shown to the user come from that pure-Python
-    parse. Input the C parser accepts and the pure parser rejects uses the
-    pure-Python rejection. Without the C library this is the pure-Python
-    safe parser and it does not warn.
+    When ``ruamel.yaml.clib`` is installed, the C loader runs first. The
+    text shown to the user is written by the pure-Python emitter. A
+    ``%YAML`` or ``%TAG`` directive, a tab outside a comment, a non-core
+    or bare tag, or a block scalar whose first non-empty content line is
+    only whitespace with a later line indented further is parsed again
+    with pure Python, and that result is returned, success or error. If
+    the C parser raises, the pure-Python safe parser runs and its result
+    is returned. Without the C library this is the pure-Python safe
+    parser and it does not warn.
     """
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
         if _force_c_parser_error():
             return _pure_python_yaml(text)
         return _format_yaml_impl(text, pure=False)
+    reparse = True
+    loaded: object = None
     try:
         if _force_c_parser_error():
             raise YAMLError("forced C parser failure")
-        rendered = _format_yaml_impl(text, pure=False)
+        opened, tokens, failed = _scan_yaml(text, pure=False, keep_tokens=True)
+        if not failed and not _needs_pure_reparse(text, tokens):
+            loaded = _load_parsed(text, opened, pure=False)
+            reparse = False
     except Exception:
         return _pure_python_yaml(text)
-    # A scalar that is only quote characters is single-quoted by the C
-    # emitter (`''''`) and double-quoted by the pure emitter (`"'"`).
-    if _pure_result_required(text) or "'''" in rendered:
-        return _format_yaml_impl(text, pure=True)
-    return rendered
+    if reparse:
+        return _pure_python_yaml(text)
+    try:
+        return _dump_parsed(loaded, pure=True)
+    except Exception:
+        return _pure_python_yaml(text)
 
 
 def _format_yaml_impl(text: str | bytes, *, pure: bool) -> str:
@@ -215,10 +206,21 @@ def _format_yaml_impl(text: str | bytes, *, pure: bool) -> str:
             return _dump_block(parsed)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    yaml = _safe_yaml(pure=pure)
-    yaml.default_flow_style = False
     try:
-        parsed = yaml.load(text)
+        return _dump_parsed(_load_parsed(text, opened, pure=pure), pure=pure)
+    except RecursionError:
+        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+
+
+def _load_parsed(
+    text: str | bytes, opened: tuple[int, int, int], *, pure: bool
+) -> object:
+    """Load one document. Deep documents use an explicit stack."""
+    if opened[2] > _RUAMEL_SAFE_DEPTH:
+        return _yaml_from_events(text, pure=pure)
+    yaml = _safe_yaml(pure=pure)
+    try:
+        return yaml.load(text)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
     except ReaderError as exc:
@@ -226,12 +228,120 @@ def _format_yaml_impl(text: str | bytes, *, pure: bool) -> str:
         if error is not None:
             raise error from None
         raise
+
+
+def _dump_parsed(value: object, *, pure: bool) -> str:
+    """Dump ``value`` with safe YAML, using the pure emitter when asked."""
+    yaml = _safe_yaml(pure=pure)
+    yaml.default_flow_style = False
     buffer = StringIO()
-    try:
-        yaml.dump(parsed, buffer)
-    except RecursionError:
-        raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+    yaml.dump(value, buffer)
     return buffer.getvalue()
+
+
+def _needs_pure_reparse(text: str | bytes, tokens: list[object]) -> bool:
+    """Return True when the C tokens are one of the pure-Python mismatches.
+
+    Those cases are a ``%YAML`` or ``%TAG`` directive, a tab that is not
+    inside a comment, a non-core or bare tag, and a block scalar whose
+    first non-empty content line is whitespace with a later line indented
+    further. Everything else keeps the C value and is dumped in pure Python.
+    """
+    cursor = 0
+    for token in tokens:
+        start = token.start_mark.index
+        end = token.end_mark.index
+        if _gap_has_tab_outside_comment(text, cursor, start):
+            return True
+        if isinstance(token, DirectiveToken) and token.name in {"YAML", "TAG"}:
+            return True
+        if isinstance(token, TagToken) and not _is_core_tag(token.value):
+            return True
+        if isinstance(token, ScalarToken):
+            raw = text[start:end]
+            if _contains_tab(raw) or _block_scalar_needs_reparse(token, raw):
+                return True
+        cursor = max(cursor, end)
+    return _gap_has_tab_outside_comment(text, cursor, len(text))
+
+
+def _is_core_tag(value: object) -> bool:
+    if not isinstance(value, tuple) or len(value) != 2:
+        return False
+    handle, name = value
+    return handle == "!!" and name in _CORE_TAG_NAMES
+
+
+def _block_scalar_needs_reparse(token: ScalarToken, raw: str | bytes) -> bool:
+    """Return True for the block indent pure Python rejects and C accepts."""
+    if token.style not in {"|", ">"}:
+        return False
+    if isinstance(raw, str):
+        normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+        newline = "\n"
+        space = " "
+        empty = ""
+    else:
+        normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        newline = b"\n"
+        space = b" "
+        empty = b""
+    split_at = normalized.find(newline)
+    if split_at < 0:
+        return False
+    first_indent: int | None = None
+    for line in normalized[split_at + 1 :].split(newline):
+        if line == empty:
+            continue
+        if first_indent is None:
+            if line.strip(space) != empty:
+                return False
+            first_indent = len(line)
+            continue
+        stripped = line.lstrip(space)
+        indent = len(line) - len(stripped)
+        if indent > first_indent and stripped != empty:
+            return True
+    return False
+
+
+def _gap_has_tab_outside_comment(text: str | bytes, start: int, end: int) -> bool:
+    """Return True when ``text[start:end]`` has a tab before any comment."""
+    index = start
+    while index < end:
+        comment = _is_char(text, index, "#") and (
+            index == start or _is_space(text, index - 1)
+        )
+        if comment:
+            index += 1
+            while index < end and not _is_char(text, index, "\n"):
+                index += 1
+            continue
+        if _is_char(text, index, "\t"):
+            return True
+        index += 1
+    return False
+
+
+def _contains_tab(raw: str | bytes) -> bool:
+    if isinstance(raw, str):
+        return "\t" in raw
+    return b"\t" in raw
+
+
+def _is_char(text: str | bytes, index: int, char: str) -> bool:
+    found = text[index]
+    if isinstance(found, int):
+        return found == ord(char)
+    return found == char
+
+
+def _is_space(text: str | bytes, index: int) -> bool:
+    return (
+        _is_char(text, index, " ")
+        or _is_char(text, index, "\t")
+        or _is_char(text, index, "\n")
+    )
 
 
 def _decode_json(text: str | bytes) -> str:
@@ -441,12 +551,23 @@ def _yaml_limits(text: str | bytes, *, pure: bool = False) -> tuple[int, int, in
     Windows stack. The returned line, column, and depth are the last
     container the scanner opened.
     """
+    opened, _tokens, _failed = _scan_yaml(text, pure=pure, keep_tokens=False)
+    return opened
+
+
+def _scan_yaml(
+    text: str | bytes, *, pure: bool, keep_tokens: bool
+) -> tuple[tuple[int, int, int], list[object], bool]:
+    """Scan ``text``. The bool is True when a YAML error ended the scan."""
     yaml = _safe_yaml(pure=pure)
     depth = 0
     deepest = 0
     opened = (1, 1, 0)
+    tokens: list[object] = []
     try:
         for token in yaml.scan(text):
+            if keep_tokens:
+                tokens.append(token)
             if isinstance(token, _YAML_OPEN):
                 depth += 1
                 if depth > deepest:
@@ -464,10 +585,10 @@ def _yaml_limits(text: str | bytes, *, pure: bool = False) -> tuple[int, int, in
         error = _reader_utf8_error(text, exc)
         if error is not None:
             raise error from None
-        return opened[0], opened[1], deepest
+        return opened, tokens, True
     except YAMLError:
-        return opened[0], opened[1], deepest
-    return opened[0], opened[1], deepest
+        return opened, tokens, True
+    return opened, tokens, False
 
 
 def _mark(token: object, fallback: tuple[int, int]) -> tuple[int, int]:

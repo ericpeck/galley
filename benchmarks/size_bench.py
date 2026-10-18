@@ -6,11 +6,12 @@ markdown table plus JSON. Generated inputs are deleted with the temp directory.
 Both result files are rewritten after every completed size, including the
 cutoff summary computed from the rows so far.
 
-``format_yaml`` is timed as shipped: ruamel ``typ="safe"``, which uses the C
-loader and dumper when ``ruamel.yaml.clib`` imports and the pure-Python parser
-otherwise. YAML UI cutoffs use that row. Round-trip and safe+C are labeled
-comparisons. Each call reports load and dump wall time. Nothing here changes
-``galley.core``.
+``format_yaml`` is timed as shipped: ruamel ``typ="safe"``. When
+``ruamel.yaml.clib`` imports, the C loader parses and the pure-Python emitter
+writes the result, except documents whose tokens need a full pure-Python
+reparse. Without the C library the pure-Python parser does both. YAML UI
+cutoffs use that row. Round-trip and safe+C are labeled comparisons. Each
+call reports load and dump wall time. Nothing here changes ``galley.core``.
 
 Default ladders keep a three-run macos-14 job near 20 minutes. JSON is
 1, 5, 10, 50, and 100 MB. Shipped YAML, round-trip, and safe+C are
@@ -279,8 +280,9 @@ def _assert_shipped_yaml_environment() -> None:
     """Fail when the C extension is only half installed.
 
     Shipped ``format_yaml`` uses the C parser when ``ruamel.yaml.clib``
-    imports, and the pure-Python parser when it does not. A distribution
-    with no loaded parser would time neither path.
+    imports and writes with the pure-Python emitter, and the pure-Python
+    parser when the library does not. A distribution with no loaded parser
+    would time neither path.
     """
     clib_spec = importlib.util.find_spec("ruamel.yaml.clib")
     extension_spec = importlib.util.find_spec("_ruamel_yaml")
@@ -1286,8 +1288,10 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "`resource` ru_maxrss when the run sets a new high-water mark). "
                 "`format_json` and `format_yaml` are galley.core. "
                 '`format_yaml` is ruamel `typ="safe"` as shipped: the C loader '
-                "and dumper when `ruamel.yaml.clib` imports, and the pure-Python "
-                "parser otherwise. YAML UI cutoffs use that row. "
+                "parses and the pure-Python emitter writes when "
+                "`ruamel.yaml.clib` imports, except documents that need a full "
+                "pure-Python reparse. Without the library the pure-Python "
+                "parser does both. YAML UI cutoffs use that row. "
                 "Default JSON sizes are 1, 5, 10, 50, and 100 MB. "
                 "Default shipped YAML, round-trip, and safe+C sizes are "
                 "0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. "

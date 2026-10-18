@@ -1,5 +1,6 @@
 """format_yaml uses ruamel.yaml.clib when it is installed, and matches pure Python."""
 
+import random
 import warnings
 
 import pytest
@@ -91,6 +92,10 @@ _CORPUS: tuple[str | bytes, ...] = (
     "a: ''''''\n",
     "a: '''it'''\n",
     "a: \"''\"\n",
+    "a: |\r\n \r\n  hello\r\n",
+    b"a: |\r\n \r\n  hello\r\n",
+    "%TAG !e! tag:example.com,2000:app/\n---\na: 1\n",
+    "a: 1 # \there\n",
 )
 
 
@@ -140,36 +145,39 @@ def test_user_facing_result_matches_pure_python(text: str | bytes) -> None:
     assert _outcome(text, pure=False) == _outcome(text, pure=True)
 
 
-def test_plain_document_stays_on_the_c_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def _watch_reparse(monkeypatch: pytest.MonkeyPatch) -> list[str | bytes]:
+    calls: list[str | bytes] = []
+    real = format_module._pure_python_yaml
+
+    def track(text: str | bytes) -> str:
+        calls.append(text)
+        return real(text)
+
+    monkeypatch.setattr(format_module, "_pure_python_yaml", track)
+    return calls
+
+
+def _reject_reparse(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(text: str | bytes) -> str:
+        raise AssertionError(text)
+
+    monkeypatch.setattr(format_module, "_pure_python_yaml", boom)
+
+
+def test_plain_document_dumps_the_c_value(monkeypatch: pytest.MonkeyPatch) -> None:
     _require_clib()
-    calls: list[bool] = []
-    real = format_module._format_yaml_impl
-
-    def track(text: str | bytes, *, pure: bool) -> str:
-        calls.append(pure)
-        return real(text, pure=pure)
-
-    monkeypatch.setattr(format_module, "_format_yaml_impl", track)
+    _reject_reparse(monkeypatch)
     source = "a: 1\nb:\n  - 2\n  - 3\n"
-    assert format_yaml(source) == real(source, pure=True)
-    assert calls == [False]
+    assert format_yaml(source) == _pure(source)
 
 
 @pytest.mark.parametrize("source", ["a: it's\n", 'a: ""\n', 'notes: "packed."\n'])
-def test_common_quotes_stay_on_the_c_path(
+def test_common_quotes_dump_the_c_value(
     source: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _require_clib()
-    calls: list[bool] = []
-    real = format_module._format_yaml_impl
-
-    def track(text: str | bytes, *, pure: bool) -> str:
-        calls.append(pure)
-        return real(text, pure=pure)
-
-    monkeypatch.setattr(format_module, "_format_yaml_impl", track)
-    assert format_yaml(source) == real(source, pure=True)
-    assert calls == [False]
+    _reject_reparse(monkeypatch)
+    assert format_yaml(source) == _pure(source)
 
 
 def test_c_parser_error_retries_with_pure_python(
@@ -192,7 +200,7 @@ def test_c_parser_error_retries_with_pure_python(
     assert type(caught.value) is type(pure_caught.value)
     assert str(caught.value) == str(pure_caught.value)
     assert _location(caught.value) == (1, 9)
-    assert calls == [False, True]
+    assert calls == [True]
 
 
 def test_tab_accepted_by_c_uses_the_pure_python_rejection() -> None:
@@ -239,3 +247,186 @@ def test_forced_c_failure_returns_the_pure_python_result(
     assert format_yaml(source) == _pure(source)
     text = "a:\t1\n"
     assert _outcome(text, pure=False) == _outcome(text, pure=True)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "%YAML 1.1\n--- yes\n",
+        "%TAG !e! tag:example.com,2000:app/\n---\na: 1\n",
+    ],
+)
+def test_directive_reparses_with_pure_python(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_clib()
+    calls = _watch_reparse(monkeypatch)
+    assert _outcome(text, pure=False) == _outcome(text, pure=True)
+    assert calls == [text]
+
+
+@pytest.mark.parametrize("text", ["a:\t1\n", "a: b\tc\n", b"a:\t1\n"])
+def test_tab_outside_a_comment_reparses_with_pure_python(
+    text: str | bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_clib()
+    calls = _watch_reparse(monkeypatch)
+    assert _outcome(text, pure=False) == _outcome(text, pure=True)
+    assert calls == [text]
+
+
+def test_tab_inside_a_comment_keeps_the_c_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_clib()
+    _reject_reparse(monkeypatch)
+    text = "a: 1 # \there\n"
+    assert format_yaml(text) == _pure(text)
+
+
+def test_bare_tag_reparses_with_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_clib()
+    text = "a: !\n"
+    calls = _watch_reparse(monkeypatch)
+    assert format_yaml(text) == _pure(text)
+    assert calls == [text]
+    loaded = YAML(typ="safe").load(text)
+    assert format_module._dump_parsed(loaded, pure=True) != _pure(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a: |\n \n  hello\n",
+        "a: >\n \n  hello\n",
+        "a: |\r\n \r\n  hello\r\n",
+        b"a: |\r\n \r\n  hello\r\n",
+    ],
+)
+def test_block_scalar_indent_hole_reparses_with_pure_python(
+    text: str | bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_clib()
+    calls = _watch_reparse(monkeypatch)
+    assert _outcome(text, pure=False) == _outcome(text, pure=True)
+    assert calls == [text]
+
+
+def test_ordinary_block_scalar_keeps_the_c_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_clib()
+    _reject_reparse(monkeypatch)
+    text = "a: |\n  hello\n    world\n"
+    assert format_yaml(text) == _pure(text)
+
+
+_KEYS = ("name", "count", "note", "title", "sku", "flag", "label", "city")
+_WORDS = ("alpha", "beta", "widget", "packed", "plain", "sale", "north")
+_PHRASES = ("café", "订单", "naïve", "😀", "line one")
+
+
+def _formats_equal(actual: str, expected: str) -> bool:
+    return actual == expected
+
+
+def _quoted(rng: random.Random, text: str) -> str:
+    if rng.randrange(2) == 0:
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _scalar_token(rng: random.Random) -> str:
+    roll = rng.randrange(9)
+    if roll == 0:
+        return str(rng.randint(0, 40))
+    if roll == 1:
+        return rng.choice(("true", "false", "null", "~", "1.25"))
+    if roll == 2:
+        return _quoted(rng, rng.choice(_WORDS))
+    if roll == 3:
+        return _quoted(rng, rng.choice(_PHRASES))
+    if roll == 4:
+        return '"' + rng.choice(_WORDS) + "\\n" + rng.choice(_WORDS) + '"'
+    if roll == 5:
+        return "!!str " + rng.choice(_WORDS)
+    if roll == 6:
+        return "!!int " + str(rng.randint(0, 12))
+    if roll == 7:
+        return "!!binary aGVsbG8="
+    return rng.choice(_WORDS)
+
+
+def _block_body(rng: random.Random, indent: int) -> str:
+    style = rng.choice(("|", ">", "|-", ">-"))
+    pad = " " * indent
+    rows = [
+        f"{pad}{rng.choice(_WORDS)} {rng.choice(_PHRASES)}"
+        for _ in range(rng.randint(1, 3))
+    ]
+    return f"{style}\n" + "\n".join(rows) + "\n"
+
+
+def _mapping_lines(rng: random.Random, indent: int, depth: int) -> str:
+    pad = " " * indent
+    pieces: list[str] = []
+    used: set[str] = set()
+    for _ in range(rng.randint(1, 3)):
+        key = rng.choice(_KEYS) + str(rng.randint(0, 6))
+        while key in used:
+            key += "x"
+        used.add(key)
+        nested = depth < 2 and rng.randrange(4) == 0
+        block = (not nested) and depth < 2 and rng.randrange(4) == 0
+        if block:
+            pieces.append(f"{pad}{key}: {_block_body(rng, indent + 2)}")
+            continue
+        if nested and rng.randrange(2) == 0:
+            pieces.append(f"{pad}{key}:\n{_sequence_lines(rng, indent + 2, depth + 1)}")
+            continue
+        if nested:
+            pieces.append(f"{pad}{key}:\n{_mapping_lines(rng, indent + 2, depth + 1)}")
+            continue
+        line = f"{pad}{key}: {_scalar_token(rng)}"
+        if rng.randrange(4) == 0:
+            line += " # note"
+        pieces.append(line + "\n")
+    return "".join(pieces)
+
+
+def _sequence_lines(rng: random.Random, indent: int, depth: int) -> str:
+    pad = " " * indent
+    pieces: list[str] = []
+    for _ in range(rng.randint(1, 3)):
+        if depth < 2 and rng.randrange(3) == 0:
+            pieces.append(f"{pad}-\n{_mapping_lines(rng, indent + 2, depth + 1)}")
+            continue
+        pieces.append(f"{pad}- {_scalar_token(rng)}\n")
+    return "".join(pieces)
+
+
+def _random_yaml_document(rng: random.Random) -> str | bytes:
+    if rng.randrange(3) == 0:
+        document = _sequence_lines(rng, 0, 0)
+    else:
+        document = _mapping_lines(rng, 0, 0)
+    if rng.randrange(5) == 0:
+        return document.encode()
+    return document
+
+
+def test_random_documents_match_pure_python_bytes() -> None:
+    _require_clib()
+    rng = random.Random(0x0C11B015)
+    for _ in range(48):
+        document = _random_yaml_document(rng)
+        assert _formats_equal(format_yaml(document), _pure(document))
+
+
+def test_format_comparison_fails_on_a_deliberate_mismatch() -> None:
+    _require_clib()
+    document = "a: 1\n"
+    expected = _pure(document)
+    assert _formats_equal(format_yaml(document), expected)
+    drifted = expected.replace("1", "9", 1)
+    assert not _formats_equal(drifted, expected)
