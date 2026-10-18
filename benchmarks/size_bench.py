@@ -212,6 +212,7 @@ _PATH_LABELS = {
 }
 _observed_path: list[str | None] = [None]
 _PURE_PYTHON: str | None = None
+_SHIPPED_PYTHON: str | None = None
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
 SAMPLE_INTERVAL_S = 0.01
@@ -1767,6 +1768,46 @@ def _pure_interpreter() -> str:
     return _PURE_PYTHON
 
 
+def _shipped_interpreter() -> str:
+    """Interpreter synced once from the lockfile, including ``ruamel.yaml.clib``.
+
+    ``uv run --isolated`` builds this same environment (default groups, editable
+    project, lockfile packages) and then throws it away. Doing that for every
+    size put environment setup next to the timed call. This sync runs once,
+    before any size is timed, and each size reuses the interpreter.
+    """
+    global _SHIPPED_PYTHON
+    if _SHIPPED_PYTHON is not None:
+        return _SHIPPED_PYTHON
+    print(
+        "preparing shipped environment from the project lock",
+        file=sys.stderr,
+    )
+    uv = _uv_executable()
+    root = Path(tempfile.mkdtemp(prefix="galley-size-bench-shipped-"))
+    atexit.register(shutil.rmtree, root, True)
+    venv = root / ".venv"
+    subprocess.run([uv, "venv", "--quiet", str(venv)], check=True)
+    env = os.environ.copy()
+    # The parent `uv run` sets VIRTUAL_ENV to the project env, which may not
+    # match the lock (CI can omit ruamel.yaml.clib). Point this sync at the
+    # shipped env only.
+    env.pop("VIRTUAL_ENV", None)
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
+    subprocess.run(
+        [uv, "sync", "--quiet", "--frozen"],
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+    )
+    python = _venv_python(venv)
+    if not python.is_file():
+        message = "Shipped benchmark environment has no interpreter."
+        raise RuntimeError(message)
+    _SHIPPED_PYTHON = str(python)
+    return _SHIPPED_PYTHON
+
+
 def _clib_worker_prefix() -> list[str]:
     return [_uv_executable(), "run", "--with", RUAMEL_CLIB_SPEC, "--"]
 
@@ -1780,9 +1821,10 @@ def _worker_command(
 ) -> list[str]:
     """Command for one size.
 
-    Shipped ``format_yaml`` uses ``uv run --isolated`` so the timing process
-    installs the project lock, including ``ruamel.yaml.clib`` when that
-    dependency is present. Safe+C and the shipped C-path rows use
+    Shipped ``format_yaml`` reuses one interpreter synced from the project
+    lock, including ``ruamel.yaml.clib`` when that dependency is present.
+    That is the environment ``uv run --isolated`` would install, prepared
+    once before timing. Safe+C and the shipped C-path rows use
     ``uv run --with`` at the pinned version. The realistic pure row uses an
     environment synced without ``ruamel.yaml.clib`` and asserts it is absent.
     """
@@ -1803,7 +1845,7 @@ def _worker_command(
         str(item_count),
     ]
     if operation.operation_id == "format_yaml":
-        return [_uv_executable(), "run", "--isolated", "--", *worker]
+        return [_shipped_interpreter(), *worker[1:]]
     if operation.operation_id in _CLIB_WORKER_IDS:
         return [*_clib_worker_prefix(), *worker]
     if operation.operation_id in _PURE_OPERATION_IDS:
@@ -2818,6 +2860,10 @@ def build_report(
         if realistic_files:
             largest = max(realistic_files)
             realistic_triggers = realistic_trigger_counts(realistic_files[largest][1])
+        # Build the shipped environment before the first timed size. Later
+        # format_yaml sizes reuse the cached interpreter.
+        if any(operation.operation_id == "format_yaml" for operation in selected):
+            _shipped_interpreter()
         for operation in selected:
             wanted = planned[operation.operation_id]
             if not wanted:

@@ -112,6 +112,61 @@ jobs:
           echo "Bundled ruamel.yaml.clib extension:"
           echo "${clibs}"
 
+      # File presence is not enough: the built executable has to load the C parser.
+      - name: Check that the built app loads ruamel.yaml.clib
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          bin="dist/Galley.app/Contents/MacOS/Galley"
+          log="build/clib-self-check.out"
+          err="build/clib-self-check.err"
+          fail() {
+            echo "Check: ruamel.yaml.clib self-check"
+            echo "What broke: $1"
+            echo "Reproduce locally: ${bin} --self-check"
+            exit 1
+          }
+          if [[ ! -x "${bin}" ]]; then
+            fail "${bin} is missing or not executable."
+          fi
+          mkdir -p build
+          "${bin}" --self-check >"${log}" 2>"${err}" &
+          pid="$!"
+          i=0
+          while [[ "${i}" -lt 60 ]]; do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+            i=$((i + 1))
+          done
+          if kill -0 "${pid}" 2>/dev/null; then
+            kill "${pid}" 2>/dev/null || true
+            wait "${pid}" || true
+            fail "the built app did not exit within 60 seconds. --self-check should finish without a window."
+          fi
+          status=0
+          wait "${pid}" || status="$?"
+          stdout="$(cat "${log}")"
+          stderr="$(cat "${err}")"
+          if [[ -n "${stderr}" ]]; then
+            echo "stderr:"
+            printf '%s\n' "${stderr}"
+          fi
+          printf '%s\n' "${stdout}"
+          if [[ "${status}" -ne 0 || "${stdout}" != "ruamel.yaml.clib self-check: ok" ]]; then
+            if [[ -n "${stdout}" ]]; then
+              detail="exit ${status}; ${stdout}"
+            else
+              detail="exit ${status}; no self-check line."
+            fi
+            if [[ -n "${stderr}" ]]; then
+              detail="${detail} stderr: ${stderr}"
+            fi
+            fail "${detail}"
+          fi
+
       - name: Verify bundle metadata
         run: uv run --frozen --no-dev --no-editable python packaging/verify_bundle_metadata.py dist/Galley.app
 

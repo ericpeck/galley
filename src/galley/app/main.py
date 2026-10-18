@@ -1,12 +1,20 @@
 """Galley application shell."""
 
+import importlib
 import sys
 
 from PySide6.QtWidgets import QApplication, QMainWindow
+from ruamel.yaml import YAML
+from ruamel.yaml.main import CParser
 
 from galley.app.fonts import ui_font
 from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
+
+# Hidden from the window. The disk-image job runs the built executable with it.
+_SELF_CHECK_FLAG = "--self-check"
+_SELF_CHECK_OK = "ruamel.yaml.clib self-check: ok"
+_SELF_CHECK_YAML = "a: 1\n"
 
 
 def create_main_window() -> QMainWindow:
@@ -14,9 +22,53 @@ def create_main_window() -> QMainWindow:
     return MainWindow()
 
 
-def main() -> int:
-    """Open one Galley window and run its event loop."""
+def clib_self_check() -> str | None:
+    """Return None when ``ruamel.yaml.clib`` parses a tiny document.
+
+    The C extension is optional, so the import happens here and the app
+    still starts when the wheel is absent. A returned string is why it failed.
+    """
+    try:
+        extension = importlib.import_module("_ruamel_yaml")
+    except ImportError as exc:
+        return f"ruamel.yaml.clib did not import ({exc})"
+    extension_parser = getattr(extension, "CParser", None)
+    if extension_parser is None or CParser is not extension_parser:
+        return "ruamel.yaml did not load the C parser from ruamel.yaml.clib"
+    yaml = YAML(typ="safe")
+    if yaml.Parser is not extension_parser:
+        return "safe YAML did not select the ruamel.yaml.clib C parser"
+    try:
+        loaded = yaml.load(_SELF_CHECK_YAML)
+    except Exception as exc:
+        return f"ruamel.yaml.clib C parser failed ({type(exc).__name__}: {exc})"
+    if loaded != {"a": 1}:
+        return f"ruamel.yaml.clib C parser returned {loaded!r}"
+    return None
+
+
+def run_self_check() -> int:
+    """Print one line. Return 0 when the C loader works, otherwise 1."""
+    problem = clib_self_check()
+    if problem is None:
+        print(_SELF_CHECK_OK, flush=True)
+        return 0
+    detail = " ".join(problem.split())
+    if not detail:
+        detail = "ruamel.yaml.clib C parser was not usable"
+    print(f"ruamel.yaml.clib self-check: failed: {detail}", flush=True)
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Open one Galley window and run its event loop.
+
+    ``--self-check`` checks ``ruamel.yaml.clib`` and exits without a window.
+    """
     configure_runtime()
+    args = sys.argv if argv is None else argv
+    if _SELF_CHECK_FLAG in args:
+        return run_self_check()
     application = QApplication(sys.argv)
     application.setApplicationName("Galley")
     application.setApplicationDisplayName("Galley")
