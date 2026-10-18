@@ -102,13 +102,13 @@ def test_path_detection_does_not_use_confirm_marks() -> None:
     assert "_format_yaml_impl" not in source
 
 
-def test_plain_yaml_items_have_no_confirm_marks() -> None:
+def test_plain_yaml_items_have_no_reparse_triggers() -> None:
     chunks = [YAML_HEADER]
     chunks.extend(_yaml_item(index) for index in range(20))
     chunks.append(YAML_FOOTER_PREFIX + YAML_FOOTER_SUFFIX)
     text = "".join(chunks)
     assert text.isascii()
-    for mark in core_format._PURE_CONFIRM_MARKS:
+    for mark in ("\t", "|", ">", "!", "%", "\\"):
         assert mark not in text
 
 
