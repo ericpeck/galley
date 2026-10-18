@@ -57,6 +57,18 @@ jobs:
           --distpath dist --workpath build
           packaging/galley.spec
 
+      # About reads galley.__version__. A v* tag names the disk image.
+      - name: Check release version
+        run: |
+          set -euo pipefail
+          package="$(uv run --frozen --no-dev --no-editable python -c 'from galley import __version__; print(__version__)')"
+          plist="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/Galley.app/Contents/Info.plist)"
+          args=(--package "${package}" --plist "${plist}")
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            args+=(--tag "${GITHUB_REF_NAME#v}")
+          fi
+          uv run --frozen --no-dev --no-editable python packaging/check_release_version.py "${args[@]}"
+
       - name: Check the app bundle
         run: |
           set -euo pipefail

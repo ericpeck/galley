@@ -18,6 +18,8 @@ You can also run it by hand, or by pushing a tag:
    - `Galley-<version>-arm64.dmg.sha256`
 3. To publish those files on a GitHub Release, push a tag whose name starts with `v`, such as `v0.1.0`. The file name uses the tag without the leading `v`. The release job creates the release when one does not already exist, or uploads onto the existing release.
 
+Before tagging, `galley.__version__` must equal the tag without the `v`, and CI enforces it.
+
 Each ref has its own concurrency group. A new run on that ref cancels the run already in progress.
 
 Check the checksum from the directory that contains the disk image:
