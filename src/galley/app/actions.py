@@ -158,6 +158,11 @@ class ShellActions:
             shortcut=FORMAT,
             enabled=False,
         )
+        self.convert_python = _action(
+            parent,
+            "Convert from Python",
+            enabled=False,
+        )
 
     def _exclusive_guides(self, parent: QWidget) -> QActionGroup:
         group = QActionGroup(parent)
