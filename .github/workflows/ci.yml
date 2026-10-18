@@ -51,14 +51,31 @@ jobs:
           enable-cache: false
 
       - name: Sync dependencies
-        # This leg keeps the pure-Python parser. The clib job installs it.
-        # --no-sync on the next step stops uv run from installing it again.
-        run: uv sync --no-install-package ruamel.yaml.clib
+        # Installs ruamel.yaml.clib so the C path and the skip-if-no-clib tests run.
+        run: uv sync
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --no-sync pytest
+        run: |
+          uv run pytest --junitxml="${RUNNER_TEMP}/pytest.xml"
+          uv run python - "${RUNNER_TEMP}/pytest.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse(sys.argv[1])
+          skipped = []
+          for case in tree.iter("testcase"):
+              for node in case.findall("skipped"):
+                  message = node.get("message") or (node.text or "")
+                  if "ruamel.yaml.clib is not installed" in message:
+                      skipped.append(f"{case.get('classname')}::{case.get('name')}")
+          if skipped:
+              print("clib tests skipped on macOS:")
+              print("\n".join(skipped))
+              sys.exit(1)
+          print("clib-only tests ran")
+          PY
 
   test-windows:
     name: Test (Windows)
@@ -74,67 +91,14 @@ jobs:
           enable-cache: false
 
       - name: Sync dependencies
-        # This leg keeps the pure-Python parser. The clib job installs it.
-        # --no-sync on the next step stops uv run from installing it again.
+        # Pure Python on purpose, so the no-clib fallback stays covered.
+        # --no-sync on the next step stops uv run from installing clib again.
         run: uv sync --no-install-package ruamel.yaml.clib
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --no-sync pytest
-
-  test-clib:
-    name: Test (ruamel.yaml.clib)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Install Qt libraries
-        # ubuntu-latest does not ship the libraries PySide6 loads for offscreen.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libdbus-1-3 \
-            libegl1 \
-            libfontconfig1 \
-            libgl1 \
-            libglib2.0-0 \
-            libnss3 \
-            libx11-xcb1 \
-            libxcb-cursor0 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-randr0 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libxcb-xfixes0 \
-            libxcb-xinerama0 \
-            libxcb-xkb1 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxfixes3 \
-            libxi6 \
-            libxkbcommon-x11-0 \
-            libxkbcommon0 \
-            libxrandr2 \
-            libxrender1 \
-            libxtst6
-
-      - name: Sync dependencies
-        run: uv sync
-
-      - name: Run tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: uv run pytest
 
   secret-scan:
     name: Secret scan
