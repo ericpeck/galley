@@ -43,11 +43,13 @@ After that, Galley opens with a normal double-click.
 
 `LSMinimumSystemVersion` in the app is `14.4`. Qt 6.12 documents macOS 14.4 as its minimum, and the Qt libraries in the app record that floor. The bundled CPython 3.12.10 arm64 build and the arm64 executable record macOS 11.0. The highest of those floors is 14.4.
 
-PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of 26.0. The disk-image job launches the built app on macOS 14, so the declared minimum follows Qt's 14.4 floor.
+The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that `Contents/Resources/LICENSES` is present and not empty. It walks every file in `Galley.app`, recognizes Mach-O files by their magic bytes, and runs `vtool -show-build` on each architecture. The `minos` value is compared with `LSMinimumSystemVersion` in `Contents/Info.plist`. A Mach-O file with no `LC_BUILD_VERSION` is checked with `vtool -show-version-min` and `LC_VERSION_MIN_MACOSX`. When any recorded minimum is higher than the declared floor, the step prints the count, then each path relative to the app, the architecture, that minos, and the floor. It then prints `pin dependencies lower or raise MINIMUM_MACOS in galley.spec` and exits non-zero.
+
+PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of 26.0. That is above 14.4, so a bundle that still contains those modules fails this step.
 
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 
-The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that the license directory is present and not empty.
+The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file.
 
 ## ruamel.yaml.clib
 
