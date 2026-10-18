@@ -150,4 +150,6 @@ def _menu(window, title: str) -> QMenu:
     # QAction.menu() wrappers after QMenuBar.actions() is released.
     menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
     assert menu is not None, title
+    assert menu.title() == title
+    assert menu.menuAction() in window.menuBar().actions()
     return menu

@@ -87,6 +87,8 @@ def _menu(window, title: str) -> QMenu:
     # the object name set when it was created still finds it.
     menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
     assert menu is not None, title
+    assert menu.title() == title
+    assert menu.menuAction() in window.menuBar().actions()
     return menu
 
 
@@ -98,9 +100,12 @@ def _labels(menu: QMenu) -> list[str]:
 
 
 def _submenu(menu: QMenu, title: str) -> QMenu:
-    # Same PySide 6.9 wrapper invalidation as _menu, for a submenu.
-    child = menu.findChild(QMenu, "menu" + title.replace(" ", ""))
+    # Direct child only. PySide 6.9 invalidates QAction.menu() wrappers.
+    name = "menu" + title.replace(" ", "")
+    child = menu.findChild(QMenu, name, Qt.FindDirectChildrenOnly)
     assert child is not None, title
+    assert child.title() == title
+    assert child.menuAction() in menu.actions()
     return child
 
 
