@@ -41,16 +41,27 @@ Natural mix, on by item index:
 - ``!!binary`` (a core tag) when ``index % 13 == 5``
 - a ``%YAML 1.2`` document embedded in a ``|`` block when ``index % 17 == 4``
   (about 1/17). That text is scalar content, not a ``%YAML`` directive
-- a bare tag ``channel: ! stable`` when ``index % 15 == 11`` (1/15)
+- a bare tag ``channel: ! stable`` when ``index % 15 == 11`` (1/15).
+  That is a bare ``!`` and the non-empty plain scalar ``stable`` on the
+  same line
 - a double-quoted ``\\`` path when ``index % 5 == 0``
-- a tab inside a double-quoted string when ``index % 16 == 13`` (1/16).
-  The tab is never in the indent
+- a tab inside a single-line double-quoted string, ``column: "name\\tregion"``,
+  when ``index % 16 == 13`` (1/16). The tab is never in the indent
 
-The bare tag and the quoted tab are rule-1 re-parse triggers, and the check
-is file-level, so every natural size file re-parses. The clean profile turns
-those three switches off (no bare or non-core tag, no ``%YAML``/``%TAG``
-directive, no tab outside a comment, no odd block-scalar indent) and keeps
-the block scalars, accented text, emoji, CJK, ``!!binary``, and escapes.
+A bare ``!`` keeps the C value only when the same line continues with a
+non-empty scalar or a flow collection. An empty ``!`` node, ``! ""``, and
+a block collection on the next line still re-parse. A tab keeps the C
+value only inside a single-line quoted scalar. A tab between tokens, or
+in a multi-line quoted scalar, still re-parses. A ``%YAML`` or ``%TAG``
+directive always re-parses. The forms above are the keep-C forms, and
+the generator is left unchanged so the mixed corpus keeps this mix.
+``format_yaml_realistic_clib`` must be C parse plus pure writer at every
+size. The bare-tag and quoted-tab rows already use those keep-C forms,
+so there is no second row that injects the same text. The clean profile
+turns the bare tag, the quoted tab, and the embedded ``%YAML`` text off
+(no bare or non-core tag, no ``%YAML``/``%TAG`` directive, no tab outside
+a comment, no odd block-scalar indent) and keeps the block scalars,
+accented text, emoji, CJK, ``!!binary``, and escapes.
 ``format_yaml_realistic_clean_pure`` and ``format_yaml_realistic_clean_clib``
 time that profile. Clean clib must be C parse plus pure writer at every size.
 
@@ -58,12 +69,14 @@ Each single-trigger row is the clean profile plus one injection in the
 document header, once:
 
 - ``format_yaml_realistic_only_bare_tag_clib`` adds ``channel: ! stable``
-- ``format_yaml_realistic_only_tab_in_quotes_clib`` adds a quoted tab
+  and must be C parse plus pure writer at every size
+- ``format_yaml_realistic_only_tab_in_quotes_clib`` adds
+  ``column: "name\\tregion"`` and must be C parse plus pure writer at
+  every size
 - ``format_yaml_realistic_only_directive_clib`` prefixes ``%YAML 1.2`` and
-  ``---``
+  ``---`` and must be a pure re-parse at every size
 
-Those rows stop at 1 MB. A size that does not re-parse is recorded and called
-out. It does not fail the bench.
+Those rows stop at 1 MB. A size on a different path fails the bench.
 
 ``format_yaml_realistic_clib_reparse`` keeps the natural item sequence and
 adds a leading ``%YAML 1.2`` directive and ``---``. Parsed item values stay
@@ -399,6 +412,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 cutoff_role="comparison",
                 corpus="realistic",
                 track_path=True,
+                require_path=PATH_C_PARSE_PURE_WRITER,
             ),
             Operation(
                 operation_id="format_yaml_realistic_clib_reparse",
@@ -446,17 +460,17 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             _shipped_clib_operation(
                 "format_yaml_realistic_only_bare_tag_clib",
                 corpus="realistic-only-bare-tag",
-                expect_path=PATH_PURE_REPARSE,
+                require_path=PATH_C_PARSE_PURE_WRITER,
             ),
             _shipped_clib_operation(
                 "format_yaml_realistic_only_tab_in_quotes_clib",
                 corpus="realistic-only-tab",
-                expect_path=PATH_PURE_REPARSE,
+                require_path=PATH_C_PARSE_PURE_WRITER,
             ),
             _shipped_clib_operation(
                 "format_yaml_realistic_only_directive_clib",
                 corpus="realistic-only-directive",
-                expect_path=PATH_PURE_REPARSE,
+                require_path=PATH_PURE_REPARSE,
             ),
         )
     )
@@ -2520,11 +2534,12 @@ def _path_section(report: dict[str, Any]) -> list[str]:
             "fell back is a C error and then pure Python. C only is a C load "
             "and a C dump. "
             "`yaml_safe_c_realistic` is C parse plus C writer by construction. "
-            "The forced reparse row must take the pure re-parse path at every "
-            "size. The clean clib row must be C parse plus pure writer. "
-            "Each single-trigger row is expected to pure re-parse. A miss is "
-            "recorded below and does not fail the bench. The unforced "
-            "realistic row is the path the file took."
+            "The forced reparse row and the directive-only row must take the "
+            "pure re-parse path at every size. The clean clib row, the "
+            "unforced realistic row, the bare-tag row, and the quoted-tab "
+            "row must be C parse plus pure writer. A different path fails "
+            "the bench. The unforced fraction below is how many realistic "
+            "sizes kept the C value."
         ),
         "",
         *_markdown_table(
@@ -2533,11 +2548,15 @@ def _path_section(report: dict[str, Any]) -> list[str]:
         ),
     ]
     if natural:
-        fired = sum(1 for row in natural if row["yaml_path"] == PATH_PURE_REPARSE)
+        kept = sum(
+            1
+            for row in natural
+            if row["yaml_path"] in {PATH_C_PARSE_PURE_WRITER, PATH_C_ONLY}
+        )
         lines.append("")
         lines.append(
-            "Unforced realistic size files on the pure re-parse path: "
-            f"{fired}/{len(natural)}."
+            "Unforced realistic size files that kept the C value: "
+            f"{kept}/{len(natural)}."
         )
     if forced:
         fired = sum(1 for row in forced if row["yaml_path"] == PATH_PURE_REPARSE)
@@ -2545,7 +2564,7 @@ def _path_section(report: dict[str, Any]) -> list[str]:
             f"Forced reparse sizes on the pure re-parse path: {fired}/{len(forced)}."
         )
     if mismatches:
-        lines.append("Single-trigger sizes that did not take the pure re-parse path:")
+        lines.append("Sizes that did not take the expected path:")
         for row in mismatches:
             expected = _PATH_LABELS.get(
                 str(row.get("path_expected", "")),
@@ -2556,12 +2575,20 @@ def _path_section(report: dict[str, Any]) -> list[str]:
                 f"ran {row.get('yaml_path_label', row['yaml_path'])}; "
                 f"expected {expected}."
             )
-    elif any(
-        row.get("operation_id") in _TRIGGER_OPERATION_IDS
-        for row in report["measurements"]
-        if "yaml_path" in row
-    ):
-        lines.append("Every single-trigger size took the pure re-parse path.")
+    trigger_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in report["measurements"]:
+        operation_id = row.get("operation_id")
+        if operation_id in _TRIGGER_OPERATION_IDS and "yaml_path" in row:
+            trigger_groups.setdefault(str(operation_id), []).append(row)
+    for operation_id, group in trigger_groups.items():
+        labels = list(
+            dict.fromkeys(
+                str(row.get("yaml_path_label", row["yaml_path"])) for row in group
+            )
+        )
+        lines.append(
+            f"`{operation_id}`: {', '.join(labels)} at {len(group)}/{len(group)} sizes."
+        )
     triggers = report.get("realistic_triggers")
     if isinstance(triggers, dict) and triggers.get("items"):
         total = int(triggers["items"])

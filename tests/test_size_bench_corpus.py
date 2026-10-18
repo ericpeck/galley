@@ -98,12 +98,20 @@ def test_realistic_rows_are_opt_in_and_capped() -> None:
     reparse = by_id["format_yaml_realistic_clib_reparse"]
     assert reparse.require_path == PATH_PURE_REPARSE
     assert reparse.cutoff_role == "comparison"
+    natural = by_id["format_yaml_realistic_clib"]
+    assert natural.require_path == PATH_C_PARSE_PURE_WRITER
     clean = by_id["format_yaml_realistic_clean_clib"]
     assert clean.require_path == PATH_C_PARSE_PURE_WRITER
-    for operation_id in _TRIGGER_ROWS:
+    for operation_id in (
+        "format_yaml_realistic_only_bare_tag_clib",
+        "format_yaml_realistic_only_tab_in_quotes_clib",
+    ):
         trigger = by_id[operation_id]
-        assert trigger.expect_path == PATH_PURE_REPARSE
-        assert trigger.require_path is None
+        assert trigger.require_path == PATH_C_PARSE_PURE_WRITER
+        assert trigger.expect_path is None
+    directive = by_id["format_yaml_realistic_only_directive_clib"]
+    assert directive.require_path == PATH_PURE_REPARSE
+    assert directive.expect_path is None
     assert by_id["yaml_safe_c_realistic"].reported_path == PATH_C_PARSE_C_WRITER
 
 
@@ -327,12 +335,7 @@ def test_shipped_clib_paths_match_the_document() -> None:
         1,
         1,
     )
-    assert natural_row["yaml_path"] in {
-        PATH_PURE_REPARSE,
-        PATH_C_PARSE_PURE_WRITER,
-        PATH_C_ONLY,
-        PATH_C_REJECTED,
-    }
+    assert natural_row["yaml_path"] == PATH_C_PARSE_PURE_WRITER
     forced = render_realistic_yaml(8 * 1024, directive=True)
     forced_row = _measure_loaded(
         by_id["format_yaml_realistic_clib_reparse"],
@@ -351,24 +354,31 @@ def test_shipped_clib_paths_match_the_document() -> None:
         1,
     )
     assert clean_row["yaml_path"] == PATH_C_PARSE_PURE_WRITER
-    for profile, operation_id in (
-        ("bare_tag", "format_yaml_realistic_only_bare_tag_clib"),
-        ("quoted_tab", "format_yaml_realistic_only_tab_in_quotes_clib"),
-        ("directive", "format_yaml_realistic_only_directive_clib"),
+    for profile, operation_id, expected in (
+        (
+            "bare_tag",
+            "format_yaml_realistic_only_bare_tag_clib",
+            PATH_C_PARSE_PURE_WRITER,
+        ),
+        (
+            "quoted_tab",
+            "format_yaml_realistic_only_tab_in_quotes_clib",
+            PATH_C_PARSE_PURE_WRITER,
+        ),
+        ("directive", "format_yaml_realistic_only_directive_clib", PATH_PURE_REPARSE),
     ):
         triggered = render_realistic_yaml(8 * 1024, profile=profile)
         triggered_row = _measure_loaded(by_id[operation_id], triggered, 0.01, 1, 1)
-        assert triggered_row["yaml_path"] == PATH_PURE_REPARSE
-        assert triggered_row["path_mismatch"] is False
-    missed = _measure_loaded(
-        by_id["format_yaml_realistic_only_bare_tag_clib"],
-        plain,
-        0.01,
-        1,
-        1,
-    )
-    assert missed["path_mismatch"] is True
-    assert missed["yaml_path"] == PATH_C_PARSE_PURE_WRITER
+        assert triggered_row["yaml_path"] == expected
+        assert "path_mismatch" not in triggered_row
+    with pytest.raises(RuntimeError, match="expected C parse plus pure writer"):
+        _measure_loaded(
+            by_id["format_yaml_realistic_only_bare_tag_clib"],
+            "%YAML 1.2\n---\n" + plain,
+            0.01,
+            1,
+            1,
+        )
     with pytest.raises(RuntimeError, match="expected pure re-parse"):
         _measure_loaded(
             by_id["format_yaml_realistic_clib_reparse"],
