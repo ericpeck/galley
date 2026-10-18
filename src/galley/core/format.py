@@ -58,9 +58,10 @@ YAML_PURE_RETRY_GATE = "GALLEY_YAML_PURE_RETRY_GATE"
 _PURE_RETRY_GATE_TIMEOUT_S = 30.0
 
 # YAML 1.1 core tags whose C load and pure dump already match pure Python.
-# Any other tag, including a bare ``!``, is parsed again with pure Python.
-# Probed against ruamel.yaml.clib 0.2.15.
+# Other tags are decided in ``_tag_needs_reparse``. Probed against
+# ruamel.yaml 0.19.1 and ruamel.yaml.clib 0.2.15.
 _CORE_TAG_NAMES = frozenset({"str", "int", "float", "bool", "null", "binary"})
+_QUOTED_SCALAR_STYLES = frozenset({'"', "'"})
 
 _HEX = frozenset("0123456789abcdefABCDEF")
 _HIGH_MIN = 0xD800
@@ -165,8 +166,10 @@ def format_yaml(text: str | bytes) -> str:
 
     When ``ruamel.yaml.clib`` is installed, the C loader runs first. The
     text shown to the user is written by the pure-Python emitter. A
-    ``%YAML`` or ``%TAG`` directive, a tab outside a comment, a non-core
-    or bare tag, or a block scalar whose first non-empty content line is
+    ``%YAML`` or ``%TAG`` directive, a tab outside a comment and outside
+    a single-line quoted scalar, a non-core tag, a bare ``!`` that is
+    not followed on the same line by a non-empty scalar or a flow
+    collection, or a block scalar whose first non-empty content line is
     only whitespace with a later line indented further is parsed again
     with pure Python, and that result is returned, success or error. If
     the C parser raises, the pure-Python safe parser runs and its result
@@ -243,26 +246,68 @@ def _needs_pure_reparse(text: str | bytes, tokens: list[object]) -> bool:
     """Return True when the C tokens are one of the pure-Python mismatches.
 
     Those cases are a ``%YAML`` or ``%TAG`` directive, a tab that is not
-    inside a comment, a non-core or bare tag, and a block scalar whose
-    first non-empty content line is whitespace with a later line indented
+    inside a comment or a single-line quoted scalar, a tag
+    ``_tag_needs_reparse`` rejects, and a block scalar whose first
+    non-empty content line is whitespace with a later line indented
     further. Everything else keeps the C value and is dumped in pure Python.
+
+    Token indexes from the C scanner count characters and skip a leading
+    BOM, so the check runs on decoded text with that BOM removed.
     """
+    source = _scanner_text(text)
     cursor = 0
-    for token in tokens:
+    for index, token in enumerate(tokens):
         start = token.start_mark.index
         end = token.end_mark.index
-        if _gap_has_tab_outside_comment(text, cursor, start):
+        if _gap_has_tab_outside_comment(source, cursor, start):
             return True
         if isinstance(token, DirectiveToken) and token.name in {"YAML", "TAG"}:
             return True
-        if isinstance(token, TagToken) and not _is_core_tag(token.value):
+        if isinstance(token, TagToken) and _tag_needs_reparse(token, tokens, index):
             return True
         if isinstance(token, ScalarToken):
-            raw = text[start:end]
-            if _contains_tab(raw) or _block_scalar_needs_reparse(token, raw):
+            raw = source[start:end]
+            if _scalar_tab_needs_reparse(token, raw) or _block_scalar_needs_reparse(
+                token, raw
+            ):
                 return True
         cursor = max(cursor, end)
-    return _gap_has_tab_outside_comment(text, cursor, len(text))
+    return _gap_has_tab_outside_comment(source, cursor, len(source))
+
+
+def _scanner_text(text: str | bytes) -> str:
+    """Return the character string C token indexes point into.
+
+    ``ruamel.yaml.clib`` counts characters, not UTF-8 bytes, and its
+    marks skip a leading BOM. Slicing the original bytes with those
+    indexes moves a tab that follows a multibyte key.
+    """
+    if isinstance(text, bytes):
+        decoded = text.decode("utf-8")
+    else:
+        decoded = text
+    if decoded.startswith("\ufeff"):
+        return decoded[1:]
+    return decoded
+
+
+def _scalar_tab_needs_reparse(token: ScalarToken, raw: str) -> bool:
+    """Return True when a tab in this scalar still needs pure Python.
+
+    A tab inside a single-line quoted scalar (style ``"`` or ``'``, and
+    ``start_mark.line == end_mark.line``) matches pure Python, so it
+    stays on the C value. A tab between tokens is not inside the scalar
+    and is caught by the gap check. A tab in a multi-line quoted scalar,
+    or in any other scalar, is parsed again.
+    """
+    if "\t" not in raw:
+        return False
+    if (
+        token.style in _QUOTED_SCALAR_STYLES
+        and token.start_mark.line == token.end_mark.line
+    ):
+        return False
+    return True
 
 
 def _is_core_tag(value: object) -> bool:
@@ -270,6 +315,53 @@ def _is_core_tag(value: object) -> bool:
         return False
     handle, name = value
     return handle == "!!" and name in _CORE_TAG_NAMES
+
+
+def _tag_needs_reparse(token: TagToken, tokens: list[object], index: int) -> bool:
+    """Return True when this tag's C value can differ from pure Python."""
+    if _is_core_tag(token.value):
+        return False
+    follower = tokens[index + 1] if index + 1 < len(tokens) else None
+    return not _bare_tag_keeps_c_value(token, follower)
+
+
+def _bare_tag_keeps_c_value(token: TagToken, follower: object | None) -> bool:
+    """Return True when a bare ``!`` is safe to keep from the C parser.
+
+    ``!`` and ``!<!>`` are both the token ``(None, "!")``. Keep the C
+    value only when that tag is followed on the same line by a non-empty
+    scalar, a flow-sequence start, or a flow-mapping start. An empty
+    node, a block collection on the next line, and a local tag such as
+    ``!foo`` are parsed again.
+
+    This resolution is not YAML-spec behavior. The spec would make
+    ``! 123``, ``! true``, and ``! null`` strings. ruamel.yaml 0.19.1
+    and ruamel.yaml.clib 0.2.15 both resolve those three as the integer
+    123, boolean true, and null, and the dumped text matches, so the C
+    value is kept. The same pair also matches for ``! 1.5`` (float),
+    ``! 2026-10-18`` (date), ``! ~`` (null), ``! "x"`` (string), and
+    ``a: ! |`` with an indented line (block scalar). Those stay on the
+    C value too.
+    """
+    if token.value != (None, "!"):
+        return False
+    if follower is None or not _same_line(token, follower):
+        return False
+    if isinstance(follower, (FlowSequenceStartToken, FlowMappingStartToken)):
+        return True
+    return (
+        isinstance(follower, ScalarToken)
+        and isinstance(follower.value, str)
+        and follower.value != ""
+    )
+
+
+def _same_line(token: object, follower: object) -> bool:
+    token_mark = getattr(token, "start_mark", None)
+    follower_mark = getattr(follower, "start_mark", None)
+    token_line = getattr(token_mark, "line", None)
+    follower_line = getattr(follower_mark, "line", None)
+    return isinstance(token_line, int) and token_line == follower_line
 
 
 def _block_scalar_needs_reparse(token: ScalarToken, raw: str | bytes) -> bool:
@@ -321,12 +413,6 @@ def _gap_has_tab_outside_comment(text: str | bytes, start: int, end: int) -> boo
             return True
         index += 1
     return False
-
-
-def _contains_tab(raw: str | bytes) -> bool:
-    if isinstance(raw, str):
-        return "\t" in raw
-    return b"\t" in raw
 
 
 def _is_char(text: str | bytes, index: int, char: str) -> bool:
