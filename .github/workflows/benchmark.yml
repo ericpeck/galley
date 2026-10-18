@@ -31,11 +31,15 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      # The project depends on ruamel.yaml.clib. yaml_safe_c also passes
-      # uv run --with ruamel.yaml.clib==0.2.15 for that comparison row.
+      # The project depends on ruamel.yaml.clib. yaml_safe_c and the shipped
+      # C-path rows also pass uv run --with ruamel.yaml.clib==0.2.15.
+      # --corpus all keeps the historical rows and adds the realistic corpus.
+      # Natural, clean, and forced-reparse rows stop at 5 MB. Each
+      # single-trigger row stops at 1 MB. The script default stays plain.
+      # The ladders are sized for about 45 minutes on macos-14.
       - name: Run file-size benchmark
         timeout-minutes: 60
-        run: uv run python benchmarks/size_bench.py
+        run: uv run python benchmarks/size_bench.py --corpus all
 
       - name: Upload benchmark results
         if: always()

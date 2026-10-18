@@ -13,17 +13,105 @@ reparse. Without the C library the pure-Python parser does both. YAML UI
 cutoffs use that row. Round-trip and safe+C are labeled comparisons. Each
 call reports load and dump wall time. Nothing here changes ``galley.core``.
 
-Default ladders keep a three-run macos-14 job near 20 minutes. JSON is
-1, 5, 10, 50, and 100 MB. Shipped YAML, round-trip, and safe+C are
-0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB. ``--sizes`` replaces those ladders
-for every row, including sizes above the caps.
+``--corpus plain`` (the default) is the historical synthetic catalog and the
+historical rows, so those results stay comparable with earlier runs.
+``--corpus realistic`` times the realistic-corpus rows and the plain shipped
+C-path row. ``--corpus all`` runs both.
+
+The realistic corpus is seeded (``REALISTIC_SEED``) so a size is the same
+UTF-8 bytes on every run. Each file is one ``kind: List`` document of nested
+maps and lists shaped like Kubernetes manifests, application config, and CI
+jobs. A trailing ``padding`` value is ASCII ``x`` and only exists to make the
+file an exact size. Indentation is spaces. Trigger features are chosen here.
+They are not something the benchmark discovered by measuring.
+
+Natural mix, on by item index:
+
+- nested maps and lists, and an ASCII comment, on every item
+- a block scalar on most items (``index % 5 != 4``, about 4/5). Even indexes
+  use a ``|`` literal script. Odd indexes use a ``>`` folded summary. The
+  indent is the normal four-space body. This generator does not emit the
+  rule-1 block-scalar case (a whitespace-only first content line with a
+  later line indented further). That shape is rejected by the pure parser,
+  so there is no single-trigger row for it
+- accented Latin in a title when ``index % 4 != 3`` (about 3/4), and an
+  accented comment when ``index % 6 == 5``
+- a small CJK value when ``index % 20 == 17``
+- an emoji when ``index % 12 == 7``
+- ``!!binary`` (a core tag) when ``index % 13 == 5``
+- a ``%YAML 1.2`` document embedded in a ``|`` block when ``index % 17 == 4``
+  (about 1/17). That text is scalar content, not a ``%YAML`` directive
+- a bare tag ``channel: ! stable`` when ``index % 15 == 11`` (1/15).
+  That is a bare ``!`` and the non-empty plain scalar ``stable`` on the
+  same line
+- a double-quoted ``\\`` path when ``index % 5 == 0``
+- a tab inside a single-line double-quoted string, ``column: "name\\tregion"``,
+  when ``index % 16 == 13`` (1/16). The tab is never in the indent
+
+A bare ``!`` keeps the C value only when the same line continues with a
+non-empty scalar or a flow collection. An empty ``!`` node, ``! ""``, and
+a block collection on the next line still re-parse. A tab keeps the C
+value only inside a single-line quoted scalar. A tab between tokens, or
+in a multi-line quoted scalar, still re-parses. A ``%YAML`` or ``%TAG``
+directive always re-parses. The forms above are the keep-C forms, and
+the generator is left unchanged so the mixed corpus keeps this mix.
+``format_yaml_realistic_clib`` must be C parse plus pure writer at every
+size. The bare-tag and quoted-tab rows already use those keep-C forms,
+so there is no second row that injects the same text. The clean profile
+turns the bare tag, the quoted tab, and the embedded ``%YAML`` text off
+(no bare or non-core tag, no ``%YAML``/``%TAG`` directive, no tab outside
+a comment, no odd block-scalar indent) and keeps the block scalars,
+accented text, emoji, CJK, ``!!binary``, and escapes.
+``format_yaml_realistic_clean_pure`` and ``format_yaml_realistic_clean_clib``
+time that profile. Clean clib must be C parse plus pure writer at every size.
+
+Each single-trigger row is the clean profile plus one injection in the
+document header, once:
+
+- ``format_yaml_realistic_only_bare_tag_clib`` adds ``channel: ! stable``
+  and must be C parse plus pure writer at every size
+- ``format_yaml_realistic_only_tab_in_quotes_clib`` adds
+  ``column: "name\\tregion"`` and must be C parse plus pure writer at
+  every size
+- ``format_yaml_realistic_only_directive_clib`` prefixes ``%YAML 1.2`` and
+  ``---`` and must be a pure re-parse at every size
+
+Those rows stop at 1 MB. A size on a different path fails the bench.
+
+``format_yaml_realistic_clib_reparse`` keeps the natural item sequence and
+adds a leading ``%YAML 1.2`` directive and ``---``. Parsed item values stay
+the same. That row keeps the 0.05–5 MB ladder. The UI warning size comes
+from it.
+
+Shipped C-path rows classify that path by wrapping ``YAML.scan``,
+``YAML.load``, and ``YAML.dump`` and reading whether the parser and emitter
+were the C classes or the pure-Python classes. Pure re-parse is a C scan or
+C load followed by a pure-Python load, with no C error. C parse plus pure
+writer is a C load and a pure dump with no second load. C rejected and fell
+back is a C error and then pure Python. C only is a C load and a C dump.
+Detection does not look at confirm-mark characters. ``yaml_safe_c_realistic``
+is benchmark-local C parse plus C writer on the realistic corpus, not
+``format_yaml``.
+
+Default ladders keep a three-run macos-14 ``--corpus plain`` job near 20
+minutes. ``--corpus all`` adds the realistic rows and is sized to stay under
+about 45 minutes on macos-14. JSON is 1, 5, 10, 50, and 100 MB. Shipped
+YAML, round-trip, and safe+C are 0.05, 0.1, 0.25, 0.5, 1, 5, and 10 MB.
+The natural realistic rows, the clean rows, the forced reparse row,
+realistic safe+C, and ``format_yaml_plain_clib`` are 0.05, 0.1, 0.25, 0.5,
+1, and 5 MB. Each single-trigger row is 0.05, 0.1, 0.25, 0.5, and 1 MB.
+``--sizes`` replaces those ladders for every selected row, including sizes
+above the caps.
 
     uv run python benchmarks/size_bench.py
+    uv run python benchmarks/size_bench.py --corpus realistic
+    uv run python benchmarks/size_bench.py --corpus all
     uv run python benchmarks/size_bench.py --sizes 1 5 10 50 100 200
     uv run --with ruamel.yaml.clib==0.2.15 python benchmarks/size_bench.py
 """
 
 import argparse
+import atexit
 import ctypes
 import gc
 import importlib.metadata
@@ -33,6 +121,7 @@ import json
 import math
 import os
 import platform
+import random
 import shutil
 import statistics
 import subprocess
@@ -61,8 +150,68 @@ DEFAULT_JSON_SIZES_MB = (1, 5, 10, 50, 100)
 DEFAULT_YAML_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5, 10)
 # Same grid as pure-Python YAML so the 0.5 s and 2 s bands can be interpolated.
 DEFAULT_SAFE_C_SIZES_MB = DEFAULT_YAML_SIZES_MB
+# Natural realistic rows, clean rows, and the forced reparse row.
+# Capped at 5 MB. The forced reparse ladder stays through 5 MB because the
+# UI warning size is read from it and can land above 1 MB.
+DEFAULT_REALISTIC_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5)
+# One rule-1 trigger, injected once. Same curve as the forced reparse row
+# through 1 MB, so the 5 MB point is not repeated for each trigger.
+DEFAULT_TRIGGER_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1)
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
+# Realistic documents replay this seed. Item ``i`` uses ``REALISTIC_SEED + i``.
+REALISTIC_SEED = 1729
+_TRIGGER_OPERATION_IDS = (
+    "format_yaml_realistic_only_bare_tag_clib",
+    "format_yaml_realistic_only_tab_in_quotes_clib",
+    "format_yaml_realistic_only_directive_clib",
+)
+_NEW_OPERATION_IDS = (
+    "format_yaml_realistic_pure",
+    "format_yaml_realistic_clib",
+    "format_yaml_realistic_clib_reparse",
+    "format_yaml_plain_clib",
+    "yaml_safe_c_realistic",
+    "format_yaml_realistic_clean_pure",
+    "format_yaml_realistic_clean_clib",
+    *_TRIGGER_OPERATION_IDS,
+)
+_PURE_OPERATION_IDS = frozenset(
+    {
+        "format_yaml_realistic_pure",
+        "format_yaml_realistic_clean_pure",
+    }
+)
+_SHIPPED_CLIB_IDS = (
+    "format_yaml_realistic_clib",
+    "format_yaml_realistic_clib_reparse",
+    "format_yaml_plain_clib",
+    "format_yaml_realistic_clean_clib",
+    *_TRIGGER_OPERATION_IDS,
+)
+_CLIB_WORKER_IDS = frozenset(
+    {
+        "yaml_safe_c",
+        "yaml_safe_c_realistic",
+        *_SHIPPED_CLIB_IDS,
+    }
+)
+# Observed engines for one shipped format_yaml call. The worker classifier
+# writes the path id; the timer reads it.
+PATH_PURE_REPARSE = "pure-reparse"
+PATH_C_PARSE_PURE_WRITER = "c-parse-pure-writer"
+PATH_C_REJECTED = "c-rejected"
+PATH_C_ONLY = "c-only"
+PATH_C_PARSE_C_WRITER = "c-parse-c-writer"
+_PATH_LABELS = {
+    PATH_PURE_REPARSE: "pure re-parse",
+    PATH_C_PARSE_PURE_WRITER: "C parse plus pure writer",
+    PATH_C_REJECTED: "C rejected and fell back",
+    PATH_C_ONLY: "C only",
+    PATH_C_PARSE_C_WRITER: "C parse plus C writer",
+}
+_observed_path: list[str | None] = [None]
+_PURE_PYTHON: str | None = None
 DEFAULT_RUNS = 3
 CUTOFF_SECONDS = (0.5, 2.0)
 SAMPLE_INTERVAL_S = 0.01
@@ -133,6 +282,17 @@ class Operation:
     # "ui" sizes feed the spinner / progress-bar bands. "comparison" is reported
     # beside them and is not the product cutoff.
     cutoff_role: str = "ui"
+    # "plain" is the historical synthetic catalog. "realistic" is the seeded
+    # config-shaped corpus. JSON rows stay on "plain".
+    corpus: str = "plain"
+    # Shipped C-path rows classify the engines YAML.load / YAML.dump used.
+    track_path: bool = False
+    # When set, every measured run must take this path or the bench fails.
+    require_path: str | None = None
+    # When set, a different path is recorded and called out. The bench continues.
+    expect_path: str | None = None
+    # Benchmark-local rows that are one path by construction, not detected.
+    reported_path: str | None = None
 
 
 def _accepts_text(candidate: object) -> bool:
@@ -227,7 +387,129 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         block.append(shipped)
     block.extend((round_trip, safe_c))
     scheduled[insert_at:insert_at] = block
+    # New rows stay after the historical operations so a `--corpus all` table
+    # keeps the earlier row order. The worker must see them even when the
+    # parent run filters by corpus.
+    scheduled.extend(
+        (
+            Operation(
+                operation_id="format_yaml_realistic_pure",
+                group="format",
+                source_format="yaml",
+                fn=core_format.format_yaml,
+                phases=_format_yaml_realistic_pure_phases,
+                yaml_typ="safe",
+                cutoff_role="comparison",
+                corpus="realistic",
+            ),
+            Operation(
+                operation_id="format_yaml_realistic_clib",
+                group="format",
+                source_format="yaml",
+                fn=core_format.format_yaml,
+                phases=_format_yaml_shipped_clib_phases,
+                yaml_typ="safe-clib",
+                cutoff_role="comparison",
+                corpus="realistic",
+                track_path=True,
+                require_path=PATH_C_PARSE_PURE_WRITER,
+            ),
+            Operation(
+                operation_id="format_yaml_realistic_clib_reparse",
+                group="format",
+                source_format="yaml",
+                fn=core_format.format_yaml,
+                phases=_format_yaml_shipped_clib_phases,
+                yaml_typ="safe-clib",
+                cutoff_role="comparison",
+                corpus="realistic-reparse",
+                track_path=True,
+                require_path=PATH_PURE_REPARSE,
+            ),
+            Operation(
+                operation_id="format_yaml_plain_clib",
+                group="format",
+                source_format="yaml",
+                fn=core_format.format_yaml,
+                phases=_format_yaml_shipped_clib_phases,
+                yaml_typ="safe-clib",
+                cutoff_role="comparison",
+                corpus="plain",
+                track_path=True,
+            ),
+            Operation(
+                operation_id="yaml_safe_c_realistic",
+                group="format",
+                source_format="yaml",
+                fn=format_yaml_safe_c,
+                phases=_safe_c_phases,
+                yaml_typ="safe-c",
+                cutoff_role="comparison",
+                corpus="realistic",
+                reported_path=PATH_C_PARSE_C_WRITER,
+            ),
+            _shipped_pure_operation(
+                "format_yaml_realistic_clean_pure",
+                corpus="realistic-clean",
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_clean_clib",
+                corpus="realistic-clean",
+                require_path=PATH_C_PARSE_PURE_WRITER,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_bare_tag_clib",
+                corpus="realistic-only-bare-tag",
+                require_path=PATH_C_PARSE_PURE_WRITER,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_tab_in_quotes_clib",
+                corpus="realistic-only-tab",
+                require_path=PATH_C_PARSE_PURE_WRITER,
+            ),
+            _shipped_clib_operation(
+                "format_yaml_realistic_only_directive_clib",
+                corpus="realistic-only-directive",
+                require_path=PATH_PURE_REPARSE,
+            ),
+        )
+    )
     return scheduled, skipped
+
+
+def _shipped_pure_operation(operation_id: str, *, corpus: str) -> Operation:
+    return Operation(
+        operation_id=operation_id,
+        group="format",
+        source_format="yaml",
+        fn=core_format.format_yaml,
+        phases=_format_yaml_realistic_pure_phases,
+        yaml_typ="safe",
+        cutoff_role="comparison",
+        corpus=corpus,
+    )
+
+
+def _shipped_clib_operation(
+    operation_id: str,
+    *,
+    corpus: str,
+    require_path: str | None = None,
+    expect_path: str | None = None,
+) -> Operation:
+    return Operation(
+        operation_id=operation_id,
+        group="format",
+        source_format="yaml",
+        fn=core_format.format_yaml,
+        phases=_format_yaml_shipped_clib_phases,
+        yaml_typ="safe-clib",
+        cutoff_role="comparison",
+        corpus=corpus,
+        track_path=True,
+        require_path=require_path,
+        expect_path=expect_path,
+    )
 
 
 def _phases_for(operation_id: str, fn: Callable[..., object]) -> PhaseFn:
@@ -331,6 +613,209 @@ def _require_yaml_clib() -> None:
     if CParser is None or CEmitter is None:
         message = "ruamel.yaml.clib is not installed; the safe+C comparison needs it."
         raise RuntimeError(message)
+
+
+def _assert_clib_absent() -> None:
+    """Fail when this process can see the ruamel C extension.
+
+    The realistic pure row times shipped ``format_yaml`` where
+    ``ruamel.yaml.clib`` is not importable. That is the same absence check
+    the historical shipped row used before the C library was a project
+    dependency.
+    """
+    clib_spec = importlib.util.find_spec("ruamel.yaml.clib")
+    extension_spec = importlib.util.find_spec("_ruamel_yaml")
+    if clib_spec is not None or extension_spec is not None:
+        message = (
+            "format_yaml_realistic_pure must run where ruamel.yaml.clib "
+            "is not importable. This process can import the C extension."
+        )
+        raise RuntimeError(message)
+    if CParser is not None or CEmitter is not None:
+        message = (
+            "format_yaml_realistic_pure must run where ruamel.yaml.clib "
+            "is not importable. This process already loaded the C parser."
+        )
+        raise RuntimeError(message)
+
+
+def _assert_clib_present() -> None:
+    """Fail unless shipped ``format_yaml`` will take the C path."""
+    clib_spec = importlib.util.find_spec("ruamel.yaml.clib")
+    extension_spec = importlib.util.find_spec("_ruamel_yaml")
+    if clib_spec is None and extension_spec is None:
+        message = (
+            "ruamel.yaml.clib is not importable. "
+            f"The shipped C path needs {RUAMEL_CLIB_SPEC}."
+        )
+        raise RuntimeError(message)
+    if CParser is None or CEmitter is None:
+        message = "ruamel.yaml.clib is importable, but the C parser is not loaded."
+        raise RuntimeError(message)
+    if not core_format._clib_available():
+        message = "format_yaml did not select the C parser and emitter."
+        raise RuntimeError(message)
+
+
+def _engine_is_c(engine: object, c_engine: object) -> bool:
+    return c_engine is not None and engine is c_engine
+
+
+def classify_observed_path(state: dict[str, bool]) -> str:
+    """Classify one ``format_yaml`` call from the engines it actually used.
+
+    ``c_scan_ok`` is a C ``YAML.scan`` that finished. ``c_load_ok`` is a
+    successful C ``YAML.load``. ``pure_load`` is a pure ``YAML.load`` attempt.
+    Dump flags follow ``YAML.dump``. A C error is a C scan, load, or dump
+    that raised. Pure re-parse is a C scan or C load followed by a pure load,
+    with no C error. That covers a second parse after a C load and a C scan
+    that decides the document needs a full pure-Python parse. C rejection is
+    a C error followed by pure Python. C parse plus pure writer is a C load
+    and a pure dump with no pure load. C only is a C load and C dump with no
+    pure call.
+    """
+    c_load_ok = state.get("c_load_ok", False)
+    pure_load = state.get("pure_load", False)
+    c_dump = state.get("c_dump", False)
+    pure_dump = state.get("pure_dump", False)
+    c_scan_ok = state.get("c_scan_ok", False)
+    c_error = (
+        state.get("c_load_error", False)
+        or state.get("c_dump_error", False)
+        or state.get("c_scan_error", False)
+    )
+    if (c_load_ok or c_scan_ok) and pure_load and not c_error:
+        return PATH_PURE_REPARSE
+    if c_error and (pure_load or pure_dump):
+        return PATH_C_REJECTED
+    if c_load_ok and pure_dump and not pure_load:
+        return PATH_C_PARSE_PURE_WRITER
+    if c_load_ok and c_dump and not pure_load and not pure_dump and not c_error:
+        return PATH_C_ONLY
+    message = "YAML scan/load/dump calls did not match a known path."
+    raise RuntimeError(message)
+
+
+def _format_yaml_realistic_pure_phases(text: str) -> PhaseResult:
+    """Time shipped ``format_yaml`` with the C extension absent."""
+    _assert_clib_absent()
+    return _format_yaml_phases(text)
+
+
+def _format_yaml_shipped_clib_phases(text: str) -> PhaseResult:
+    """Time shipped ``format_yaml`` and record which parser and writer ran.
+
+    Load is every C ``YAML.scan`` and every ``YAML.load``, plus the time
+    outside scan, load, and dump. Dump is every ``YAML.dump``. The path
+    comes from the parser and emitter classes on those calls.
+    """
+    _assert_clib_present()
+    state = {
+        "c_scan_ok": False,
+        "c_scan_error": False,
+        "c_load_ok": False,
+        "pure_load": False,
+        "c_dump": False,
+        "pure_dump": False,
+        "c_load_error": False,
+        "c_dump_error": False,
+    }
+    load_accounted = {"value": 0.0}
+    dump_accounted = {"value": 0.0}
+    real_scan = YAML.scan
+    real_load = YAML.load
+    real_dump = YAML.dump
+
+    def wrapped_scan(self: YAML, stream: Any) -> Any:
+        # ``scan`` yields tokens. Errors are raised while the caller iterates.
+        started = time.perf_counter()
+        is_c = _engine_is_c(self.Parser, CParser)
+        iterator = real_scan(self, stream)
+
+        def tracking() -> Any:
+            try:
+                yield from iterator
+            except Exception:
+                if is_c:
+                    state["c_scan_error"] = True
+                raise
+            else:
+                if is_c:
+                    state["c_scan_ok"] = True
+            finally:
+                if is_c:
+                    load_accounted["value"] += time.perf_counter() - started
+
+        return tracking()
+
+    def wrapped_load(self: YAML, stream: Any) -> Any:
+        started = time.perf_counter()
+        try:
+            parsed = real_load(self, stream)
+        except Exception:
+            if _engine_is_c(self.Parser, CParser):
+                state["c_load_error"] = True
+            else:
+                state["pure_load"] = True
+            raise
+        else:
+            if _engine_is_c(self.Parser, CParser):
+                state["c_load_ok"] = True
+            else:
+                state["pure_load"] = True
+            return parsed
+        finally:
+            load_accounted["value"] += time.perf_counter() - started
+
+    def wrapped_dump(
+        self: YAML,
+        data: Any,
+        stream: Any = None,
+        *,
+        transform: Any = None,
+    ) -> Any:
+        started = time.perf_counter()
+        try:
+            rendered = real_dump(self, data, stream, transform=transform)
+        except Exception:
+            if _engine_is_c(self.Emitter, CEmitter):
+                state["c_dump_error"] = True
+            else:
+                state["pure_dump"] = True
+            raise
+        else:
+            if _engine_is_c(self.Emitter, CEmitter):
+                state["c_dump"] = True
+            else:
+                state["pure_dump"] = True
+            return rendered
+        finally:
+            dump_accounted["value"] += time.perf_counter() - started
+
+    YAML.scan = wrapped_scan  # type: ignore[method-assign]
+    YAML.load = wrapped_load  # type: ignore[method-assign]
+    YAML.dump = wrapped_dump  # type: ignore[method-assign]
+    try:
+        started = time.perf_counter()
+        result = core_format.format_yaml(text)
+        total = time.perf_counter() - started
+    finally:
+        YAML.scan = real_scan  # type: ignore[method-assign]
+        YAML.load = real_load  # type: ignore[method-assign]
+        YAML.dump = real_dump  # type: ignore[method-assign]
+    if load_accounted["value"] <= 0.0 and dump_accounted["value"] <= 0.0:
+        message = "format_yaml did not call YAML.load or YAML.dump."
+        raise RuntimeError(message)
+    _observed_path[0] = classify_observed_path(state)
+    accounted = load_accounted["value"] + dump_accounted["value"]
+    if accounted > total > 0.0:
+        scale = total / accounted
+        load_s = load_accounted["value"] * scale
+        dump_s = dump_accounted["value"] * scale
+    else:
+        load_s = load_accounted["value"] + max(0.0, total - accounted)
+        dump_s = dump_accounted["value"]
+    return result, total, load_s, dump_s
 
 
 def _yaml_phases(text: str, *, typ: str, require_c: bool) -> PhaseResult:
@@ -438,6 +923,322 @@ def _yaml_item(index: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+_REALISTIC_SERVICES = ("checkout", "refunds", "ledger", "notifications", "tax")
+_REALISTIC_SCRIPTS = (
+    "set -euo pipefail\necho starting checkout\npython -m app.migrate\npython -m app",
+    "set -eu\nkubectl rollout status deploy/checkout\nkubectl get pods",
+    "python -m pytest -q\npython -m app.healthcheck",
+)
+_REALISTIC_FOLDED = (
+    "Public checkout API for the regional\npayments cluster.",
+    "Background worker that settles\ncaptured payments.",
+    "CI job that builds and publishes\nthe service image.",
+)
+_ACCENTED_TITLES = (
+    "café naïve",
+    "São Paulo",
+)
+_CJK = (
+    "東京",
+    "订单处理",
+)
+_EMOJI = (
+    "🚀",
+    "😀",
+)
+# Indented inside a block scalar. This is scalar content, not a directive.
+_EMBEDDED_DIRECTIVE = (
+    "%YAML 1.2\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: embedded\n"
+)
+REALISTIC_HEADER = (
+    f"# galley size bench, realistic corpus, seed {REALISTIC_SEED}\n"
+    "# trailing padding is ASCII x so the file is an exact size\n"
+    "apiVersion: v1\n"
+    "kind: List\n"
+    "metadata:\n"
+    "  name: galley-size-bench\n"
+    "items:\n"
+)
+# Rule-1 trigger for the forced reparse row and the directive-only row.
+# Parsed items stay the same.
+REALISTIC_DIRECTIVE = "%YAML 1.2\n---\n"
+
+
+@dataclass(frozen=True)
+class _RealisticMix:
+    """Which chosen trigger features a realistic file includes.
+
+    ``inject`` adds one trigger in the header. Item flags are the natural
+    rates. The clean mix leaves every flag off and injects nothing.
+    """
+
+    bare_tag: bool = False
+    quoted_tab: bool = False
+    embedded_directive_text: bool = False
+    inject: str | None = None
+
+
+_NATURAL_MIX = _RealisticMix(
+    bare_tag=True,
+    quoted_tab=True,
+    embedded_directive_text=True,
+)
+_CLEAN_MIX = _RealisticMix()
+_REALISTIC_MIXES = {
+    "natural": _NATURAL_MIX,
+    "reparse": _RealisticMix(
+        bare_tag=True,
+        quoted_tab=True,
+        embedded_directive_text=True,
+        inject="directive",
+    ),
+    "clean": _CLEAN_MIX,
+    "bare_tag": _RealisticMix(inject="bare_tag"),
+    "quoted_tab": _RealisticMix(inject="quoted_tab"),
+    "directive": _RealisticMix(inject="directive"),
+}
+_CORPUS_PROFILE = {
+    "realistic": "natural",
+    "realistic-reparse": "reparse",
+    "realistic-clean": "clean",
+    "realistic-only-bare-tag": "bare_tag",
+    "realistic-only-tab": "quoted_tab",
+    "realistic-only-directive": "directive",
+}
+
+
+def _yaml_quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _block_lines(key: str, style: str, body: str) -> list[str]:
+    lines = [f"  {key}: {style}"]
+    for line in body.strip("\n").split("\n"):
+        lines.append(f"    {line}" if line else "")
+    return lines
+
+
+def _deployment_lines(
+    name: str,
+    service: str,
+    replicas: int,
+    port: int,
+    tag: str,
+) -> list[str]:
+    image = _yaml_quote(f"ghcr.io/example/{service}:{tag}")
+    return [
+        "- apiVersion: apps/v1",
+        "  kind: Deployment",
+        "  metadata:",
+        f"    name: {name}",
+        "    namespace: payments",
+        "    labels:",
+        f"      app: {service}",
+        "      tier: api",
+        "  spec:",
+        f"    replicas: {replicas}",
+        "    selector:",
+        "      matchLabels:",
+        f"        app: {service}",
+        "    template:",
+        "      metadata:",
+        "        labels:",
+        f"          app: {service}",
+        "      spec:",
+        "        containers:",
+        "          - name: app",
+        f"            image: {image}",
+        "            ports:",
+        "              - name: http",
+        f"                containerPort: {port}",
+        "            env:",
+        "              - name: LOG_LEVEL",
+        "                value: info",
+        "              - name: SERVICE",
+        f"                value: {service}",
+        "            resources:",
+        "              requests:",
+        "                cpu: 100m",
+        "                memory: 128Mi",
+        "              limits:",
+        "                cpu: 500m",
+        "                memory: 512Mi",
+    ]
+
+
+def _config_lines(name: str, service: str, port: int, burst: int) -> list[str]:
+    listen = _yaml_quote(f"0.0.0.0:{port}")
+    return [
+        "- apiVersion: v1",
+        "  kind: ConfigMap",
+        "  metadata:",
+        f"    name: {name}",
+        "    namespace: payments",
+        "  data:",
+        f"    service: {service}",
+        f"    listen: {listen}",
+        "    features:",
+        "      refunds: true",
+        "      tax: false",
+        "    limits:",
+        "      requests_per_minute: 1200",
+        f"      burst: {burst}",
+        "    owners:",
+        "      - platform",
+        "      - payments",
+    ]
+
+
+def _ci_lines(name: str, service: str, tag: str) -> list[str]:
+    return [
+        f"- name: {name}",
+        "  runs-on: ubuntu-latest",
+        "  timeout-minutes: 30",
+        "  env:",
+        f"    SERVICE: {service}",
+        f"    IMAGE_TAG: {_yaml_quote(tag)}",
+        "  steps:",
+        "    - name: Checkout",
+        "      uses: actions/checkout@v4",
+        "    - name: Setup",
+        "      uses: astral-sh/setup-uv@v5",
+        "    - name: Test",
+        "      run: python -m pytest",
+        "  services:",
+        "    - name: postgres",
+        '      image: "postgres:16"',
+        "      env:",
+        "        POSTGRES_DB: app",
+    ]
+
+
+def _service_lines(name: str, service: str, port: int) -> list[str]:
+    return [
+        "- apiVersion: v1",
+        "  kind: Service",
+        "  metadata:",
+        f"    name: {name}",
+        "    namespace: payments",
+        "    labels:",
+        f"      app: {service}",
+        "  spec:",
+        "    type: ClusterIP",
+        "    selector:",
+        f"      app: {service}",
+        "    ports:",
+        "      - name: http",
+        f"        port: {port}",
+        "        targetPort: http",
+        "        protocol: TCP",
+    ]
+
+
+def _realistic_header(mix: _RealisticMix) -> str:
+    """Document header, including one optional trigger injection."""
+    extra = ""
+    if mix.inject == "bare_tag":
+        extra = "  channel: ! stable\n"
+    elif mix.inject == "quoted_tab":
+        extra = f"  column: {_yaml_quote('name\tregion')}\n"
+    header = REALISTIC_HEADER
+    if extra:
+        header = header.replace("items:\n", extra + "items:\n", 1)
+    if mix.inject == "directive":
+        header = REALISTIC_DIRECTIVE + header
+    return header
+
+
+def _realistic_item(index: int, mix: _RealisticMix | None = None) -> str:
+    """One seeded config-shaped list item. See the module docstring for the mix."""
+    if mix is None:
+        mix = _NATURAL_MIX
+    rng = random.Random(REALISTIC_SEED + index)
+    service = _REALISTIC_SERVICES[index % len(_REALISTIC_SERVICES)]
+    name = f"{service}-{index:06d}"
+    replicas = 1 + rng.randrange(5)
+    port = 8000 + (index % 200)
+    tag = f"1.{index % 20}.{rng.randrange(10)}"
+    kind = index % 4
+    if kind == 0:
+        lines = _deployment_lines(name, service, replicas, port, tag)
+    elif kind == 1:
+        lines = _config_lines(name, service, port, 20 + rng.randrange(80))
+    elif kind == 2:
+        lines = _ci_lines(name, service, tag)
+    else:
+        lines = _service_lines(name, service, port)
+    lines.insert(1, f"  # record {index} for the size bench")
+    if index % 6 == 5:
+        lines.insert(2, "  # équipe")
+    embedded = mix.embedded_directive_text and index % 17 == 4
+    if index % 5 != 4 or embedded:
+        if embedded:
+            lines.extend(_block_lines("script", "|", _EMBEDDED_DIRECTIVE))
+        elif index % 2 == 0:
+            script = _REALISTIC_SCRIPTS[index % len(_REALISTIC_SCRIPTS)]
+            lines.extend(_block_lines("script", "|", script))
+        else:
+            folded = _REALISTIC_FOLDED[index % len(_REALISTIC_FOLDED)]
+            lines.extend(_block_lines("summary", ">", folded))
+    if index % 4 != 3:
+        text = _ACCENTED_TITLES[index % len(_ACCENTED_TITLES)]
+        lines.append(f"  title: {_yaml_quote(text)}")
+    if index % 20 == 17:
+        lines.append(f"  region: {_yaml_quote(_CJK[index % len(_CJK)])}")
+    if index % 12 == 7:
+        lines.append(f"  badge: {_yaml_quote(_EMOJI[index % len(_EMOJI)])}")
+    if index % 5 == 0:
+        windows = "C:\\Program Files\\Galley\\" + service
+        lines.append(f"  windows_path: {_yaml_quote(windows)}")
+    if index % 13 == 5:
+        lines.append("  payload: !!binary aGVsbG8=")
+    if mix.bare_tag and index % 15 == 11:
+        lines.append("  channel: ! stable")
+    if mix.quoted_tab and index % 16 == 13:
+        lines.append(f"  column: {_yaml_quote('name\tregion')}")
+    return "\n".join(lines) + "\n"
+
+
+def _item_triggers(item: str) -> dict[str, bool]:
+    """Which realistic triggers this item text contains."""
+    block = any(line.endswith(("|", ">")) for line in item.splitlines())
+    return {
+        "block_scalar": block,
+        "accented": any(text in item for text in (*_ACCENTED_TITLES, "équipe")),
+        "emoji": any(text in item for text in _EMOJI),
+        "cjk": any(text in item for text in _CJK),
+        "binary": "!!binary" in item,
+        "yaml_directive_text": "%YAML" in item,
+        "bare_tag": ": ! " in item,
+        "backslash": "\\" in item,
+        "quoted_tab": "\t" in item,
+    }
+
+
+def realistic_trigger_counts(item_count: int) -> dict[str, int]:
+    """Count trigger kinds across the first ``item_count`` realistic items."""
+    names = (
+        "block_scalar",
+        "accented",
+        "emoji",
+        "cjk",
+        "binary",
+        "yaml_directive_text",
+        "bare_tag",
+        "backslash",
+        "quoted_tab",
+    )
+    counts = dict.fromkeys(names, 0)
+    for index in range(item_count):
+        flags = _item_triggers(_realistic_item(index))
+        for name in names:
+            if flags[name]:
+                counts[name] += 1
+    counts["items"] = item_count
+    return counts
+
+
 def _write_document(
     path: Path,
     target_bytes: int,
@@ -447,17 +1248,21 @@ def _write_document(
     footer_prefix: str,
     footer_suffix: str,
     render_item: Callable[[int], str],
+    encoding: str = "ascii",
 ) -> int:
-    footer_overhead = len(footer_prefix) + len(footer_suffix)
+    def nbytes(text: str) -> int:
+        return len(text.encode(encoding))
+
+    footer_overhead = nbytes(footer_prefix) + nbytes(footer_suffix)
     count = 0
-    with path.open("w", encoding="ascii", newline="\n") as handle:
+    with path.open("w", encoding=encoding, newline="\n") as handle:
         handle.write(header)
-        written = len(header)
+        written = nbytes(header)
         index = 0
         while True:
             item = render_item(index)
             prefix = separator if count else ""
-            projected = written + len(prefix) + len(item) + footer_overhead
+            projected = written + nbytes(prefix) + nbytes(item) + footer_overhead
             if projected > target_bytes:
                 break
             handle.write(prefix)
@@ -500,6 +1305,10 @@ def ruamel_environment() -> dict[str, Any]:
 
 
 def _default_sizes(operation: Operation) -> tuple[float, ...]:
+    if operation.operation_id in _TRIGGER_OPERATION_IDS:
+        return DEFAULT_TRIGGER_SIZES_MB
+    if operation.operation_id in _NEW_OPERATION_IDS:
+        return DEFAULT_REALISTIC_SIZES_MB
     if operation.source_format == "json":
         return DEFAULT_JSON_SIZES_MB
     if operation.yaml_typ == "safe-c":
@@ -507,6 +1316,17 @@ def _default_sizes(operation: Operation) -> tuple[float, ...]:
     if operation.source_format == "yaml":
         return DEFAULT_YAML_SIZES_MB
     return DEFAULT_JSON_SIZES_MB
+
+
+def _operation_selected(operation: Operation, corpus: str) -> bool:
+    if corpus == "all":
+        return True
+    if corpus == "plain":
+        return operation.operation_id not in _NEW_OPERATION_IDS
+    if corpus == "realistic":
+        return operation.operation_id in _NEW_OPERATION_IDS
+    message = f"Unknown corpus {corpus}."
+    raise RuntimeError(message)
 
 
 def _sizes_for_operation(
@@ -536,7 +1356,10 @@ def generate_files(
     directory: Path,
     source_format: str,
     sizes_mb: list[float],
+    *,
+    corpus: str = "plain",
 ) -> dict[float, tuple[Path, int]]:
+    encoding = "ascii"
     if source_format == "json":
         suffix = ".json"
         header = JSON_HEADER
@@ -544,6 +1367,15 @@ def generate_files(
         footer_prefix = JSON_FOOTER_PREFIX
         footer_suffix = JSON_FOOTER_SUFFIX
         render_item = _json_item
+    elif source_format == "yaml" and corpus in _CORPUS_PROFILE:
+        suffix = ".yaml"
+        mix = _REALISTIC_MIXES[_CORPUS_PROFILE[corpus]]
+        header = _realistic_header(mix)
+        separator = YAML_SEPARATOR
+        footer_prefix = YAML_FOOTER_PREFIX
+        footer_suffix = YAML_FOOTER_SUFFIX
+        render_item = _render_realistic_item(mix)
+        encoding = "utf-8"
     elif source_format == "yaml":
         suffix = ".yaml"
         header = YAML_HEADER
@@ -558,7 +1390,10 @@ def generate_files(
     written: dict[float, tuple[Path, int]] = {}
     for size_mb in sizes_mb:
         path = directory / f"{_format_mb(size_mb)}mb{suffix}"
-        print(f"generating {source_format} {_format_mb(size_mb)} MB", file=sys.stderr)
+        label = (
+            f"{source_format}/{corpus}" if source_format == "yaml" else source_format
+        )
+        print(f"generating {label} {_format_mb(size_mb)} MB", file=sys.stderr)
         count = _write_document(
             path,
             _target_bytes(size_mb),
@@ -567,14 +1402,54 @@ def generate_files(
             footer_prefix=footer_prefix,
             footer_suffix=footer_suffix,
             render_item=render_item,
+            encoding=encoding,
         )
         written[size_mb] = (path, count)
-    _validate_sample(written[min(written)][0], source_format)
+    _validate_sample(written[min(written)][0], source_format, encoding=encoding)
     return written
 
 
-def _validate_sample(path: Path, source_format: str) -> None:
-    text = path.read_text(encoding="ascii")
+def _render_realistic_item(mix: _RealisticMix) -> Callable[[int], str]:
+    def render(index: int) -> str:
+        return _realistic_item(index, mix)
+
+    return render
+
+
+def render_realistic_yaml(
+    target_bytes: int,
+    *,
+    profile: str = "natural",
+    directive: bool = False,
+) -> str:
+    """Return one realistic document of exactly ``target_bytes`` UTF-8 bytes.
+
+    ``profile`` selects the mix in ``_REALISTIC_MIXES``. ``directive`` is the
+    natural mix plus a leading ``%YAML 1.2`` directive. List items follow that
+    mix either way.
+    """
+    if directive:
+        profile = "reparse"
+    mix = _REALISTIC_MIXES[profile]
+    with tempfile.TemporaryDirectory(prefix="galley-realistic-yaml-") as temporary:
+        path = Path(temporary) / "realistic.yaml"
+        _write_document(
+            path,
+            target_bytes,
+            header=_realistic_header(mix),
+            separator=YAML_SEPARATOR,
+            footer_prefix=YAML_FOOTER_PREFIX,
+            footer_suffix=YAML_FOOTER_SUFFIX,
+            render_item=_render_realistic_item(mix),
+            encoding="utf-8",
+        )
+        return path.read_text(encoding="utf-8")
+
+
+def _validate_sample(
+    path: Path, source_format: str, *, encoding: str = "ascii"
+) -> None:
+    text = path.read_text(encoding=encoding)
     if source_format == "json":
         parsed = json.loads(text)
     else:
@@ -691,18 +1566,22 @@ def _touch(result: object) -> None:
 
 def _time_once(
     operation: Operation, text: str
-) -> tuple[float, float, float, int | None]:
+) -> tuple[float, float, float, int | None, str | None]:
+    _observed_path[0] = None
     sampler = RssSampler()
     sampler.start()
     try:
         result, elapsed, load_s, dump_s = operation.phases(text)
+        path = _observed_path[0]
+        if path is None:
+            path = operation.reported_path
         _touch(result)
         peak = sampler.stop()
     except Exception:
         sampler.stop()
         raise
     del result
-    return elapsed, load_s, dump_s, peak
+    return elapsed, load_s, dump_s, peak, path
 
 
 def _warmup(operation: Operation) -> None:
@@ -718,23 +1597,44 @@ def _measure_loaded(
     item_count: int,
 ) -> dict[str, Any]:
     _warmup(operation)
-    samples: list[dict[str, float | int | None]] = []
+    samples: list[dict[str, float | int | str | None]] = []
     before_rss = process_ru_maxrss_bytes()
     for run_index in range(runs):
         release_memory()
-        elapsed, load_s, dump_s, peak = _time_once(operation, text)
-        samples.append(
-            {
-                "seconds": round(elapsed, 6),
-                "load_s": round(load_s, 6),
-                "dump_s": round(dump_s, 6),
-                "peak_rss_bytes": peak,
-            }
-        )
+        elapsed, load_s, dump_s, peak, path = _time_once(operation, text)
+        if operation.track_path and path is None:
+            message = f"{operation.operation_id} did not record a YAML path."
+            raise RuntimeError(message)
+        if operation.require_path is not None and path != operation.require_path:
+            observed = _PATH_LABELS.get(path or "", path or "unknown")
+            expected = _PATH_LABELS[operation.require_path]
+            message = (
+                f"{operation.operation_id} at {_format_mb(size_mb)} MB "
+                f"ran {observed}; expected {expected}."
+            )
+            raise RuntimeError(message)
+        if operation.expect_path is not None and path != operation.expect_path:
+            observed = _PATH_LABELS.get(path or "", path or "unknown")
+            expected = _PATH_LABELS[operation.expect_path]
+            path_note_mismatch = f", expected {expected}, observed {observed}"
+        else:
+            path_note_mismatch = ""
+        sample: dict[str, float | int | str | None] = {
+            "seconds": round(elapsed, 6),
+            "load_s": round(load_s, 6),
+            "dump_s": round(dump_s, 6),
+            "peak_rss_bytes": peak,
+        }
+        path_note = ""
+        if path is not None:
+            sample["yaml_path"] = path
+            path_note = f", path {_PATH_LABELS.get(path, path)}"
+        samples.append(sample)
         print(
             f"{operation.operation_id} {_format_mb(size_mb)} MB "
             f"run {run_index + 1}/{runs}: {elapsed:.4f} s "
-            f"(load {load_s:.4f} s, dump {dump_s:.4f} s)",
+            f"(load {load_s:.4f} s, dump {dump_s:.4f} s)"
+            f"{path_note}{path_note_mismatch}",
             file=sys.stderr,
         )
     after_rss = process_ru_maxrss_bytes()
@@ -749,7 +1649,7 @@ def _measure_loaded(
     peak_bytes: int | None = max(peaks) if peaks else None
     if after_rss is not None and before_rss is not None and after_rss > before_rss:
         peak_bytes = after_rss if peak_bytes is None else max(peak_bytes, after_rss)
-    return {
+    row = {
         "operation_id": operation.operation_id,
         "group": operation.group,
         "source_format": operation.source_format,
@@ -766,6 +1666,25 @@ def _measure_loaded(
         "process_ru_maxrss_bytes": after_rss,
         **_operation_meta(operation),
     }
+    paths = [
+        str(sample["yaml_path"])
+        for sample in samples
+        if sample.get("yaml_path") is not None
+    ]
+    if paths:
+        unique = list(dict.fromkeys(paths))
+        if len(unique) == 1:
+            row["yaml_path"] = unique[0]
+            row["yaml_path_label"] = _PATH_LABELS.get(unique[0], unique[0])
+        else:
+            row["yaml_path"] = "mixed"
+            row["yaml_path_label"] = ", ".join(
+                _PATH_LABELS.get(item, item) for item in unique
+            )
+    if operation.expect_path is not None:
+        row["path_expected"] = operation.expect_path
+        row["path_mismatch"] = row.get("yaml_path") != operation.expect_path
+    return row
 
 
 def _operation_meta(operation: Operation) -> dict[str, str | None]:
@@ -801,6 +1720,57 @@ def _uv_executable() -> str:
     return uv
 
 
+def _venv_python(venv: Path) -> Path:
+    if sys.platform == "win32":
+        return venv / "Scripts" / "python.exe"
+    return venv / "bin" / "python"
+
+
+def _pure_interpreter() -> str:
+    """Interpreter whose project env does not install ``ruamel.yaml.clib``."""
+    global _PURE_PYTHON
+    if _PURE_PYTHON is not None:
+        return _PURE_PYTHON
+    print(
+        "preparing pure-Python environment without ruamel.yaml.clib",
+        file=sys.stderr,
+    )
+    uv = _uv_executable()
+    root = Path(tempfile.mkdtemp(prefix="galley-size-bench-pure-"))
+    atexit.register(shutil.rmtree, root, True)
+    venv = root / ".venv"
+    subprocess.run([uv, "venv", "--quiet", str(venv)], check=True)
+    env = os.environ.copy()
+    # The parent `uv run` sets VIRTUAL_ENV to the project env, which still
+    # has the C extension. Point this sync at the pure env only.
+    env.pop("VIRTUAL_ENV", None)
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
+    subprocess.run(
+        [
+            uv,
+            "sync",
+            "--quiet",
+            "--frozen",
+            "--no-dev",
+            "--no-install-package",
+            "ruamel.yaml.clib",
+        ],
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+    )
+    python = _venv_python(venv)
+    if not python.is_file():
+        message = "Pure-Python benchmark environment has no interpreter."
+        raise RuntimeError(message)
+    _PURE_PYTHON = str(python)
+    return _PURE_PYTHON
+
+
+def _clib_worker_prefix() -> list[str]:
+    return [_uv_executable(), "run", "--with", RUAMEL_CLIB_SPEC, "--"]
+
+
 def _worker_command(
     operation: Operation,
     path: Path,
@@ -812,7 +1782,9 @@ def _worker_command(
 
     Shipped ``format_yaml`` uses ``uv run --isolated`` so the timing process
     installs the project lock, including ``ruamel.yaml.clib`` when that
-    dependency is present. Safe+C uses ``uv run --with`` at the pinned version.
+    dependency is present. Safe+C and the shipped C-path rows use
+    ``uv run --with`` at the pinned version. The realistic pure row uses an
+    environment synced without ``ruamel.yaml.clib`` and asserts it is absent.
     """
     script = str(Path(__file__).resolve())
     worker = [
@@ -832,16 +1804,20 @@ def _worker_command(
     ]
     if operation.operation_id == "format_yaml":
         return [_uv_executable(), "run", "--isolated", "--", *worker]
-    if operation.operation_id == "yaml_safe_c":
-        return [
-            _uv_executable(),
-            "run",
-            "--with",
-            RUAMEL_CLIB_SPEC,
-            "--",
-            *worker,
-        ]
+    if operation.operation_id in _CLIB_WORKER_IDS:
+        return [*_clib_worker_prefix(), *worker]
+    if operation.operation_id in _PURE_OPERATION_IDS:
+        return [_pure_interpreter(), *worker[1:]]
     return [sys.executable, *worker[1:]]
+
+
+def _worker_env(operation: Operation) -> dict[str, str] | None:
+    if operation.operation_id not in _PURE_OPERATION_IDS:
+        return None
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
 
 
 def _measure_in_subprocess(
@@ -857,6 +1833,7 @@ def _measure_in_subprocess(
         cwd=Path(__file__).resolve().parents[1],
         stdout=subprocess.PIPE,
         text=True,
+        env=_worker_env(operation),
     )
     payload: dict[str, Any] | None = None
     if completed.stdout.strip():
@@ -1353,13 +2330,41 @@ def render_markdown(report: dict[str, Any]) -> str:
     ]
     if comparisons:
         lines.extend(["", "## Comparisons", ""])
-        lines.append(
-            "`yaml_round_trip` and `yaml_safe_c` are not the UI bands. "
-            'Round-trip is benchmark-local `YAML(typ="rt")` and stays pure '
-            "Python. "
-            '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` with the '
-            f"C extension (`{RUAMEL_CLIB_SPEC}`)."
-        )
+        compared = {cutoff["operation_id"] for cutoff in comparisons}
+        notes: list[str] = []
+        if "yaml_round_trip" in compared or "yaml_safe_c" in compared:
+            notes.append(
+                "`yaml_round_trip` and `yaml_safe_c` are not the UI bands. "
+                'Round-trip is benchmark-local `YAML(typ="rt")` and stays pure '
+                "Python. "
+                '`yaml_safe_c` is benchmark-local `YAML(typ="safe")` with the '
+                f"C extension (`{RUAMEL_CLIB_SPEC}`)."
+            )
+        if compared & set(_NEW_OPERATION_IDS):
+            notes.append(
+                "`format_yaml_realistic_pure` is shipped `format_yaml` with "
+                "`ruamel.yaml.clib` not installed. "
+                "`format_yaml_realistic_clib` is shipped `format_yaml` with "
+                f"`{RUAMEL_CLIB_SPEC}` on the realistic corpus, including "
+                "whatever parse and writer that file takes. "
+                "`format_yaml_realistic_clib_reparse` is the same call with a "
+                "leading `%YAML 1.2` directive so the path is a C parse and a "
+                "full pure-Python re-parse. "
+                "`format_yaml_plain_clib` is shipped `format_yaml` with the C "
+                "extension on the plain corpus. "
+                "`yaml_safe_c_realistic` is benchmark-local C parse plus C "
+                "writer on the realistic corpus. "
+                "`format_yaml_realistic_clean_pure` and "
+                "`format_yaml_realistic_clean_clib` use the same shape with "
+                "the rule-1 triggers turned off. Each `only_*` row is that "
+                "clean file plus one header injection and stops at 1 MB. "
+                "The natural rows, the clean rows, and the forced reparse "
+                "row stop at 5 MB."
+            )
+        for index, note in enumerate(notes):
+            if index:
+                lines.append("")
+            lines.append(note)
         lines.extend(_cutoff_section(comparisons, lead_in=False))
         ratio_rows = _rt_vs_safe_c_rows(report["measurements"])
         if ratio_rows:
@@ -1374,6 +2379,16 @@ def render_markdown(report: dict[str, Any]) -> str:
                     ),
                 ]
             )
+        speedup = _realistic_speedup_line(report["measurements"])
+        if speedup:
+            lines.extend(["", speedup])
+        clean_speedup = _clean_speedup_line(report["measurements"])
+        if clean_speedup:
+            lines.extend(["", clean_speedup])
+        writer_cost = _realistic_writer_cost_line(report["measurements"])
+        if writer_cost:
+            lines.extend(["", writer_cost])
+    lines.extend(_path_section(report))
     if report["skipped"]:
         lines.extend(["", "## Not on this checkout", ""])
         for skipped in report["skipped"]:
@@ -1383,6 +2398,219 @@ def render_markdown(report: dict[str, Any]) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def _realistic_speedup_line(measurements: list[dict[str, Any]]) -> str | None:
+    """Pure median / clib median at 0.1 MB and 1 MB, when both rows finished."""
+    pure: dict[str, dict[str, Any]] = {}
+    clib: dict[str, dict[str, Any]] = {}
+    for row in measurements:
+        if "median_s" not in row:
+            continue
+        size = _format_mb(float(row["size_mb"]))
+        if row["operation_id"] == "format_yaml_realistic_pure":
+            pure[size] = row
+        elif row["operation_id"] == "format_yaml_realistic_clib":
+            clib[size] = row
+    parts: list[str] = []
+    for size in ("0.1", "1"):
+        if size not in pure or size not in clib:
+            continue
+        pure_s = float(pure[size]["median_s"])
+        clib_s = float(clib[size]["median_s"])
+        if clib_s <= 0:
+            continue
+        parts.append(
+            f"{size} MB {pure_s / clib_s:.2f}x "
+            f"(pure {pure_s:.4f} s, clib {clib_s:.4f} s)"
+        )
+    if not parts:
+        return None
+    joined = "; ".join(parts)
+    return (
+        "Realistic clib versus realistic pure speedup "
+        f"(pure median / clib median): {joined}."
+    )
+
+
+def _clean_speedup_line(measurements: list[dict[str, Any]]) -> str | None:
+    """Clean pure median / clean clib median at 0.1 MB and 1 MB."""
+    pure: dict[str, dict[str, Any]] = {}
+    clib: dict[str, dict[str, Any]] = {}
+    for row in measurements:
+        if "median_s" not in row:
+            continue
+        size = _format_mb(float(row["size_mb"]))
+        if row["operation_id"] == "format_yaml_realistic_clean_pure":
+            pure[size] = row
+        elif row["operation_id"] == "format_yaml_realistic_clean_clib":
+            clib[size] = row
+    parts: list[str] = []
+    for size in ("0.1", "1"):
+        if size not in pure or size not in clib:
+            continue
+        pure_s = float(pure[size]["median_s"])
+        clib_s = float(clib[size]["median_s"])
+        if clib_s <= 0:
+            continue
+        parts.append(
+            f"{size} MB {pure_s / clib_s:.2f}x "
+            f"(pure {pure_s:.4f} s, clib {clib_s:.4f} s)"
+        )
+    if not parts:
+        return None
+    joined = "; ".join(parts)
+    return (
+        f"Clean clib versus clean pure speedup (pure median / clib median): {joined}."
+    )
+
+
+def _realistic_writer_cost_line(measurements: list[dict[str, Any]]) -> str | None:
+    """Shipped realistic clib median / realistic safe+C median."""
+    shipped: dict[str, dict[str, Any]] = {}
+    safe_c: dict[str, dict[str, Any]] = {}
+    for row in measurements:
+        if "median_s" not in row:
+            continue
+        size = _format_mb(float(row["size_mb"]))
+        if row["operation_id"] == "format_yaml_realistic_clib":
+            shipped[size] = row
+        elif row["operation_id"] == "yaml_safe_c_realistic":
+            safe_c[size] = row
+    parts: list[str] = []
+    for size in ("0.1", "1"):
+        if size not in shipped or size not in safe_c:
+            continue
+        shipped_s = float(shipped[size]["median_s"])
+        safe_s = float(safe_c[size]["median_s"])
+        if safe_s <= 0:
+            continue
+        parts.append(
+            f"{size} MB {shipped_s / safe_s:.2f}x "
+            f"(shipped clib {shipped_s:.4f} s, safe+C {safe_s:.4f} s)"
+        )
+    if not parts:
+        return None
+    joined = "; ".join(parts)
+    return (
+        "Cost of leaving the C writer on the realistic corpus "
+        "(shipped clib median / safe+C median): "
+        f"{joined}."
+    )
+
+
+def _path_section(report: dict[str, Any]) -> list[str]:
+    rows: list[list[str]] = []
+    natural: list[dict[str, Any]] = []
+    forced: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
+    for row in report["measurements"]:
+        if "yaml_path" not in row:
+            continue
+        rows.append(
+            [
+                str(row["operation_id"]),
+                _format_mb(float(row["size_mb"])),
+                str(row.get("yaml_path_label", row["yaml_path"])),
+            ]
+        )
+        if row["operation_id"] == "format_yaml_realistic_clib":
+            natural.append(row)
+        elif row["operation_id"] == "format_yaml_realistic_clib_reparse":
+            forced.append(row)
+        if row.get("path_mismatch"):
+            mismatches.append(row)
+    if not rows:
+        return []
+    lines = [
+        "",
+        "## YAML path",
+        "",
+        (
+            "Shipped C-path rows record the engines `YAML.scan`, `YAML.load`, "
+            "and `YAML.dump` used. Pure re-parse is a C scan or C load followed "
+            "by a pure-Python parse, with no C error. C parse plus pure writer "
+            "is a C load and a pure dump with no second parse. C rejected and "
+            "fell back is a C error and then pure Python. C only is a C load "
+            "and a C dump. "
+            "`yaml_safe_c_realistic` is C parse plus C writer by construction. "
+            "The forced reparse row and the directive-only row must take the "
+            "pure re-parse path at every size. The clean clib row, the "
+            "unforced realistic row, the bare-tag row, and the quoted-tab "
+            "row must be C parse plus pure writer. A different path fails "
+            "the bench. The unforced fraction below is how many realistic "
+            "sizes kept the C value."
+        ),
+        "",
+        *_markdown_table(
+            ["Operation", "Size (MB)", "Path"],
+            rows,
+        ),
+    ]
+    if natural:
+        kept = sum(
+            1
+            for row in natural
+            if row["yaml_path"] in {PATH_C_PARSE_PURE_WRITER, PATH_C_ONLY}
+        )
+        lines.append("")
+        lines.append(
+            "Unforced realistic size files that kept the C value: "
+            f"{kept}/{len(natural)}."
+        )
+    if forced:
+        fired = sum(1 for row in forced if row["yaml_path"] == PATH_PURE_REPARSE)
+        lines.append(
+            f"Forced reparse sizes on the pure re-parse path: {fired}/{len(forced)}."
+        )
+    if mismatches:
+        lines.append("Sizes that did not take the expected path:")
+        for row in mismatches:
+            expected = _PATH_LABELS.get(
+                str(row.get("path_expected", "")),
+                str(row.get("path_expected", "")),
+            )
+            lines.append(
+                f"- `{row['operation_id']}` {_format_mb(float(row['size_mb']))} MB "
+                f"ran {row.get('yaml_path_label', row['yaml_path'])}; "
+                f"expected {expected}."
+            )
+    trigger_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in report["measurements"]:
+        operation_id = row.get("operation_id")
+        if operation_id in _TRIGGER_OPERATION_IDS and "yaml_path" in row:
+            trigger_groups.setdefault(str(operation_id), []).append(row)
+    for operation_id, group in trigger_groups.items():
+        labels = list(
+            dict.fromkeys(
+                str(row.get("yaml_path_label", row["yaml_path"])) for row in group
+            )
+        )
+        lines.append(
+            f"`{operation_id}`: {', '.join(labels)} at {len(group)}/{len(group)} sizes."
+        )
+    triggers = report.get("realistic_triggers")
+    if isinstance(triggers, dict) and triggers.get("items"):
+        total = int(triggers["items"])
+        labels = (
+            ("block_scalar", "block scalar"),
+            ("accented", "accented text"),
+            ("emoji", "emoji"),
+            ("cjk", "CJK"),
+            ("binary", "`!!binary`"),
+            ("yaml_directive_text", "`%YAML` text"),
+            ("bare_tag", "bare `!` tag"),
+            ("backslash", "backslash escape"),
+            ("quoted_tab", "tab inside quotes"),
+        )
+        parts = [
+            f"{label} {int(triggers.get(key, 0))}/{total}" for key, label in labels
+        ]
+        lines.append(
+            "Realistic items in the largest generated file "
+            f"({total}): {'; '.join(parts)}."
+        )
+    return lines
 
 
 def _rt_vs_safe_c_rows(measurements: list[dict[str, Any]]) -> list[list[str]]:
@@ -1414,8 +2642,19 @@ def _rt_vs_safe_c_rows(measurements: list[dict[str, Any]]) -> list[list[str]]:
 
 
 def _yaml_mode(row: dict[str, Any]) -> str:
-    if row.get("operation_id") == "format_yaml":
+    operation_id = row.get("operation_id")
+    if operation_id == "format_yaml":
         return "safe, shipped"
+    if operation_id in _PURE_OPERATION_IDS:
+        return "safe, shipped, no C"
+    if operation_id == "format_yaml_realistic_clib_reparse":
+        return "safe, shipped, C, reparse"
+    if operation_id == "format_yaml_realistic_clean_clib":
+        return "safe, shipped, C, clean"
+    if operation_id in _TRIGGER_OPERATION_IDS:
+        return "safe, shipped, C, one trigger"
+    if operation_id in _SHIPPED_CLIB_IDS:
+        return "safe, shipped, C"
     if row.get("yaml_typ") == "safe":
         return "safe"
     if row.get("yaml_typ") == "safe-c":
@@ -1515,27 +2754,34 @@ def build_report(
     sizes_mb: list[float] | None,
     runs: int,
     output_dir: Path,
+    *,
+    corpus: str = "plain",
 ) -> dict[str, Any]:
     operations, skipped = discover_operations()
-    if not operations:
+    selected = [
+        operation for operation in operations if _operation_selected(operation, corpus)
+    ]
+    if not selected:
         raise RuntimeError("galley.core has no format, validate, or convert functions.")
     requested = None if sizes_mb is None else [float(size) for size in sizes_mb]
     planned = {
         operation.operation_id: _sizes_for_operation(operation, requested)
-        for operation in operations
+        for operation in selected
     }
-    by_format: dict[str, set[float]] = {}
-    for operation in operations:
-        by_format.setdefault(operation.source_format, set()).update(
+    by_corpus: dict[tuple[str, str], set[float]] = {}
+    for operation in selected:
+        by_corpus.setdefault((operation.source_format, operation.corpus), set()).update(
             planned[operation.operation_id]
         )
     measurements: list[dict[str, Any]] = []
     machine = machine_info()
     ruamel = ruamel_environment()
+    realistic_triggers: dict[str, int] | None = None
 
     def report_so_far() -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "bytes_per_mb": BYTES_PER_MB,
+            "corpus": corpus,
             "sizes_mb": requested,
             "ladders_mb": planned,
             "runs": runs,
@@ -1547,6 +2793,9 @@ def build_report(
             "cutoffs": cutoffs_for(measurements),
             "skipped": skipped,
         }
+        if realistic_triggers is not None:
+            payload["realistic_triggers"] = realistic_triggers
+        return payload
 
     def checkpoint(row: dict[str, Any]) -> None:
         # Rewrite both result files after every size, before the next one starts.
@@ -1555,18 +2804,28 @@ def build_report(
 
     with tempfile.TemporaryDirectory(prefix="galley-size-bench-") as temporary:
         root = Path(temporary)
-        generated: dict[str, dict[float, tuple[Path, int]]] = {}
-        for source_format in sorted(by_format):
-            generated[source_format] = generate_files(
-                root,
+        generated: dict[tuple[str, str], dict[float, tuple[Path, int]]] = {}
+        for source_format, file_corpus in sorted(by_corpus):
+            directory = root / f"{file_corpus}-{source_format}"
+            directory.mkdir()
+            generated[(source_format, file_corpus)] = generate_files(
+                directory,
                 source_format,
-                sorted(by_format[source_format]),
+                sorted(by_corpus[(source_format, file_corpus)]),
+                corpus=file_corpus,
             )
-        for operation in operations:
+        realistic_files = generated.get(("yaml", "realistic"))
+        if realistic_files:
+            largest = max(realistic_files)
+            realistic_triggers = realistic_trigger_counts(realistic_files[largest][1])
+        for operation in selected:
             wanted = planned[operation.operation_id]
             if not wanted:
                 continue
-            files = {size: generated[operation.source_format][size] for size in wanted}
+            files = {
+                size: generated[(operation.source_format, operation.corpus)][size]
+                for size in wanted
+            }
             print(f"timing {operation.operation_id}", file=sys.stderr)
             measure_operation(
                 operation,
@@ -1620,11 +2879,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="+",
         default=None,
         help=(
-            "File sizes in MB (1 MB = 1,048,576 bytes) for every row. "
+            "File sizes in MB (1 MB = 1,048,576 bytes) for every selected row. "
             "Omit to use the default ladders: JSON 1, 5, 10, 50, 100; "
             "shipped YAML, round-trip, and safe+C "
-            "0.05, 0.1, 0.25, 0.5, 1, 5, 10. "
+            "0.05, 0.1, 0.25, 0.5, 1, 5, 10; "
+            "natural realistic rows, clean rows, forced reparse, "
+            "plain shipped C, and realistic safe+C "
+            "0.05, 0.1, 0.25, 0.5, 1, 5; "
+            "single-trigger rows "
+            "0.05, 0.1, 0.25, 0.5, 1. "
             "Sizes above those caps are timed when passed here."
+        ),
+    )
+    parser.add_argument(
+        "--corpus",
+        choices=("plain", "realistic", "all"),
+        default="plain",
+        help=(
+            "plain (default): historical rows on the synthetic catalog. "
+            "realistic: natural, clean, single-trigger, forced reparse, "
+            "plain clib, and realistic safe+C. "
+            "all: historical rows and those new rows."
         ),
     )
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
@@ -1662,7 +2937,7 @@ def main(argv: list[str] | None = None) -> int:
             args.runs,
             args.item_count,
         )
-    build_report(args.sizes, args.runs, args.output_dir)
+    build_report(args.sizes, args.runs, args.output_dir, corpus=args.corpus)
     return 0
 
 
