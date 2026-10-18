@@ -43,9 +43,11 @@ After that, Galley opens with a normal double-click.
 
 `LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, rounded up to the oldest macOS CI launches on. With PySide6 6.9.3 that highest recorded minos is 12.0, and the disk-image job runs on macOS 14, so the declared floor is 14.0. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
 
+The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that `Contents/Resources/LICENSES` is present and not empty. It walks every file in `Galley.app`, recognizes Mach-O files by their magic bytes, and runs `vtool -show-build` on each architecture. The `minos` value is compared with `LSMinimumSystemVersion` in `Contents/Info.plist`. A Mach-O file with no `LC_BUILD_VERSION` is checked with `vtool -show-version-min` and `LC_VERSION_MIN_MACOSX`. When any recorded minimum is higher than the declared floor, the step prints the count, then each path relative to the app, the architecture, that minos, and the floor. It then prints `pin dependencies lower or raise MINIMUM_MACOS in galley.spec` and exits non-zero.
+
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 
-The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that the license directory is present and not empty.
+The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file.
 
 ## ruamel.yaml.clib
 
