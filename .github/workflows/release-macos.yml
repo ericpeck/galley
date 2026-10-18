@@ -1,0 +1,279 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release-macos.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One group per ref. A newer run cancels the in-progress run for that ref.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    name: Disk image (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          # The workflow token is contents: read, which cannot write the Actions cache.
+          enable-cache: false
+
+      - name: Install Galley
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev --no-editable
+          version="$(uv run --frozen --no-dev --no-editable python -c 'import importlib.metadata as m; print(m.version("ruamel.yaml.clib"))')"
+          if [[ "${version}" != "0.2.15" ]]; then
+            echo "Expected ruamel.yaml.clib 0.2.15, found ${version}"
+            exit 1
+          fi
+
+      - name: Build Galley.app
+        run: >
+          uv run --frozen --no-dev --no-editable
+          --with pyinstaller==6.22.3
+          pyinstaller --noconfirm --clean
+          --distpath dist --workpath build
+          packaging/galley.spec
+
+      - name: Check the app bundle
+        run: |
+          set -euo pipefail
+          app="dist/Galley.app"
+          bin="${app}/Contents/MacOS/Galley"
+          if [[ ! -d "${app}" || ! -x "${bin}" ]]; then
+            echo "Galley.app or its executable is missing"
+            exit 1
+          fi
+          identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
+          expected="$(
+            uv run --frozen --no-dev --no-editable python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          tree = ast.parse(Path("packaging/galley.spec").read_text(encoding="utf-8"))
+          found = []
+          for node in ast.walk(tree):
+              if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                  continue
+              target = node.targets[0]
+              if not isinstance(target, ast.Name) or target.id != "BUNDLE_IDENTIFIER":
+                  continue
+              value = node.value
+              if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                  raise SystemExit("BUNDLE_IDENTIFIER must be a string constant")
+              found.append(value.value)
+          if len(found) != 1:
+              raise SystemExit("expected one BUNDLE_IDENTIFIER string")
+          print(found[0])
+          PY
+          )"
+          if [[ "${identifier}" != "${expected}" ]]; then
+            echo "Unexpected bundle identifier: ${identifier} (spec has ${expected})"
+            exit 1
+          fi
+
+      # Fail the disk image when ruamel.yaml.clib 0.2.15 is not inside Galley.app.
+      - name: Check for ruamel.yaml.clib in the bundle
+        env:
+          REQUIRE_RUAMEL_CLIB: "true"
+        run: |
+          set -euo pipefail
+          clibs="$(find dist/Galley.app -type f \( -name '_ruamel_yaml*.so' -o -name '_ruamel_yaml*.dylib' \))"
+          if [[ -z "${clibs}" ]]; then
+            echo "ruamel.yaml.clib 0.2.15 (_ruamel_yaml) is not in Galley.app."
+            if [[ "${REQUIRE_RUAMEL_CLIB}" == "true" ]]; then
+              exit 1
+            fi
+            echo "NOTE: REQUIRE_RUAMEL_CLIB is not true, so this miss does not fail the build."
+            exit 0
+          fi
+          echo "Bundled ruamel.yaml.clib extension:"
+          echo "${clibs}"
+
+      - name: Smoke-launch Galley headless
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          bin="dist/Galley.app/Contents/MacOS/Galley"
+          "${bin}" &
+          pid="$!"
+          i=0
+          while [[ "${i}" -lt 8 ]]; do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+              status=0
+              wait "${pid}" || status="$?"
+              echo "Galley exited early with status ${status}"
+              exit 1
+            fi
+            sleep 1
+            i=$((i + 1))
+          done
+          kill "${pid}" 2>/dev/null || true
+          wait "${pid}" || true
+          echo "Galley stayed up under QT_QPA_PLATFORM=offscreen"
+
+      - name: Package the disk image
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(uv run --frozen --no-dev --no-editable python -c 'from galley import __version__; print(__version__)')"
+          fi
+          case "${version}" in
+            "" | *[!0-9A-Za-z._-]*)
+              echo "Version is not safe for a file name: ${version}"
+              exit 1
+              ;;
+          esac
+          dmg="Galley-${version}-arm64.dmg"
+          staging="build/dmg-staging"
+          rm -rf "${staging}"
+          mkdir -p "${staging}"
+          cp -R "dist/Galley.app" "${staging}/Galley.app"
+          (
+            cd "${staging}"
+            ln -s /Applications Applications
+          )
+          attempt=1
+          while [[ "${attempt}" -le 3 ]]; do
+            if hdiutil create \
+              -volname "Galley" \
+              -srcfolder "${staging}" \
+              -ov \
+              -format UDZO \
+              "dist/${dmg}"; then
+              break
+            fi
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "hdiutil create failed"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 5
+          done
+          (
+            cd dist
+            shasum -a 256 "${dmg}" | tee "${dmg}.sha256"
+          )
+
+      - name: Check the disk image layout
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(dist/Galley-*-arm64.dmg)
+          if [[ "${#dmgs[@]}" -ne 1 ]]; then
+            echo "Expected one disk image, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          mount="build/dmg-mount"
+          rm -rf "${mount}"
+          mkdir -p "${mount}"
+          detach() {
+            hdiutil detach "${mount}" || hdiutil detach -force "${mount}" || true
+          }
+          trap detach EXIT
+          attempt=1
+          while [[ "${attempt}" -le 3 ]]; do
+            if hdiutil attach -readonly -nobrowse -mountpoint "${mount}" "${dmg}"; then
+              break
+            fi
+            detach
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "hdiutil attach failed"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 5
+          done
+          echo "Mounted ${dmg}:"
+          ls -la "${mount}"
+          if [[ ! -d "${mount}/Galley.app" ]]; then
+            echo "Galley.app is missing from the disk image"
+            exit 1
+          fi
+          if [[ ! -L "${mount}/Applications" ]]; then
+            echo "Applications shortcut is missing from the disk image"
+            exit 1
+          fi
+          target="$(readlink "${mount}/Applications")"
+          if [[ "${target}" != "/Applications" ]]; then
+            echo "Applications shortcut points at ${target}"
+            exit 1
+          fi
+          echo "Disk image contains Galley.app and an Applications shortcut"
+
+      - name: Upload disk image and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: galley-macos-arm64
+          path: |
+            dist/Galley-*-arm64.dmg
+            dist/Galley-*-arm64.dmg.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: GitHub Release
+    needs: dmg
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download disk image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: galley-macos-arm64
+          path: dist
+
+      - name: Attach the disk image to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          shopt -s nullglob
+          files=(dist/*.dmg dist/*.sha256)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "No disk image to attach"
+            exit 1
+          fi
+          notes="$(cat <<'EOF'
+          Unsigned macOS Apple Silicon build. No Developer ID signature and no notarization.
+          1. Drag Galley to Applications.
+          2. Open it once and dismiss the warning.
+          3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley (asks for your password).
+          4. Note: on macOS 14 and earlier, right-click > Open still works.
+          After that, Galley opens with a normal double-click.
+          EOF
+          )"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${files[@]}" --clobber
+          else
+            gh release create "${tag}" "${files[@]}" --title "${tag}" --notes "${notes}"
+          fi
