@@ -31,7 +31,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      # yaml_safe_c installs ruamel.yaml.clib itself with uv run --with.
+      # The project depends on ruamel.yaml.clib. yaml_safe_c also passes
+      # uv run --with ruamel.yaml.clib==0.2.15 for that comparison row.
       - name: Run file-size benchmark
         timeout-minutes: 60
         run: uv run python benchmarks/size_bench.py
