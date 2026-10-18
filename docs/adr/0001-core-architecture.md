@@ -8,7 +8,7 @@ Proposed
 
 Galley formats, validates, and converts JSON and YAML. The stack is PySide6 / Qt 6. Galley targets macOS and Windows. The UI spec treats Galley as a cross-platform Qt app (`docs/ui-spec.md`).
 
-`galley.core` is pure Python. `format_json` uses the stdlib; `format_yaml` dumps with `ruamel.yaml` in safe mode. `galley.app` is the Qt shell. Convert from Python is specified in UI spec §9 and is not built yet. Format still runs on the caller.
+`galley.core` is pure Python. `format_json` uses the stdlib; `format_yaml` dumps with `ruamel.yaml` in safe mode. `galley.app` is the Qt shell. Convert from Python parses with `ast` against an allowlist. It rejects `datetime(...)` and every other function call, and nothing in the text is executed. Users paste dates as ISO strings. Format still runs on the caller.
 
 `galley.app.runtime.configure_runtime` runs before the event loop. It calls `multiprocessing.freeze_support()` and `multiprocessing.set_start_method("spawn")`. `src/galley/__main__.py` reaches that by calling `main()`.
 
@@ -54,7 +54,9 @@ Cancel kills the worker. The handler updates the window first, then kills the ch
 
 ### 3. Convert from Python uses `ast` only
 
-Conversion parses with `ast.parse` and edits the user's text in place from node spans (`lineno`, `col_offset`, `end_lineno`, `end_col_offset`). Quotes, `True` / `False` / `None`, tuples, and trailing commas are span replacements. An unsupported expression becomes a JSON string of its exact source slice. Unchanged characters keep their whitespace (UI spec §9, screen 6k). The call does not use `eval`, `exec`, or `ast.literal_eval`. Applied edits are one undo step.
+Conversion parses with `ast.parse(..., mode="eval")` and walks an allowlist. Dicts, lists, tuples, strings, numbers, booleans, `None`, and unary `+` / `-` on a numeric constant become JSON or YAML. Nothing in the text is executed. The call does not use `eval`, `exec`, or `ast.literal_eval`.
+
+`datetime(...)` and every other function call are rejected, with a line and column. A date has no JSON equivalent, so users paste it as an ISO string such as `"2026-10-18"`.
 
 `tests/test_no_exec.py` already rejects `eval` and `exec` under `src/` and `tests/`, and checks that Ruff selects `S102` and `S307`.
 
@@ -82,7 +84,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 
 **Worker process (chosen) vs `QThread`.** A `QThread` shares the GIL and the address space with the UI. CPython cannot force-stop a thread: injecting an exception into code blocked inside `json` or ruamel is unsafe and can deadlock, and a native crash in the parser exits the UI. Cancel then cannot return in ~100 ms during a stuck parse. A child process can be killed, and its crash stays in the child. The cost is `spawn` startup and pickling the document onto the queue (UI spec 6d's 4.8 MB one-line file is the case that matters). A warm worker removes startup from the click. The per-job pickle remains. If that copy dominates the benchmark, the body can move to a temp file or shared memory later, with the parser still off the UI thread.
 
-**`ast` span edits (chosen) vs `eval` or `ast.literal_eval`.** `eval` runs the user's code. `literal_eval` still evaluates an expression and cannot apply the in-place span edits in UI spec §9. `ast.parse` yields positions and does not run the tree.
+**`ast` allowlist (chosen) vs `eval` or `ast.literal_eval`.** `eval` runs the user's code. `literal_eval` still evaluates an expression. `ast.parse` yields a tree and does not run it. The walk allows literals only. `datetime(...)` and every other function call are rejected. Users paste dates as ISO strings instead.
 
 **ruamel round-trip (recorded) vs a safe dump.** `typ="safe"` drops comments. Round-trip keeps comments and order, which the YAML options and the "Comments may move" note assume. The located-error formatter that landed uses safe mode, the depth limit, and an explicit stack. This worker calls that formatter. Switching it to round-trip would replace those checks.
 
@@ -95,7 +97,7 @@ UI spec §10 sets no file-size cap. Thresholds for disabling word wrap, syntax c
 - The destination file changes only inside `os.replace` on the UI process, after success.
 - The session keeps a second interpreter for the warm worker. The Cancel click does not reap or respawn. The poll starts the replacement after `exitcode` is set, with new queues, and does not join on that tick. If that code is still unset at `REAP_DEADLINE_MS`, the poll starts the replacement without joining and leaves the Cancelled status in place. The temp stays queued on that child until that child exits or the UI process shuts down. A Format press that had to wait out a deadline gets the crash banner, then runs on the new worker. A second Cancel inside the deadline drops only that unsent job. A second Cancel after the deadline appends the replacement to the retired list and does not drop the first child. Each retired child keeps its own queues, reap clock, and temps. Exiting one deletes only that child's temps.
 - A worker that exits during a job leaves the text and the file unchanged. The status banner is `The formatter stopped unexpectedly. Your text and file weren't changed. Press Format to try again.` It has no line or column. That same poll starts a fresh worker, so the next Format is a new job. The deadline path uses that banner only when the user waited on a worker that then passed `REAP_DEADLINE_MS`, still with no line or column. A Format press after a deadline has already passed runs on the replacement and stays quiet.
-- Convert from Python rewrites the current buffer from spans. It does not re-serialize the document.
+- Convert from Python rejects `datetime(...)` and every other function call. It parses with `ast` against an allowlist and does not execute the text. Users paste dates as ISO strings.
 - YAML formatting stays on the safe loader and `InputError`. The worker does not rebuild banner sentences. The parent unpickles `kind`, `lineno`, `colno`, and `details`, and the app chooses the words.
 
 ## Risks

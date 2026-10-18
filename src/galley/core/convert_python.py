@@ -73,8 +73,11 @@ class _ReduceDict:
 
 _Step = _Visit | _ReduceList | _ReduceTuple | _ReduceDict
 
+_CALL = "Function calls can't be converted"
+_CALL_HINT = '. Use a string instead, such as "2026-10-18".'
+
 _REJECTED: dict[type[ast.AST], str] = {
-    ast.Call: "Function calls can't be converted",
+    ast.Call: _CALL,
     ast.Name: "Names can't be converted",
     ast.Attribute: "Attribute access can't be converted",
     ast.Subscript: "Subscripts can't be converted",
@@ -162,7 +165,14 @@ def _problem(problem: str, line: int, column: int) -> ConvertError:
 def _located(node: ast.AST, problem: str) -> ConvertError:
     line = node.lineno if isinstance(node.lineno, int) else 1
     offset = node.col_offset if isinstance(node.col_offset, int) else 0
-    return _problem(problem, line, offset + 1)
+    error = _problem(problem, line, offset + 1)
+    if problem != _CALL:
+        return error
+    return ConvertError(
+        message=error.message + _CALL_HINT,
+        lineno=error.lineno,
+        colno=error.colno,
+    )
 
 
 def _depth_error(line: int, column: int) -> ConvertError:

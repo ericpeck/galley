@@ -328,7 +328,20 @@ def test_rejected_node_names_line_and_column(
     error = _error(source)
     assert error.lineno == line
     assert error.colno == column
-    assert error.message == f"{problem}: line {line} column {column}"
+    message = f"{problem}: line {line} column {column}"
+    if problem == "Function calls can't be converted":
+        message += '. Use a string instead, such as "2026-10-18".'
+    assert error.message == message
+
+
+def test_datetime_call_is_rejected_with_a_string_hint() -> None:
+    error = _error("[\n  datetime(2026, 10, 18),\n]\n")
+    assert error.lineno == 2
+    assert error.colno == 3
+    assert error.message == (
+        "Function calls can't be converted: line 2 column 3. "
+        'Use a string instead, such as "2026-10-18".'
+    )
 
 
 def test_syntax_error_names_line_and_column() -> None:
