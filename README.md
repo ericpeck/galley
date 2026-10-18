@@ -42,7 +42,7 @@ An unsigned Apple Silicon disk image is built by the Release macOS workflow. See
 
 1. Drag Galley to Applications.
 2. Open it once and dismiss the warning.
-3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley.
+3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley (asks for your password).
 4. Note: on macOS 14 and earlier, right-click > Open still works.
 
 After that, Galley opens with a normal double-click.
