@@ -33,4 +33,4 @@ Later launches can use a normal double-click, once that first confirmation has b
 
 ## ruamel.yaml.clib
 
-The workflow looks for the `ruamel.yaml.clib` extension (`_ruamel_yaml`) inside `Galley.app`. Galley does not depend on that extension yet, so a missing file is reported as a note and the job continues. When the core change that adds it as a runtime dependency has merged, set `REQUIRE_RUAMEL_CLIB` to `true` in `.github/workflows/release-macos.yml`. The same step then fails the build if the extension was not packaged.
+The workflow installs `ruamel.yaml.clib==0.2.15`, the same pin as the project metadata, and packages that extension into `Galley.app`. `REQUIRE_RUAMEL_CLIB` is `true`, so the job fails when `_ruamel_yaml` is missing from the bundle.

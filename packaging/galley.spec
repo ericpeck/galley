@@ -25,14 +25,13 @@ _ENTRY = os.path.join(_ROOT, "src", "galley", "__main__.py")
 
 
 def _clib_binaries():
-    """Bundle ruamel's C extension when this environment has it.
-
-    galley does not depend on ruamel.yaml.clib yet. Once that runtime
-    dependency lands, this picks the extension up without a spec change.
-    """
+    """Bundle ruamel.yaml.clib 0.2.15, which the project depends on."""
     found = importlib.util.find_spec("_ruamel_yaml")
     if found is None or not found.origin:
-        return []
+        raise SystemExit(
+            "ruamel.yaml.clib 0.2.15 is required (_ruamel_yaml missing). "
+            "The disk image build fails without the C extension."
+        )
     return [(found.origin, ".")]
 
 
@@ -61,7 +60,7 @@ a = Analysis(
     pathex=[],
     binaries=_clib + _offscreen_plugin(),
     datas=[],
-    hiddenimports=["_ruamel_yaml"] if _clib else [],
+    hiddenimports=["_ruamel_yaml"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -33,7 +33,14 @@ jobs:
           enable-cache: false
 
       - name: Install Galley
-        run: uv sync --frozen --no-dev --no-editable
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev --no-editable
+          version="$(uv run --frozen --no-dev --no-editable python -c 'import importlib.metadata as m; print(m.version("ruamel.yaml.clib"))')"
+          if [[ "${version}" != "0.2.15" ]]; then
+            echo "Expected ruamel.yaml.clib 0.2.15, found ${version}"
+            exit 1
+          fi
 
       - name: Build Galley.app
         run: >
@@ -58,22 +65,19 @@ jobs:
             exit 1
           fi
 
-      # Hard-fail when the extension is missing by setting REQUIRE_RUAMEL_CLIB=true
-      # once galley depends on ruamel.yaml.clib at runtime. Until that core change
-      # merges, a missing extension is expected and this step only leaves a note.
+      # Fail the disk image when ruamel.yaml.clib 0.2.15 is not inside Galley.app.
       - name: Check for ruamel.yaml.clib in the bundle
         env:
-          REQUIRE_RUAMEL_CLIB: "false"
+          REQUIRE_RUAMEL_CLIB: "true"
         run: |
           set -euo pipefail
           clibs="$(find dist/Galley.app -type f \( -name '_ruamel_yaml*.so' -o -name '_ruamel_yaml*.dylib' \))"
           if [[ -z "${clibs}" ]]; then
-            echo "NOTE: ruamel.yaml.clib (_ruamel_yaml) is not in Galley.app."
-            echo "Skipping the hard check until the core PR adds it as a runtime dependency."
-            echo "::notice title=ruamel.yaml.clib not bundled::The C extension is absent. This check does not fail the build until REQUIRE_RUAMEL_CLIB is true."
+            echo "ruamel.yaml.clib 0.2.15 (_ruamel_yaml) is not in Galley.app."
             if [[ "${REQUIRE_RUAMEL_CLIB}" == "true" ]]; then
               exit 1
             fi
+            echo "NOTE: REQUIRE_RUAMEL_CLIB is not true, so this miss does not fail the build."
             exit 0
           fi
           echo "Bundled ruamel.yaml.clib extension:"
