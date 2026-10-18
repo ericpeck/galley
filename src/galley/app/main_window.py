@@ -50,6 +50,7 @@ from galley.app.theme import (
     TEXT_ON_ACCENT,
     WINDOW_BG,
 )
+from galley.core.convert_python import ConvertError, convert_python
 
 NOT_YET_MESSAGE = "Not yet available."
 CANCELLED_MESSAGE = "Cancelled. Showing the previous result."
@@ -185,6 +186,9 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addAction(actions.escape_string)
         edit.addAction(actions.unescape_string)
+        edit.addSeparator()
+        edit.addAction(actions.format)
+        edit.addAction(actions.convert_python)
 
         view = _add_menu(bar, "View")
         font_menu = view.addMenu("Font")
@@ -315,6 +319,7 @@ class MainWindow(QMainWindow):
         row.addWidget(_tool_button(actions.collapse_all))
         row.addSpacing(16)
         row.addWidget(_tool_button(actions.validate))
+        row.addWidget(_tool_button(actions.convert_python))
         row.addStretch(1)
         row.addWidget(_tool_button(actions.find))
         row.addSpacing(8)
@@ -391,6 +396,7 @@ class MainWindow(QMainWindow):
         actions.actual_size.triggered.connect(self._actual_size)
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
+        actions.convert_python.triggered.connect(self._convert_python)
         self._cancel_button.clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
@@ -475,6 +481,26 @@ class MainWindow(QMainWindow):
         self._apply_deferred_reveal()
         self._session.start()
         self._session.submit(text, self._format_source, self._format_target)
+
+    def _convert_python(self) -> None:
+        """Convert the input literal into the output editor and show notices."""
+        if self._formatting:
+            return
+        text = self._input_pane.editor.toPlainText()
+        if text == "":
+            return
+        result = convert_python(text, self._output_pane.format_name())
+        if isinstance(result, ConvertError):
+            self._status_message.setText(result.message)
+            return
+        self._output_pane.editor.setPlainText(result.text)
+        if result.notices:
+            self._status_message.setText(
+                " ".join(notice.message for notice in result.notices)
+            )
+            return
+        target = self._output_pane.format_name()
+        self._status_message.setText(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
         """Restore the previous output, then kill the worker."""
@@ -688,16 +714,17 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format disabled for the whole job without changing its label."""
-        self._format_button.setEnabled(
-            self._actions.format.isEnabled() and not self._formatting
-        )
+        """Keep Format and Convert disabled for the whole job."""
+        available = self._actions.format.isEnabled() and not self._formatting
+        self._format_button.setEnabled(available)
+        self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
         text = editor.toPlainText()
         empty = text == ""
         self._actions.format.setEnabled(not empty)
+        self._sync_format_button()
         clear_button = self._input_pane.clear_button
         if clear_button is not None:
             clear_button.setEnabled(not empty)
