@@ -99,6 +99,6 @@ app = BUNDLE(
     coll,
     name="Galley.app",
     icon=None,
-    bundle_identifier="com.galley.app",
+    bundle_identifier="com.ericmercurypeck.galley",
     version=__version__,
 )

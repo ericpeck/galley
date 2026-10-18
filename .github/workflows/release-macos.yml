@@ -2,6 +2,10 @@ name: Release macOS
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release-macos.yml"
   push:
     tags:
       - "v*"
@@ -10,6 +14,7 @@ permissions:
   contents: read
 
 concurrency:
+  # One group per ref. A newer run cancels the in-progress run for that ref.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
@@ -20,7 +25,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,7 +64,7 @@ jobs:
             exit 1
           fi
           identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
-          if [[ "${identifier}" != "com.galley.app" ]]; then
+          if [[ "${identifier}" != "com.ericmercurypeck.galley" ]]; then
             echo "Unexpected bundle identifier: ${identifier}"
             exit 1
           fi
@@ -140,7 +144,7 @@ jobs:
           done
           (
             cd dist
-            shasum -a 256 "${dmg}" > "${dmg}.sha256"
+            shasum -a 256 "${dmg}" | tee "${dmg}.sha256"
           )
 
       - name: Upload disk image and checksum
@@ -156,7 +160,7 @@ jobs:
   release:
     name: GitHub Release
     needs: dmg
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -180,7 +184,7 @@ jobs:
             echo "No disk image to attach"
             exit 1
           fi
-          notes="Unsigned macOS Apple Silicon build. No Developer ID signature and no notarization. On first launch, right-click Galley.app and choose Open, or open System Settings, then Privacy & Security, and choose Open Anyway."
+          notes="Unsigned macOS Apple Silicon build. No Developer ID signature and no notarization. Drag Galley into Applications before opening it. On first launch, open System Settings > Privacy & Security and choose Open Anyway. macOS asks for your password."
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${files[@]}" --clobber
           else

@@ -1,12 +1,16 @@
 # Releasing Galley for macOS
 
-The **Release macOS** workflow builds an unsigned Galley disk image for Apple Silicon. It runs on `macos-14`. It does not run on pull requests.
+The **Release macOS** workflow builds an unsigned Galley disk image for Apple Silicon. It runs on `macos-14`.
 
 The app has no Developer ID signature and is not notarized. No signing secrets are used. PyInstaller ad-hoc signs the bundle so Apple Silicon can start the binary. Gatekeeper still treats a copy downloaded from the internet as untrusted.
 
-`contents: write` is granted only to the job that attaches a GitHub Release, and that job runs only for a `v*` tag. A manual run uploads workflow artifacts and does not publish a release.
+The build job has `contents: read`. `contents: write` is granted only to the job that attaches a GitHub Release, and that job runs only for a `v*` tag. A pull request run and a manual run upload workflow artifacts and do not publish a release or a tag.
 
 ## Run the build
+
+A pull request runs this workflow when it changes `packaging/**` or `.github/workflows/release-macos.yml`. The spec under `packaging/` is the build script, so that path filter covers it. The run builds the disk image, runs the smoke checks, and uploads the disk image and its SHA-256 checksum as workflow artifacts. It does not create a release or a tag.
+
+You can also run it by hand, or by pushing a tag:
 
 1. On GitHub, open **Actions** and choose **Release macOS**.
 2. Use **Run workflow** (`workflow_dispatch`). The version in the file name is the package version (`galley.__version__`). The run uploads two artifacts:
@@ -14,20 +18,22 @@ The app has no Developer ID signature and is not notarized. No signing secrets a
    - `Galley-<version>-arm64.dmg.sha256`
 3. To publish those files on a GitHub Release, push a tag whose name starts with `v`, such as `v0.1.0`. The file name uses the tag without the leading `v`. The release job creates the release when one does not already exist, or uploads onto the existing release.
 
+Each ref has its own concurrency group. A new run on that ref cancels the run already in progress.
+
 Check the checksum from the directory that contains the disk image:
 
 ```sh
 shasum -a 256 -c Galley-<version>-arm64.dmg.sha256
 ```
 
-The image is a compressed `hdiutil` disk image (`UDZO`) whose volume contains `Galley.app`. The bundle identifier is `com.galley.app`. The build spec is `packaging/galley.spec`.
+The image is a compressed `hdiutil` disk image (`UDZO`) whose volume contains `Galley.app`. The bundle identifier is `com.ericmercurypeck.galley`. The build spec is `packaging/galley.spec`.
 
 ## Open the app the first time
 
 After you download the disk image, macOS may refuse to open Galley because it cannot verify the developer.
 
-- Right-click `Galley.app` and choose **Open**, then confirm **Open**.
-- Or open **System Settings > Privacy & Security** and choose **Open Anyway** next to the message about Galley.
+1. Drag Galley into Applications before opening it.
+2. Open **System Settings > Privacy & Security** and choose **Open Anyway**. macOS asks for your password.
 
 Later launches can use a normal double-click, once that first confirmation has been given for this copy of the app.
 
