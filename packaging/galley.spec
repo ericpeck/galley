@@ -23,8 +23,22 @@ from galley import __version__
 # Bundle id for Galley.app. Change this line to pick another identifier.
 BUNDLE_IDENTIFIER = "com.ericmercurypeck.galley"
 
+# Highest floor among Qt 6.12 (14.4), the bundled CPython 3.12.10 arm64
+# build (11.0), and an arm64-only executable (11.0).
+MINIMUM_MACOS = "14.4"
+
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(SPEC), ".."))
 _ENTRY = os.path.join(_ROOT, "src", "galley", "__main__.py")
+
+
+def _license_datas():
+    """Ship third-party license texts inside the app bundle."""
+    source = os.path.join(_ROOT, "LICENSES")
+    if not os.path.isdir(source):
+        raise SystemExit(
+            "LICENSES/ is missing. The disk image must include third-party licenses."
+        )
+    return [(source, "LICENSES")]
 
 
 def _clib_binaries():
@@ -62,7 +76,7 @@ a = Analysis(
     [_ENTRY],
     pathex=[],
     binaries=_clib + _offscreen_plugin(),
-    datas=[],
+    datas=_license_datas(),
     hiddenimports=["_ruamel_yaml"],
     hookspath=[],
     hooksconfig={},
@@ -104,4 +118,5 @@ app = BUNDLE(
     icon=None,
     bundle_identifier=BUNDLE_IDENTIFIER,
     version=__version__,
+    info_plist={"LSMinimumSystemVersion": MINIMUM_MACOS},
 )

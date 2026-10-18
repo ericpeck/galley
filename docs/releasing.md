@@ -8,7 +8,7 @@ The build job has `contents: read`. `contents: write` is granted only to the job
 
 ## Run the build
 
-A pull request runs this workflow when it changes `packaging/**` or `.github/workflows/release-macos.yml`. The spec under `packaging/` is the build script, so that path filter covers it. The run builds the disk image, runs the smoke checks, and uploads the disk image and its SHA-256 checksum as workflow artifacts. It does not create a release or a tag.
+A pull request runs this workflow when it changes `packaging/**`, `LICENSES/**`, or `.github/workflows/release-macos.yml`. The spec under `packaging/` is the build script, so that path filter covers it. The run builds the disk image, runs the smoke checks, and uploads the disk image and its SHA-256 checksum as workflow artifacts. It does not create a release or a tag.
 
 You can also run it by hand, or by pushing a tag:
 
@@ -38,6 +38,16 @@ After you download the disk image, macOS may refuse to open Galley because it ca
 4. Note: on macOS 14 and earlier, right-click > Open still works.
 
 After that, Galley opens with a normal double-click.
+
+## Minimum macOS and licenses
+
+`LSMinimumSystemVersion` in the app is `14.4`. Qt 6.12 documents macOS 14.4 as its minimum, and the Qt libraries in the app record that floor. The bundled CPython 3.12.10 arm64 build and the arm64 executable record macOS 11.0. The highest of those floors is 14.4.
+
+PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of 26.0. The disk-image job launches the built app on macOS 14, so the declared minimum follows Qt's 14.4 floor.
+
+The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
+
+The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that the license directory is present and not empty.
 
 ## ruamel.yaml.clib
 

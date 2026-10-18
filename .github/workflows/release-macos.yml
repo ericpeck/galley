@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "packaging/**"
+      - "LICENSES/**"
       - ".github/workflows/release-macos.yml"
       - "pyproject.toml"
       - "uv.lock"
@@ -110,6 +111,9 @@ jobs:
           fi
           echo "Bundled ruamel.yaml.clib extension:"
           echo "${clibs}"
+
+      - name: Verify bundle metadata
+        run: uv run --frozen --no-dev --no-editable python packaging/verify_bundle_metadata.py dist/Galley.app
 
       - name: Smoke-launch Galley headless
         env:

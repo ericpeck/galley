@@ -101,6 +101,109 @@ def test_first_launch_steps() -> None:
         assert "xattr" not in text.lower()
 
 
+def test_minimum_macos_is_written_into_the_bundle() -> None:
+    assignments: list[str] = []
+    plist_values: list[ast.expr] = []
+    for node in ast.walk(_spec_tree()):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "MINIMUM_MACOS"
+        ):
+            value = node.value
+            assert isinstance(value, ast.Constant)
+            assert isinstance(value.value, str)
+            assignments.append(value.value)
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Name) or func.id != "BUNDLE":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "info_plist":
+                plist_values.append(keyword.value)
+    assert assignments == ["14.4"]
+    assert len(plist_values) == 1
+    plist = plist_values[0]
+    assert isinstance(plist, ast.Dict)
+    assert len(plist.keys) == 1
+    key = plist.keys[0]
+    assert isinstance(key, ast.Constant)
+    assert key.value == "LSMinimumSystemVersion"
+    mapped = plist.values[0]
+    assert isinstance(mapped, ast.Name)
+    assert mapped.id == "MINIMUM_MACOS"
+
+
+def test_spec_ships_the_licenses_directory() -> None:
+    tree = _spec_tree()
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_license_datas"
+    ]
+    assert len(functions) == 1
+    returns = [node for node in ast.walk(functions[0]) if isinstance(node, ast.Return)]
+    assert len(returns) == 1
+    value = returns[0].value
+    assert isinstance(value, ast.List)
+    assert len(value.elts) == 1
+    pair = value.elts[0]
+    assert isinstance(pair, ast.Tuple)
+    assert len(pair.elts) == 2
+    dest = pair.elts[1]
+    assert isinstance(dest, ast.Constant)
+    assert dest.value == "LICENSES"
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Analysis"
+    ]
+    assert len(calls) == 1
+    datas = [keyword.value for keyword in calls[0].keywords if keyword.arg == "datas"]
+    assert len(datas) == 1
+    datas_call = datas[0]
+    assert isinstance(datas_call, ast.Call)
+    assert isinstance(datas_call.func, ast.Name)
+    assert datas_call.func.id == "_license_datas"
+
+
+def test_verify_bundle_metadata_is_its_own_step() -> None:
+    workflow = _workflow()
+    self_check = workflow.find(
+        "- name: Check that the built app loads ruamel.yaml.clib"
+    )
+    verify = workflow.find("- name: Verify bundle metadata")
+    smoke = workflow.find("- name: Smoke-launch Galley headless")
+    assert self_check != -1
+    assert self_check < verify < smoke
+    block = workflow[verify:smoke]
+    command = (
+        "uv run --frozen --no-dev --no-editable "
+        "python packaging/verify_bundle_metadata.py dist/Galley.app"
+    )
+    assert command in block
+    assert "--self-check" not in block
+    assert "LSMinimumSystemVersion" not in block
+    assert "PlistBuddy" not in block
+    assert '"LICENSES/**"' in workflow
+
+
+def test_releasing_docs_name_the_minimum_and_licenses() -> None:
+    text = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
+    assert "LSMinimumSystemVersion" in text
+    assert "`14.4`" in text
+    assert "Contents/Resources/LICENSES" in text
+    clib = text.find("## ruamel.yaml.clib")
+    minimum = text.find("## Minimum macOS and licenses")
+    assert minimum != -1
+    assert clib != -1
+    assert minimum < clib
+
+
 def test_pull_request_builds_an_artifact_and_does_not_publish() -> None:
     workflow = _workflow()
     assert "workflow_dispatch:" in workflow
