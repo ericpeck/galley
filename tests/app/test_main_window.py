@@ -154,6 +154,9 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Escape as String",
         "Unescape String",
+        "|",
+        "Format",
+        "Convert from Python",
     ]
     view = _menu(window, "View")
     assert _labels(view) == [

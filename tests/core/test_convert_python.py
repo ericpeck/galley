@@ -107,6 +107,40 @@ def test_stringified_duplicate_keys_keep_the_last_value() -> None:
     assert json.loads(_convert("{1: 'a', '1': 'b'}").text) == {"1": "b"}
 
 
+def test_stringified_key_collision_notices_the_kept_value() -> None:
+    result = _convert("{1: 'a', '1': 'b'}")
+    assert json.loads(result.text) == {"1": "b"}
+    assert [notice.message for notice in result.notices] == [
+        "1 dictionary key was converted to a string.",
+        "1 key matched another after conversion. The last value was kept.",
+    ]
+    reversed_keys = _convert("{'1': 'a', 1: 'b'}")
+    assert json.loads(reversed_keys.text) == {"1": "b"}
+    assert reversed_keys.notices[-1].message == (
+        "1 key matched another after conversion. The last value was kept."
+    )
+
+
+def test_stringified_key_collisions_use_the_plural() -> None:
+    result = _convert("{1: 'a', '1': 'b', 2: 'c', '2': 'd'}")
+    assert json.loads(result.text) == {"1": "b", "2": "d"}
+    assert [notice.message for notice in result.notices] == [
+        "2 dictionary keys were converted to strings.",
+        "2 keys matched another after conversion. The last value was kept.",
+    ]
+    same_key_twice = _convert("{1: 'a', 1: 'b', 1: 'c'}")
+    assert json.loads(same_key_twice.text) == {"1": "c"}
+    assert same_key_twice.notices[-1].message == (
+        "2 keys matched another after conversion. The last value was kept."
+    )
+
+
+def test_duplicate_string_keys_are_not_conversion_collisions() -> None:
+    result = _convert("{'a': 1, 'a': 2}")
+    assert json.loads(result.text) == {"a": 2}
+    assert result.notices == ()
+
+
 def test_tuple_and_key_notices_both_show() -> None:
     result = _convert("{'nums': (1, 2), 3: 'x'}")
     assert json.loads(result.text) == {"nums": [1, 2], "3": "x"}

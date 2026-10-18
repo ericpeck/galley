@@ -21,6 +21,7 @@ from galley.core.format import _RUAMEL_SAFE_DEPTH, _dump_block, _dump_yaml_value
 
 _TUPLE_ONE = "1 tuple was converted to a list."
 _KEY_ONE = "1 dictionary key was converted to a string."
+_COLLISION_ONE = "1 key matched another after conversion. The last value was kept."
 
 
 @dataclass(frozen=True)
@@ -110,8 +111,9 @@ def convert_python(text: str, target: str = "json") -> ConvertResult | ConvertEr
 
     ``target`` is ``json`` or ``yaml``, compared without case. Tuples become
     lists, and ``int``, ``float``, ``bool``, and ``None`` dictionary keys
-    become strings. Both show up as notices. ``NaN`` and infinity are rejected
-    for JSON and kept for YAML.
+    become strings. A stringified key that lands on a key already in that
+    dictionary keeps the last value. Each of those shows up as a notice.
+    ``NaN`` and infinity are rejected for JSON and kept for YAML.
     """
     kind = _normalize_target(target)
     try:
@@ -196,6 +198,7 @@ class _Walker:
         self.max_depth = 0
         self._tuples = 0
         self._keys = 0
+        self._collisions = 0
 
     def notices(self) -> tuple[ConvertNotice, ...]:
         found: list[ConvertNotice] = []
@@ -211,6 +214,15 @@ class _Walker:
             found.append(
                 ConvertNotice(
                     f"{self._keys} dictionary keys were converted to strings."
+                )
+            )
+        if self._collisions == 1:
+            found.append(ConvertNotice(_COLLISION_ONE))
+        elif self._collisions > 1:
+            found.append(
+                ConvertNotice(
+                    f"{self._collisions} keys matched another after conversion. "
+                    "The last value was kept."
                 )
             )
         return tuple(found)
@@ -347,15 +359,28 @@ class _Walker:
             pairs.append((key, value))
         pairs.reverse()
         built: dict[str, object] = {}
+        # Keys whose current value came from a non-string key. A later key
+        # that spells the same text is a collision; a plain duplicate string
+        # key is not.
+        from_conversion: set[str] = set()
         for key, value in pairs:
             if type(key) is str:
-                built[key] = value
-                continue
-            text = _string_key(key)
-            if text is None:
-                return _problem(_KEY_TYPES, 1, 1)
+                text = key
+                converted = False
+            else:
+                spelled = _string_key(key)
+                if spelled is None:
+                    return _problem(_KEY_TYPES, 1, 1)
+                text = spelled
+                converted = True
+                self._keys += 1
+            if text in built and (converted or text in from_conversion):
+                self._collisions += 1
+            if converted:
+                from_conversion.add(text)
+            else:
+                from_conversion.discard(text)
             built[text] = value
-            self._keys += 1
         self.values.append(built)
         return None
 

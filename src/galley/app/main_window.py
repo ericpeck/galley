@@ -186,6 +186,9 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addAction(actions.escape_string)
         edit.addAction(actions.unescape_string)
+        edit.addSeparator()
+        edit.addAction(actions.format)
+        edit.addAction(actions.convert_python)
 
         view = _add_menu(bar, "View")
         font_menu = view.addMenu("Font")
@@ -496,7 +499,8 @@ class MainWindow(QMainWindow):
                 " ".join(notice.message for notice in result.notices)
             )
             return
-        self._status_message.setText("Converted")
+        target = self._output_pane.format_name()
+        self._status_message.setText(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
         """Restore the previous output, then kill the worker."""
@@ -710,17 +714,17 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format disabled for the whole job without changing its label."""
-        self._format_button.setEnabled(
-            self._actions.format.isEnabled() and not self._formatting
-        )
+        """Keep Format and Convert disabled for the whole job."""
+        available = self._actions.format.isEnabled() and not self._formatting
+        self._format_button.setEnabled(available)
+        self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
         text = editor.toPlainText()
         empty = text == ""
         self._actions.format.setEnabled(not empty)
-        self._actions.convert_python.setEnabled(not empty)
+        self._sync_format_button()
         clear_button = self._input_pane.clear_button
         if clear_button is not None:
             clear_button.setEnabled(not empty)
