@@ -338,7 +338,10 @@ def _bare_tag_keeps_c_value(token: TagToken, follower: object | None) -> bool:
     ``! 123``, ``! true``, and ``! null`` strings. ruamel.yaml 0.19.1
     and ruamel.yaml.clib 0.2.15 both resolve those three as the integer
     123, boolean true, and null, and the dumped text matches, so the C
-    value is kept.
+    value is kept. The same pair also matches for ``! 1.5`` (float),
+    ``! 2026-10-18`` (date), ``! ~`` (null), ``! "x"`` (string), and
+    ``a: ! |`` with an indented line (block scalar). Those stay on the
+    C value too.
     """
     if token.value != (None, "!"):
         return False

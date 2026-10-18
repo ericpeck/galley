@@ -3,6 +3,7 @@
 import os
 import random
 import warnings
+from datetime import date
 
 import pytest
 from ruamel.yaml import YAML
@@ -109,6 +110,11 @@ _CORPUS: tuple[str | bytes, ...] = (
     "! 123\n",
     "! true\n",
     "! null\n",
+    "! 1.5\n",
+    "! 2026-10-18\n",
+    "! ~\n",
+    '! "x"\n',
+    "a: ! |\n  hello\n",
     "! [1, 2]\n",
     "! {a: 1}\n",
     "a: !\n  - 1\n",
@@ -413,6 +419,42 @@ def test_bare_tag_same_line_scalar_keeps_the_c_value(
     assert format_yaml(text) == _pure(text)
 
 
+def _c_load_pure_write(text: str) -> str:
+    """Load with the C parser and dump with the pure-Python emitter."""
+    opened = format_module._yaml_limits(text, pure=False)
+    loaded = format_module._load_parsed(text, opened, pure=False)
+    return format_module._dump_parsed(loaded, pure=True)
+
+
+# ruamel.yaml 0.19.1 and ruamel.yaml.clib 0.2.15. C-load + pure-write
+# matches pure Python, so these stay on the C value.
+_BARE_TAG_PROVED_SCALARS = (
+    ("! 1.5\n", 1.5, "1.5\n...\n"),
+    ("! 2026-10-18\n", date(2026, 10, 18), "2026-10-18\n...\n"),
+    ("! ~\n", None, "null\n...\n"),
+    ('! "x"\n', "x", "x\n...\n"),
+    ("a: ! |\n  hello\n", {"a": "hello\n"}, 'a: "hello\\n"\n'),
+)
+
+
+@pytest.mark.parametrize(("text", "value", "dumped"), _BARE_TAG_PROVED_SCALARS)
+def test_bare_tag_proved_scalars_match_pure_python(
+    text: str, value: object, dumped: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_clib()
+    _reject_reparse(monkeypatch)
+    c_value = YAML(typ="safe", pure=False).load(text)
+    pure_value = YAML(typ="safe", pure=True).load(text)
+    assert c_value == value
+    assert pure_value == value
+    assert type(c_value) is type(pure_value)
+    assert type(c_value) is type(value)
+    written = _c_load_pure_write(text)
+    assert written == _pure(text)
+    assert written == dumped
+    assert format_yaml(text) == written
+
+
 @pytest.mark.parametrize(
     ("text", "value"),
     [
@@ -628,15 +670,27 @@ def _tab_between_document(rng: random.Random) -> str:
     return f"{key}: {rng.choice(_WORDS)}\t{rng.choice(_WORDS)}\n"
 
 
-def _bare_scalar_document(rng: random.Random) -> str:
-    roll = rng.randrange(5)
-    if roll == 0:
+def _bare_scalar_document(rng: random.Random, slot: int) -> str:
+    # The first five slots are the probed forms. The 48-document CI sample
+    # hits each of them once. Later slots keep the older bare-tag shapes.
+    form = slot % 10
+    if form == 0:
+        return "! 1.5\n"
+    if form == 1:
+        return "! 2026-10-18\n"
+    if form == 2:
+        return "! ~\n"
+    if form == 3:
+        return '! "x"\n'
+    if form == 4:
+        return f"a: ! |\n  {rng.choice(_WORDS)}\n"
+    if form == 5:
         return f"! {rng.randint(0, 40)}\n"
-    if roll == 1:
+    if form == 6:
         return f"! {rng.choice(('true', 'false', 'null'))}\n"
-    if roll == 2:
+    if form == 7:
         return f"! [{rng.randint(0, 9)}, {rng.randint(0, 9)}]\n"
-    if roll == 3:
+    if form == 8:
         return f"! {{{rng.choice(_KEYS)}: {rng.randint(0, 9)}}}\n"
     return f"item: ! {rng.randint(0, 40)}\n"
 
@@ -668,7 +722,7 @@ def _both_document(rng: random.Random) -> str:
     return document
 
 
-def _triggered_document(rng: random.Random, kind: str) -> str:
+def _triggered_document(rng: random.Random, kind: str, slot: int) -> str:
     if kind == "tab_double":
         return _quoted_tab_document(rng, '"', multiline=False)
     if kind == "tab_single":
@@ -684,7 +738,7 @@ def _triggered_document(rng: random.Random, kind: str) -> str:
             ("a: !\n", "- !\n", "[! ]\n", "--- !\n", "!<!> \n", "a: !<!>\n")
         )
     if kind == "bare_scalar":
-        return _bare_scalar_document(rng)
+        return _bare_scalar_document(rng, slot)
     if kind == "local_tag":
         return _local_tag_document(rng)
     if kind == "both":
@@ -692,10 +746,10 @@ def _triggered_document(rng: random.Random, kind: str) -> str:
     raise AssertionError(kind)
 
 
-def _comparison_document(rng: random.Random, kind: str) -> str | bytes:
+def _comparison_document(rng: random.Random, kind: str, slot: int) -> str | bytes:
     if kind == "plain":
         return _random_yaml_document(rng)
-    document = _triggered_document(rng, kind)
+    document = _triggered_document(rng, kind, slot)
     if document.isascii() and rng.randrange(5) == 0:
         return document.encode()
     return document
@@ -703,9 +757,30 @@ def _comparison_document(rng: random.Random, kind: str) -> str | bytes:
 
 def _compare_random_documents(count: int) -> None:
     rng = random.Random(_COMPARE_SEED)
+    kinds = len(_KINDS)
     for index in range(count):
-        document = _comparison_document(rng, _KINDS[index % len(_KINDS)])
+        document = _comparison_document(rng, _KINDS[index % kinds], index // kinds)
         assert _outcome(document, pure=False) == _outcome(document, pure=True), document
+
+
+def _ci_comparison_documents() -> list[str]:
+    rng = random.Random(_COMPARE_SEED)
+    kinds = len(_KINDS)
+    texts: list[str] = []
+    for index in range(_CI_COMPARE_COUNT):
+        document = _comparison_document(rng, _KINDS[index % kinds], index // kinds)
+        texts.append(document.decode() if isinstance(document, bytes) else document)
+    return texts
+
+
+def test_ci_sample_includes_proved_bare_tags() -> None:
+    texts = _ci_comparison_documents()
+    assert len(texts) == _CI_COMPARE_COUNT
+    assert "! 1.5\n" in texts
+    assert "! 2026-10-18\n" in texts
+    assert "! ~\n" in texts
+    assert '! "x"\n' in texts
+    assert any(text.startswith("a: ! |\n  ") for text in texts)
 
 
 def test_random_documents_match_pure_python_bytes() -> None:
