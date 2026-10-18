@@ -74,8 +74,9 @@ class _ReduceDict:
 _Step = _Visit | _ReduceList | _ReduceTuple | _ReduceDict
 
 _CALL = "Function calls can't be converted"
-_CALL_HINT = '. Use a string instead, such as "2026-10-18".'
-_DATE_CALLS = frozenset({"datetime", "date", "time"})
+_DATE_HINT = '. Use a string instead, such as "2026-10-18".'
+_TIME_HINT = '. Use a string instead, such as "12:30".'
+_CALL_HINTS = {"datetime": _DATE_HINT, "date": _DATE_HINT, "time": _TIME_HINT}
 
 _REJECTED: dict[type[ast.AST], str] = {
     ast.Call: _CALL,
@@ -167,29 +168,38 @@ def _located(node: ast.AST, problem: str) -> ConvertError:
     line = node.lineno if isinstance(node.lineno, int) else 1
     offset = node.col_offset if isinstance(node.col_offset, int) else 0
     error = _problem(problem, line, offset + 1)
-    if problem != _CALL or not _is_date_or_time_call(node):
+    hint = _call_hint(node) if problem == _CALL else ""
+    if not hint:
         return error
     return ConvertError(
-        message=error.message + _CALL_HINT,
+        message=error.message + hint,
         lineno=error.lineno,
         colno=error.colno,
     )
 
 
-def _is_date_or_time_call(node: ast.AST) -> bool:
-    """Return True for ``datetime``, ``date``, and ``time`` calls.
+def _call_hint(node: ast.AST) -> str:
+    """Example sentence for a ``datetime``, ``date``, or ``time`` call.
 
-    ``Decimal`` and every other call stay on the plain rejection. The
-    name is the function or the last attribute (``datetime.date``).
+    ``date`` and ``datetime`` use a calendar day. ``time`` uses a clock
+    time. ``Decimal`` and every other call get no example. The name is
+    the function or the last attribute (``datetime.time``).
     """
+    name = _called_name(node)
+    if name is None:
+        return ""
+    return _CALL_HINTS.get(name, "")
+
+
+def _called_name(node: ast.AST) -> str | None:
     if not isinstance(node, ast.Call):
-        return False
+        return None
     func = node.func
     if isinstance(func, ast.Name):
-        return func.id in _DATE_CALLS
+        return func.id
     if isinstance(func, ast.Attribute):
-        return func.attr in _DATE_CALLS
-    return False
+        return func.attr
+    return None
 
 
 def _depth_error(line: int, column: int) -> ConvertError:
