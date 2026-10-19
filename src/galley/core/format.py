@@ -165,16 +165,15 @@ def format_yaml(text: str | bytes) -> str:
     """Return ``text`` parsed as YAML and dumped as a block document.
 
     When ``ruamel.yaml.clib`` is installed, the C loader runs first. The
-    text shown to the user is written by the pure-Python emitter. A
-    ``%YAML`` or ``%TAG`` directive, a tab outside a comment and outside
-    a single-line quoted scalar, a non-core tag, a bare ``!`` that is
-    not followed on the same line by a non-empty scalar or a flow
-    collection, or a block scalar whose first non-empty content line is
-    only whitespace with a later line indented further is parsed again
-    with pure Python, and that result is returned, success or error. If
-    the C parser raises, the pure-Python safe parser runs and its result
-    is returned. Without the C library this is the pure-Python safe
-    parser and it does not warn.
+    text shown to the user is written by the pure-Python emitter. A tab
+    anywhere in the text, a ``%YAML`` or ``%TAG`` directive, a non-core
+    tag, a bare ``!`` that is not followed on the same line by a
+    non-empty scalar or a flow collection, or a block scalar whose first
+    non-empty content line is only whitespace with a later line indented
+    further is parsed again with pure Python, and that result is
+    returned, success or error. If the C parser raises, the pure-Python
+    safe parser runs and its result is returned. Without the C library
+    this is the pure-Python safe parser and it does not warn.
     """
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
@@ -245,15 +244,17 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
 def _needs_pure_reparse(text: str | bytes, tokens: list[object]) -> bool:
     """Return True when the C tokens are one of the pure-Python mismatches.
 
-    Those cases are a ``%YAML`` or ``%TAG`` directive, a tab that is not
-    inside a comment or a single-line quoted scalar, a tag
-    ``_tag_needs_reparse`` rejects, and a block scalar whose first
-    non-empty content line is whitespace with a later line indented
-    further. Everything else keeps the C value and is dumped in pure Python.
+    A tab anywhere in ``text`` forces that reparse. The other cases are a
+    ``%YAML`` or ``%TAG`` directive, a tag ``_tag_needs_reparse`` rejects,
+    and a block scalar whose first non-empty content line is whitespace
+    with a later line indented further. Everything else keeps the C value
+    and is dumped in pure Python.
 
     Token indexes from the C scanner count characters and skip a leading
     BOM, so the check runs on decoded text with that BOM removed.
     """
+    if (b"\t" if isinstance(text, bytes) else "\t") in text:
+        return True
     source = _scanner_text(text)
     cursor = 0
     for index, token in enumerate(tokens):
