@@ -28,6 +28,8 @@ shasum -a 256 -c Galley-<version>-arm64.dmg.sha256
 
 The image is a compressed `hdiutil` disk image (`UDZO`). Its volume contains `Galley.app` next to an Applications shortcut. The bundle identifier is the `BUNDLE_IDENTIFIER` constant in `packaging/galley.spec` (`com.ericmercurypeck.galley`).
 
+The icon master is `packaging/icon/galley.svg`. When the art changes, regenerate the committed `packaging/icon/galley.icns` with `python packaging/icon/regenerate.py`; the release workflow uses that file and does not render the SVG.
+
 ## Open the app the first time
 
 After you download the disk image, macOS may refuse to open Galley because it cannot verify the developer.
@@ -47,7 +49,7 @@ PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of
 
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 
-The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that the license directory is present and not empty.
+The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value, that the license directory is present and not empty, and that `CFBundleIconFile` names the `.icns` file in `Contents/Resources`.
 
 ## ruamel.yaml.clib
 

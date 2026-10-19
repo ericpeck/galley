@@ -115,7 +115,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Galley.app",
-    icon=None,
+    icon=os.path.join(os.path.dirname(SPEC), "icon", "galley.icns"),
     bundle_identifier=BUNDLE_IDENTIFIER,
     version=__version__,
     info_plist={"LSMinimumSystemVersion": MINIMUM_MACOS},
