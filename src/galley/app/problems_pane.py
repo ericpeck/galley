@@ -2,8 +2,8 @@
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QMouseEvent, QResizeEvent
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -86,6 +86,7 @@ class ProblemsPane(QWidget):
         self._list.itemClicked.connect(self._activate)
         self._list.itemActivated.connect(self._activate)
         self._list.currentItemChanged.connect(self._sync_selection)
+        self._list.installEventFilter(self)
 
         self._replace = QPushButton("Replace tabs with spaces")
         self._replace.setObjectName("replaceTabsButton")
@@ -123,6 +124,20 @@ class ProblemsPane(QWidget):
         layout.addWidget(self._body)
         layout.addWidget(self._strip)
 
+    def eventFilter(self, watched: QWidget, event: QEvent) -> bool:
+        """Return and Enter jump to the current problem."""
+        if (
+            watched is self._list
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            item = self._list.currentItem()
+            if item is not None:
+                self._activate(item)
+            return True
+        return super().eventFilter(watched, event)
+
     def list_widget(self) -> QListWidget:
         """The problem list. Tab order uses this widget."""
         return self._list
@@ -151,6 +166,8 @@ class ProblemsPane(QWidget):
             item = QListWidgetItem()
             item.setText(problem.accessible)
             item.setData(Qt.ItemDataRole.UserRole, problem.lineno)
+            # Not editable: on macOS, Return opens an editor and skips itemActivated.
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             item.setSizeHint(QSize(0, _ROW_HEIGHT))
             row = _ProblemRow(problem)
             row.setFocusPolicy(Qt.FocusPolicy.NoFocus)
