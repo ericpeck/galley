@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.about import show_about_dialog
 from galley.app.actions import ShellActions
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
@@ -164,7 +165,6 @@ class MainWindow(QMainWindow):
         bar.setStyleSheet(menu_style())
 
         galley = _add_menu(bar, "Galley")
-        galley.addAction(actions.about)
         galley.addAction(actions.preferences)
         galley.addSeparator()
         galley.addAction(actions.quit)
@@ -212,7 +212,10 @@ class MainWindow(QMainWindow):
         window_menu.addAction(actions.show_window)
         window_menu.addAction(actions.bring_back)
 
-        _add_menu(bar, "Help")
+        # Last on Help. AboutRole moves it into the application menu
+        # where Qt relocates that role, and leaves it on Help otherwise.
+        help_menu = _add_menu(bar, "Help")
+        help_menu.addAction(actions.about)
 
         self._tab_menu = QMenu(self)
         self._tab_menu.setObjectName("tabMenu")
@@ -380,6 +383,7 @@ class MainWindow(QMainWindow):
 
     def _connect(self) -> None:
         actions = self._actions
+        actions.about.triggered.connect(self._show_about)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -457,6 +461,9 @@ class MainWindow(QMainWindow):
         source = self.sender()
         if isinstance(source, QWidget):
             self._editor_menu.popup(source.mapToGlobal(pos))
+
+    def _show_about(self) -> None:
+        show_about_dialog(self)
 
     def _not_yet(self) -> None:
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)

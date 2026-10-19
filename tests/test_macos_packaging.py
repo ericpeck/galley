@@ -231,6 +231,7 @@ def test_built_app_runs_the_clib_self_check() -> None:
     workflow = _workflow()
     docs = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
     assert '"${bin}" --self-check' in workflow
+    assert "LICENSES self-check: ok" in workflow
     assert "Check: ruamel.yaml.clib self-check" in workflow
     assert "What broke:" in workflow
     assert "Reproduce locally: ${bin} --self-check" in workflow

@@ -140,7 +140,6 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     assert titles == ["Galley", "File", "Edit", "View", "Window", "Help"]
 
     assert _labels(_menu(window, "Galley")) == [
-        "About Galley",
         "Preferences…",
         "|",
         "Quit",
@@ -188,7 +187,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Show window",
         "Bring back",
     ]
-    assert _labels(_menu(window, "Help")) == []
+    assert _labels(_menu(window, "Help")) == ["About Galley"]
     assert _labels(window.findChild(QMenu, "tabMenu")) == [
         "Rename",
         "Duplicate",
