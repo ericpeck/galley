@@ -55,6 +55,7 @@ class ShellActions:
             "About Galley",
             role=QAction.MenuRole.AboutRole,
         )
+        self.about.setObjectName("aboutGalley")
         self.preferences = _action(
             parent,
             "Preferences…",
@@ -175,7 +176,6 @@ class ShellActions:
     def stubs(self) -> list[QAction]:
         """Commands whose behavior is not part of the shell."""
         return [
-            self.about,
             self.preferences,
             self.open_file,
             self.find,

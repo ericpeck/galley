@@ -26,6 +26,8 @@ def _app(
     minimum: str | None = "14.0",
     licenses: bool = True,
     license_file: bool = True,
+    icon_key: str | None = "galley.icns",
+    icon_file: str | None = "galley.icns",
 ) -> Path:
     app = tmp_path / "Galley.app"
     contents = app / "Contents"
@@ -34,12 +36,18 @@ def _app(
         data: dict[str, str] = {"CFBundleIdentifier": "com.ericmercurypeck.galley"}
         if minimum is not None:
             data["LSMinimumSystemVersion"] = minimum
+        if icon_key is not None:
+            data["CFBundleIconFile"] = icon_key
         (contents / "Info.plist").write_bytes(plistlib.dumps(data))
     if licenses:
         folder = contents / "Resources" / "LICENSES"
         folder.mkdir(parents=True)
         if license_file:
             (folder / "README.md").write_text("licenses\n", encoding="utf-8")
+    if icon_file is not None:
+        resources = contents / "Resources"
+        resources.mkdir(parents=True, exist_ok=True)
+        (resources / icon_file).write_bytes(b"icns")
     return app
 
 
@@ -106,11 +114,15 @@ def test_main_success_names_the_minimum(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     verifier = _verifier()
-    app = _app(tmp_path)
+    minimum = verifier.expected_minimum(verifier.spec_path())
+    icon_name = verifier.expected_icon_name(verifier.spec_path())
+    app = _app(tmp_path, minimum=minimum)
     assert verifier.main([str(app)]) == 0
     captured = capsys.readouterr()
     assert captured.out == (
-        "LSMinimumSystemVersion is '14.0' and Contents/Resources/LICENSES is present.\n"
+        f"LSMinimumSystemVersion is {minimum!r} and "
+        "Contents/Resources/LICENSES is present. "
+        f"CFBundleIconFile is {icon_name!r}.\n"
     )
 
 
@@ -148,3 +160,84 @@ def test_license_readme_names_every_file_and_version() -> None:
         "https://download.qt.io/official_releases/QtForPython/pyside6/"
         "PySide6-6.9.3-src/pyside-setup-everywhere-src-6.9.3.tar.xz"
     ) in readme
+
+
+def test_expected_icon_name_matches_the_spec() -> None:
+    verifier = _verifier()
+    assert verifier.expected_icon_name(verifier.spec_path()) == "galley.icns"
+
+
+def test_missing_icon_key_names_the_expected_file(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(tmp_path, minimum="14.4", icon_key=None)
+    assert verifier.bundle_problems(app, "14.4") == [
+        "CFBundleIconFile is missing from "
+        f"{app}/Contents/Info.plist; expected galley.icns"
+    ]
+
+
+def test_generic_icon_is_rejected(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(
+        tmp_path,
+        minimum="14.4",
+        icon_key="icon-windowed.icns",
+        icon_file="icon-windowed.icns",
+    )
+    assert verifier.bundle_problems(app, "14.4") == [
+        "CFBundleIconFile is 'icon-windowed.icns', expected 'galley.icns'",
+        f"Contents/Resources/galley.icns is missing from {app}",
+    ]
+
+
+def test_missing_icon_file_is_named(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(tmp_path, minimum="14.4", icon_file=None)
+    assert verifier.bundle_problems(app, "14.4") == [
+        f"Contents/Resources/galley.icns is missing from {app}"
+    ]
+
+
+def test_empty_icon_file_is_named(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(tmp_path, minimum="14.4")
+    icon = app / "Contents" / "Resources" / "galley.icns"
+    icon.write_bytes(b"")
+    assert verifier.bundle_problems(app, "14.4") == [
+        f"Contents/Resources/galley.icns in {app} is empty"
+    ]
+
+
+def test_non_icns_file_is_named(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(tmp_path, minimum="14.4")
+    icon = app / "Contents" / "Resources" / "galley.icns"
+    icon.write_bytes(b"not-an-icon")
+    assert verifier.bundle_problems(app, "14.4") == [
+        f"Contents/Resources/galley.icns in {app} is not an icns file"
+    ]
+
+
+def test_icon_stem_matches_the_icns_file(tmp_path: Path) -> None:
+    verifier = _verifier()
+    app = _app(tmp_path, minimum="14.4", icon_key="galley")
+    assert verifier.bundle_problems(app, "14.4") == []
+
+
+def test_main_reports_a_generic_icon(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    verifier = _verifier()
+    minimum = verifier.expected_minimum(verifier.spec_path())
+    app = _app(
+        tmp_path,
+        minimum=minimum,
+        icon_key="icon-windowed.icns",
+        icon_file="icon-windowed.icns",
+    )
+    assert verifier.main([str(app)]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "CFBundleIconFile is 'icon-windowed.icns'" in captured.out
+    assert "expected 'galley.icns'" in captured.out
+    assert "Contents/Resources/galley.icns is missing" in captured.out
