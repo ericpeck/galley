@@ -51,7 +51,7 @@ The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `
 
 The workflow installs `ruamel.yaml.clib==0.2.15`, the same pin as the project metadata, and packages that extension into `Galley.app`. `REQUIRE_RUAMEL_CLIB` is `true`, so the job fails when `_ruamel_yaml` is missing from the bundle.
 
-After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser, prints one line, and exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
+After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser. On the frozen app it also checks that `licenses_directory()` found a folder of license files inside the bundle. Success prints two lines: `ruamel.yaml.clib self-check: ok` and `LICENSES self-check: ok` plus that folder. A development checkout prints only the first line. The process exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
 
 ```sh
 dist/Galley.app/Contents/MacOS/Galley --self-check

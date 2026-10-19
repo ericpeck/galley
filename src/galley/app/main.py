@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from ruamel.yaml import YAML
 from ruamel.yaml.main import CParser
 
+from galley.app.about import licenses_directory, licenses_self_check
 from galley.app.fonts import ui_font
 from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
@@ -48,22 +49,44 @@ def clib_self_check() -> str | None:
 
 
 def run_self_check() -> int:
-    """Print one line. Return 0 when the C loader works, otherwise 1."""
+    """Print the self-check lines. Return 0 only when every check passes.
+
+    A development checkout prints the ``ruamel.yaml.clib`` line. A frozen
+    app also prints whether ``licenses_directory`` found license files
+    inside the bundle.
+    """
+    lines: list[str] = []
+    failed = False
     problem = clib_self_check()
     if problem is None:
-        print(_SELF_CHECK_OK, flush=True)
-        return 0
+        lines.append(_SELF_CHECK_OK)
+    else:
+        failed = True
+        lines.append(f"ruamel.yaml.clib self-check: failed: {_one_line(problem)}")
+    if getattr(sys, "frozen", False):
+        license_problem = licenses_self_check()
+        if license_problem is None:
+            found = licenses_directory()
+            lines.append(f"LICENSES self-check: ok {found}")
+        else:
+            failed = True
+            lines.append(f"LICENSES self-check: failed: {_one_line(license_problem)}")
+    print("\n".join(lines), flush=True)
+    return 1 if failed else 0
+
+
+def _one_line(problem: str) -> str:
     detail = " ".join(problem.split())
-    if not detail:
-        detail = "ruamel.yaml.clib C parser was not usable"
-    print(f"ruamel.yaml.clib self-check: failed: {detail}", flush=True)
-    return 1
+    if detail:
+        return detail
+    return "the check did not report a reason"
 
 
 def main(argv: list[str] | None = None) -> int:
     """Open one Galley window and run its event loop.
 
-    ``--self-check`` checks ``ruamel.yaml.clib`` and exits without a window.
+    ``--self-check`` checks ``ruamel.yaml.clib`` and, when frozen, the
+    bundled LICENSES folder. It exits without a window.
     """
     configure_runtime()
     args = sys.argv if argv is None else argv
