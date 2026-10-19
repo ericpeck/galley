@@ -182,7 +182,9 @@ jobs:
             printf '%s\n' "${stderr}"
           fi
           printf '%s\n' "${stdout}"
-          if [[ "${status}" -ne 0 || "${stdout}" != "ruamel.yaml.clib self-check: ok" ]]; then
+          # Frozen --self-check prints the clib line, then the LICENSES line.
+          licenses_ok=$'ruamel.yaml.clib self-check: ok\nLICENSES self-check: ok '
+          if [[ "${status}" -ne 0 || "${stdout}" != ${licenses_ok}* ]]; then
             if [[ -n "${stdout}" ]]; then
               detail="exit ${status}; ${stdout}"
             else
@@ -194,6 +196,7 @@ jobs:
             fail "${detail}"
           fi
 
+      # Fail when any Mach-O minos is above the declared floor.
       - name: Verify bundle metadata
         run: uv run --frozen --no-dev --no-editable python packaging/verify_bundle_metadata.py dist/Galley.app
 

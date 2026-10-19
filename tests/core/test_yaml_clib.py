@@ -302,13 +302,14 @@ def test_tab_outside_a_comment_reparses_with_pure_python(
     assert calls == [text]
 
 
-def test_tab_inside_a_comment_keeps_the_c_value(
+def test_tab_inside_a_comment_reparses_with_pure_python(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _require_clib()
-    _reject_reparse(monkeypatch)
+    calls = _watch_reparse(monkeypatch)
     text = "a: 1 # \there\n"
     assert format_yaml(text) == _pure(text)
+    assert calls == [text]
 
 
 @pytest.mark.parametrize(
@@ -321,12 +322,13 @@ def test_tab_inside_a_comment_keeps_the_c_value(
         b'\xc3\xa9\xc3\xa9: "a\tb"\n',
     ],
 )
-def test_tab_inside_single_line_quoted_scalar_keeps_the_c_value(
+def test_tab_inside_single_line_quoted_scalar_reparses(
     text: str | bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _require_clib()
-    _reject_reparse(monkeypatch)
+    calls = _watch_reparse(monkeypatch)
     assert format_yaml(text) == _pure(text)
+    assert calls == [text]
 
 
 @pytest.mark.parametrize(
@@ -508,15 +510,46 @@ def test_local_tag_reparses_with_pure_python(
     assert calls == [text]
 
 
-def test_quoted_tab_and_bare_scalar_keep_the_c_value(
+def test_quoted_tab_reparses_the_whole_document(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _require_clib()
-    _reject_reparse(monkeypatch)
+    calls = _watch_reparse(monkeypatch)
     text = 'note: "a\tb"\nitem: ! 3\n'
     assert YAML(typ="safe", pure=False).load(text) == {"note": "a\tb", "item": 3}
     assert YAML(typ="safe", pure=True).load(text) == {"note": "a\tb", "item": 3}
     assert format_yaml(text) == _pure(text)
+    assert calls == [text]
+
+
+def test_tab_short_circuits_pure_reparse() -> None:
+    """A tab returns the pure-reparse decision before tokens are inspected."""
+    assert format_module._has_tab("a: 1 # \there\n") is True
+    assert format_module._has_tab(b'note: "a\tb"\n') is True
+    assert format_module._has_tab("a: 1\n") is False
+    assert format_module._has_tab(b"a: 1\n") is False
+    assert format_module._needs_pure_reparse("a: 1 # \there\n", []) is True
+    assert format_module._needs_pure_reparse(b'note: "a\tb"\n', []) is True
+    assert format_module._needs_pure_reparse("a: 1\n", []) is False
+    assert format_module._needs_pure_reparse(b"a: 1\n", []) is False
+
+
+def test_needs_pure_reparse_uses_has_tab(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tab early exit is ``_has_tab``, not a second copy of the check."""
+    seen: list[str | bytes] = []
+
+    def _answer(result: bool):
+        def _check(text: str | bytes) -> bool:
+            seen.append(text)
+            return result
+
+        return _check
+
+    monkeypatch.setattr(format_module, "_has_tab", _answer(True))
+    assert format_module._needs_pure_reparse("a: 1\n", []) is True
+    monkeypatch.setattr(format_module, "_has_tab", _answer(False))
+    assert format_module._needs_pure_reparse("a: 1\n", []) is False
+    assert seen == ["a: 1\n", "a: 1\n"]
 
 
 @pytest.mark.parametrize(

@@ -31,6 +31,8 @@ shasum -a 256 -c Galley-<version>-arm64.dmg.sha256
 
 The image is a compressed `hdiutil` disk image (`UDZO`). Its volume contains `Galley.app` next to an Applications shortcut. The bundle identifier is the `BUNDLE_IDENTIFIER` constant in `packaging/galley.spec` (`com.ericmercurypeck.galley`).
 
+The icon master is `packaging/icon/galley.svg`. When the art changes, regenerate the committed `packaging/icon/galley.icns` with `python packaging/icon/regenerate.py`; the release workflow uses that file and does not render the SVG.
+
 ## Open the app the first time
 
 After you download the disk image, macOS may refuse to open Galley because it cannot verify the developer.
@@ -44,19 +46,19 @@ After that, Galley opens with a normal double-click.
 
 ## Minimum macOS and licenses
 
-`LSMinimumSystemVersion` in the app is `14.4`. Qt 6.12 documents macOS 14.4 as its minimum, and the Qt libraries in the app record that floor. The bundled CPython 3.12.10 arm64 build and the arm64 executable record macOS 11.0. The highest of those floors is 14.4.
+`LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, rounded up to the oldest macOS CI launches on. With PySide6 6.9.3 that highest recorded minos is 12.0, and the disk-image job runs on macOS 14, so the declared floor is 14.0. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
 
-PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of 26.0. The disk-image job launches the built app on macOS 14, so the declared minimum follows Qt's 14.4 floor.
+The **Verify bundle metadata** step fails when any Mach-O file records a minimum macOS higher than that floor. It runs `vtool -show-build` per architecture, uses `LC_VERSION_MIN_MACOSX` when a file has no `LC_BUILD_VERSION`, and on failure prints the count, each path, architecture, minos, and floor, then `pin dependencies lower or raise MINIMUM_MACOS in galley.spec`.
 
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 
-The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value and that the license directory is present and not empty.
+The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `LICENSES/README.md` maps each bundled component and version to its license file. The **Verify bundle metadata** step checks that `LSMinimumSystemVersion` is the spec's `MINIMUM_MACOS` value, that the license directory is present and not empty, and that `CFBundleIconFile` names the `.icns` file in `Contents/Resources`.
 
 ## ruamel.yaml.clib
 
 The workflow installs `ruamel.yaml.clib==0.2.15`, the same pin as the project metadata, and packages that extension into `Galley.app`. `REQUIRE_RUAMEL_CLIB` is `true`, so the job fails when `_ruamel_yaml` is missing from the bundle.
 
-After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser, prints one line, and exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
+After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser. On the frozen app it also checks that `licenses_directory()` found a folder of license files inside the bundle. Success prints two lines: `ruamel.yaml.clib self-check: ok` and `LICENSES self-check: ok` plus that folder. A development checkout prints only the first line. The process exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
 
 ```sh
 dist/Galley.app/Contents/MacOS/Galley --self-check

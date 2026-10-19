@@ -23,9 +23,11 @@ from galley import __version__
 # Bundle id for Galley.app. Change this line to pick another identifier.
 BUNDLE_IDENTIFIER = "com.ericmercurypeck.galley"
 
-# Highest floor among Qt 6.12 (14.4), the bundled CPython 3.12.10 arm64
-# build (11.0), and an arm64-only executable (11.0).
-MINIMUM_MACOS = "14.4"
+# Floor is the highest minos any bundled binary records (12.0 with
+# PySide6 6.9.3) rounded up to the oldest macOS CI launches on (14.0).
+# PySide6 6.10+ bindings record the build SDK as minos, so do not bump
+# PySide6 without re-checking those binaries.
+MINIMUM_MACOS = "14.0"
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(SPEC), ".."))
 _ENTRY = os.path.join(_ROOT, "src", "galley", "__main__.py")
@@ -115,7 +117,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Galley.app",
-    icon=None,
+    icon=os.path.join(os.path.dirname(SPEC), "icon", "galley.icns"),
     bundle_identifier=BUNDLE_IDENTIFIER,
     version=__version__,
     info_plist={"LSMinimumSystemVersion": MINIMUM_MACOS},

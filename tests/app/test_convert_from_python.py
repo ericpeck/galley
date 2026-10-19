@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QPushButton, QToolButton
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
+from galley.app.parse_session import ParseSession
 from galley.core.convert_python import ConvertResult, convert_python
 
 
@@ -78,7 +79,9 @@ def test_convert_is_in_the_edit_menu_beside_format_without_a_shortcut(qtbot) -> 
     assert labels[format_at + 1] == "Convert from Python"
 
 
-def test_convert_is_disabled_while_format_runs_and_returns_after(qtbot) -> None:
+def test_convert_is_disabled_while_format_runs_and_returns_after(
+    qtbot, monkeypatch
+) -> None:
     window = create_main_window()
     qtbot.addWidget(window)
     window.show()
@@ -93,6 +96,7 @@ def test_convert_is_disabled_while_format_runs_and_returns_after(qtbot) -> None:
     assert convert.isEnabled()
     assert button.isEnabled()
 
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     _action(window, "Format").trigger()
     assert not button.isEnabled()
@@ -100,6 +104,7 @@ def test_convert_is_disabled_while_format_runs_and_returns_after(qtbot) -> None:
     editor.insertPlainText(" ")
     assert not convert.isEnabled()
 
+    window._session.finished_job_id = window._accepted_job_id
     window._on_format_succeeded('{\n  "a": 1\n}\n')
     assert button.isEnabled()
     assert convert.isEnabled()
@@ -146,8 +151,10 @@ def test_convert_success_names_the_output_format(qtbot) -> None:
 
 
 def _menu(window, title: str) -> QMenu:
-    for action in window.menuBar().actions():
-        menu = action.menu()
-        if menu is not None and menu.title() == title:
-            return menu
-    raise AssertionError(title)
+    # See tests/app/test_main_window.py:_menu. PySide 6.9 invalidates some
+    # QAction.menu() wrappers after QMenuBar.actions() is released.
+    menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
+    assert menu is not None, title
+    assert menu.title() == title
+    assert menu.menuAction() in window.menuBar().actions()
+    return menu
