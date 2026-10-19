@@ -1,9 +1,11 @@
 """``--self-check`` verifies ruamel.yaml.clib and does not open a window."""
 
 import sys
+from pathlib import Path
 
 from ruamel.yaml.main import CParser
 
+import galley.app.about as about
 import galley.app.main as main_module
 from galley.app.main import clib_self_check, main
 
@@ -48,6 +50,76 @@ def test_self_check_failure_is_one_line(capsys, monkeypatch) -> None:
     assert captured.out == (
         "ruamel.yaml.clib self-check: failed: C parser did not load\n"
     )
+
+
+def _freeze(monkeypatch, root: Path) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(root), raising=False)
+    monkeypatch.setattr(sys, "executable", str(root / "Galley"))
+
+
+def test_frozen_self_check_names_the_license_folder(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    folder = tmp_path / "LICENSES"
+    folder.mkdir()
+    (folder / "Qt-LGPL-3.0-only.txt").write_text("license\n", encoding="utf-8")
+    _freeze(monkeypatch, tmp_path)
+    _block_window(monkeypatch)
+    code = main(["galley", "--self-check"])
+    output = capsys.readouterr().out
+    assert f"LICENSES self-check: ok {folder.resolve()}\n" in output
+    if CParser is None:
+        assert code == 1
+        return
+    assert code == 0
+    assert output.startswith("ruamel.yaml.clib self-check: ok\n")
+
+
+def test_frozen_self_check_fails_when_the_folder_is_missing(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    origin = tmp_path / "pkg" / "app" / "about.py"
+    origin.parent.mkdir(parents=True)
+    monkeypatch.setattr(about, "__file__", str(origin))
+    _freeze(monkeypatch, tmp_path / "bundle")
+    _block_window(monkeypatch)
+    code = main(["galley", "--self-check"])
+    output = capsys.readouterr().out
+    tried = tmp_path / "bundle" / "LICENSES"
+    assert code == 1
+    assert "LICENSES self-check: failed:" in output
+    assert "LICENSES folder was not found" in output
+    assert f"tried {tried}" in output
+
+
+def test_frozen_self_check_fails_when_the_folder_has_no_license_files(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    folder = tmp_path / "LICENSES"
+    folder.mkdir()
+    (folder / "README.md").write_text("notes\n", encoding="utf-8")
+    _freeze(monkeypatch, tmp_path)
+    _block_window(monkeypatch)
+    code = main(["galley", "--self-check"])
+    output = capsys.readouterr().out
+    assert code == 1
+    assert "LICENSES folder has no license files" in output
+    assert str(folder.resolve()) in output
+
+
+def test_frozen_self_check_rejects_a_checkout_outside_the_app(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Galley"))
+    _block_window(monkeypatch)
+    code = main(["galley", "--self-check"])
+    output = capsys.readouterr().out
+    assert code == 1
+    assert "LICENSES folder is outside the app" in output
+    assert f"tried {tmp_path / 'LICENSES'}" in output
 
 
 def test_missing_clib_names_the_import(monkeypatch) -> None:

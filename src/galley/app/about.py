@@ -20,7 +20,11 @@ import galley
 COPYRIGHT_NOTICE = "© 2026 [copyright holder TBD]"
 
 SOURCE_CODE_URL = "https://github.com/ericpeck/galley"
+# Used when the LICENSES folder is not on disk. A frozen app still fails
+# --self-check in that case; this link is only for the About dialog.
+LICENSE_TEXTS_URL = "https://github.com/ericpeck/galley/tree/main/LICENSES"
 TAGLINE = "Format and validate JSON and YAML."
+_LICENSE_NAME_MARKERS = ("license", "licence", "copying", "lgpl", "gpl")
 
 # src/galley/app/about.py is four parents below the repository root.
 _SOURCE_PARENTS = 4
@@ -98,11 +102,45 @@ def open_about_url(url: str) -> None:
     QDesktopServices.openUrl(target)
 
 
+def licenses_self_check() -> str | None:
+    """Return None when a frozen app has its bundled license files.
+
+    A development checkout skips this. The About dialog can fall back to
+    ``LICENSE_TEXTS_URL``; the frozen check still fails when the folder
+    inside the app is missing or has no license files.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    tried = ", ".join(str(path) for path in _bundle_candidates())
+    found = licenses_directory()
+    bundled = {path.resolve() for path in _bundle_candidates() if path.is_dir()}
+    if found is None or found.resolve() not in bundled:
+        if found is None:
+            return f"LICENSES folder was not found (tried {tried})"
+        return f"LICENSES folder is outside the app ({found}; tried {tried})"
+    if not license_file_names(found):
+        return f"LICENSES folder has no license files ({found})"
+    return None
+
+
+def license_file_names(folder: Path) -> list[str]:
+    """File names in ``folder`` that carry a license text."""
+    names: list[str] = []
+    for path in sorted(folder.iterdir()):
+        if not path.is_file():
+            continue
+        folded = path.name.casefold()
+        if any(marker in folded for marker in _LICENSE_NAME_MARKERS):
+            names.append(path.name)
+    return names
+
+
 def _license_markup(licenses: Path | None) -> str:
     label = "License texts"
     if licenses is None:
-        return label
-    href = html.escape(_file_url(licenses), quote=True)
+        href = html.escape(LICENSE_TEXTS_URL, quote=True)
+    else:
+        href = html.escape(_file_url(licenses), quote=True)
     return f'<a href="{href}">{label}</a>'
 
 
