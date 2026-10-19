@@ -198,6 +198,8 @@ def test_releasing_docs_name_the_minimum_and_licenses() -> None:
     assert "LSMinimumSystemVersion" in text
     assert "`14.0`" in text
     assert "Contents/Resources/LICENSES" in text
+    assert "vtool -show-build" in text
+    assert "pin dependencies lower or raise MINIMUM_MACOS in galley.spec" in text
     clib = text.find("## ruamel.yaml.clib")
     minimum = text.find("## Minimum macOS and licenses")
     assert minimum != -1
