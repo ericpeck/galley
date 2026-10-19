@@ -51,7 +51,7 @@ def test_yaml_messages_match_the_plain_style() -> None:
         "The text ends on line 1 before the YAML document finishes."
     )
     colon = _yaml("a: 1\nb\n")
-    assert message_for(colon) == "Missing colon at the end of line 2."
+    assert message_for(colon) == "Missing colon after the key on line 2."
     other = _yaml("a: [1, 2\n")
     assert message_for(other) == "Couldn't read this YAML on line 1."
     for problem in (duplicate, ended, colon, other, *tabs):

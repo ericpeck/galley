@@ -35,7 +35,7 @@ def message_for(problem: Problem) -> str:
     if code == "yaml_duplicate":
         return f"A key is repeated on line {line}."
     if code == "yaml_colon":
-        return f"Missing colon at the end of line {line}."
+        return f"Missing colon after the key on line {line}."
     if code == "yaml_other":
         return f"Couldn't read this YAML on line {line}."
     assert_never(code)
