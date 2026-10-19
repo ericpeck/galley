@@ -23,7 +23,7 @@ def _app(
     tmp_path: Path,
     *,
     plist: bool = True,
-    minimum: str | None = "14.4",
+    minimum: str | None = "14.0",
     licenses: bool = True,
     license_file: bool = True,
     icon_key: str | None = "galley.icns",
@@ -53,19 +53,19 @@ def _app(
 
 def test_expected_minimum_matches_the_spec() -> None:
     verifier = _verifier()
-    assert verifier.expected_minimum(verifier.spec_path()) == "14.4"
+    assert verifier.expected_minimum(verifier.spec_path()) == "14.0"
 
 
 def test_matching_bundle_has_no_problems(tmp_path: Path) -> None:
     verifier = _verifier()
-    assert verifier.bundle_problems(_app(tmp_path), "14.4") == []
+    assert verifier.bundle_problems(_app(tmp_path), "14.0") == []
 
 
 def test_missing_plist_and_licenses_are_named(tmp_path: Path) -> None:
     verifier = _verifier()
     problems = verifier.bundle_problems(
         _app(tmp_path, plist=False, licenses=False),
-        "14.4",
+        "14.0",
     )
     app = tmp_path / "Galley.app"
     assert problems == [
@@ -77,23 +77,23 @@ def test_missing_plist_and_licenses_are_named(tmp_path: Path) -> None:
 def test_missing_minimum_key_names_the_expected_value(tmp_path: Path) -> None:
     verifier = _verifier()
     app = _app(tmp_path, minimum=None)
-    problems = verifier.bundle_problems(app, "14.4")
+    problems = verifier.bundle_problems(app, "14.0")
     assert problems == [
         "LSMinimumSystemVersion is missing from "
-        f"{app}/Contents/Info.plist; expected 14.4"
+        f"{app}/Contents/Info.plist; expected 14.0"
     ]
 
 
 def test_wrong_minimum_quotes_both_values(tmp_path: Path) -> None:
     verifier = _verifier()
-    problems = verifier.bundle_problems(_app(tmp_path, minimum="11.0"), "14.4")
-    assert problems == ["LSMinimumSystemVersion is '11.0', expected '14.4'"]
+    problems = verifier.bundle_problems(_app(tmp_path, minimum="11.0"), "14.0")
+    assert problems == ["LSMinimumSystemVersion is '11.0', expected '14.0'"]
 
 
 def test_empty_license_directory_is_named(tmp_path: Path) -> None:
     verifier = _verifier()
     app = _app(tmp_path, license_file=False)
-    problems = verifier.bundle_problems(app, "14.4")
+    problems = verifier.bundle_problems(app, "14.0")
     assert problems == [f"Contents/Resources/LICENSES in {app} is empty"]
 
 
@@ -146,19 +146,19 @@ def test_license_readme_names_every_file_and_version() -> None:
         "2.7.1",
         "5.2.3",
         "2.5.1",
-        "6.12.0",
+        "6.9.3",
         "0.19.1",
         "0.2.15",
         "6.22.3",
     ):
         assert version in readme
     assert (
-        "https://download.qt.io/archive/qt/6.12/6.12.0/single/"
-        "qt-everywhere-src-6.12.0.tar.xz"
+        "https://download.qt.io/archive/qt/6.9/6.9.3/single/"
+        "qt-everywhere-src-6.9.3.tar.xz"
     ) in readme
     assert (
         "https://download.qt.io/official_releases/QtForPython/pyside6/"
-        "PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz"
+        "PySide6-6.9.3-src/pyside-setup-everywhere-src-6.9.3.tar.xz"
     ) in readme
 
 
