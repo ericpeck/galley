@@ -41,9 +41,7 @@ After that, Galley opens with a normal double-click.
 
 ## Minimum macOS and licenses
 
-`LSMinimumSystemVersion` in the app is `14.4`. Qt 6.12 documents macOS 14.4 as its minimum, and the Qt libraries in the app record that floor. The bundled CPython 3.12.10 arm64 build and the arm64 executable record macOS 11.0. The highest of those floors is 14.4.
-
-PySide6 6.12.0 and Shiboken6 6.12.0 extension modules record a Mach-O minimum of 26.0. The disk-image job launches the built app on macOS 14, so the declared minimum follows Qt's 14.4 floor.
+`LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, rounded up to the oldest macOS CI launches on. With PySide6 6.9.3 that highest recorded minos is 12.0, and the disk-image job runs on macOS 14, so the declared floor is 14.0. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
 
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 

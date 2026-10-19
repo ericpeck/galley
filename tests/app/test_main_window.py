@@ -81,11 +81,15 @@ def _action(window, text: str) -> QAction:
 
 
 def _menu(window, title: str) -> QMenu:
-    for action in window.menuBar().actions():
-        menu = action.menu()
-        if menu is not None and menu.title() == title:
-            return menu
-    raise AssertionError(title)
+    # PySide 6.9 drops the wrapper from QAction.menu() for the Galley menu
+    # once the temporary list from QMenuBar.actions() is released. About,
+    # Preferences, and Quit use menu roles. The menu is still in the bar;
+    # the object name set when it was created still finds it.
+    menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
+    assert menu is not None, title
+    assert menu.title() == title
+    assert menu.menuAction() in window.menuBar().actions()
+    return menu
 
 
 def _labels(menu: QMenu) -> list[str]:
@@ -96,11 +100,13 @@ def _labels(menu: QMenu) -> list[str]:
 
 
 def _submenu(menu: QMenu, title: str) -> QMenu:
-    for action in menu.actions():
-        child = action.menu()
-        if child is not None and child.title() == title:
-            return child
-    raise AssertionError(title)
+    # Direct child only. PySide 6.9 invalidates QAction.menu() wrappers.
+    name = "menu" + title.replace(" ", "")
+    child = menu.findChild(QMenu, name, Qt.FindDirectChildrenOnly)
+    assert child is not None, title
+    assert child.title() == title
+    assert child.menuAction() in menu.actions()
+    return child
 
 
 def _portable(action: QAction) -> list[str]:
