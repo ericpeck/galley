@@ -92,6 +92,7 @@ def test_about_dialog_shows_runtime_versions(qtbot) -> None:
         text = dialog.text()
         seen["text"] = text
         assert dialog.windowTitle() == "About Galley"
+        assert dialog.testOption(QMessageBox.Option.DontUseNativeDialog)
         assert isinstance(dialog, QMessageBox)
         assert "<b>Galley</b>" in text
         assert galley.__version__

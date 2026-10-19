@@ -69,7 +69,9 @@ def create_about_dialog(parent: QWidget | None = None) -> QMessageBox:
     """Build the About dialog. The caller runs it."""
     dialog = QMessageBox(parent)
     dialog.setObjectName("aboutDialog")
-    dialog.setWindowTitle("About Galley")
+    # QMessageBox.setWindowTitle ignores the title on macOS. QWidget stores it.
+    QWidget.setWindowTitle(dialog, "About Galley")
+    dialog.setOption(QMessageBox.Option.DontUseNativeDialog, True)
     dialog.setIcon(QMessageBox.Icon.NoIcon)
     dialog.setTextFormat(Qt.TextFormat.RichText)
     dialog.setText(about_text())
