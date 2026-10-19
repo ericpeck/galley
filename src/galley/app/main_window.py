@@ -54,10 +54,17 @@ from galley.app.theme import (
     WINDOW_BG,
 )
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.format import _has_tab
 
 NOT_YET_MESSAGE = "Not yet available."
-CANCELLED_MESSAGE = "Formatting canceled"
+CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+FORMAT_NOT_STARTED_MESSAGE = (
+    "Formatting didn't start. The formatter is shut down or already running."
+)
+SIZE_WARNING_DETAIL = (
+    "Large documents can take a while to format. You can cancel while it runs."
+)
 _NOT_YET_MS = 4000
 
 # Final timings. The busy indicator waits 500 ms, the progress bar and
@@ -71,10 +78,15 @@ PROGRESS_WIDTH_PX = 160
 
 # Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
 # 1_000_000 bytes, the same SI units the warning shows.
+# YAML busy and progress limits depend on the document: a tab takes the
+# pure parser, so those documents reach each state at a smaller size.
+# The warning limit is the same either way.
 _SI_KB = 1000
 _SI_MB = 1_000_000
 YAML_BUSY_BYTES = 192 * _SI_KB
+YAML_TAB_BUSY_BYTES = 96 * _SI_KB
 YAML_PROGRESS_BYTES = 704 * _SI_KB
+YAML_TAB_PROGRESS_BYTES = 352 * _SI_KB
 YAML_WARNING_BYTES = 352 * _SI_KB
 JSON_BUSY_BYTES = 5 * _SI_MB
 JSON_PROGRESS_BYTES = 20 * _SI_MB
@@ -520,7 +532,8 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("Galley")
         box.setIcon(QMessageBox.Icon.NoIcon)
         box.setWindowModality(Qt.WindowModality.WindowModal)
-        box.setText(f"This document is {si_size(size)}.")
+        box.setText(f"Format this {si_size(size)} document?")
+        box.setInformativeText(SIZE_WARNING_DETAIL)
         anyway = box.addButton("Format anyway", QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(anyway)
@@ -550,7 +563,7 @@ class MainWindow(QMainWindow):
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         self._format_target = self._output_pane.format_name()
-        busy, progress = _busy_progress_bytes(self._format_source)
+        busy, progress = _busy_progress_bytes(self._format_source, text)
         size = _utf8_size(text)
         self._size_forces_busy = size >= busy
         self._size_forces_progress = size >= progress
@@ -564,6 +577,8 @@ class MainWindow(QMainWindow):
         self._session.start()
         self._session.submit(text, self._format_source, self._format_target)
         self._accepted_job_id = self._session.active_job_id
+        if self._accepted_job_id is None:
+            self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
 
     def _convert_python(self) -> None:
         """Convert the input literal into the output editor and show notices."""
@@ -914,8 +929,10 @@ def _utf8_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-def _busy_progress_bytes(source: str) -> tuple[int, int]:
+def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
     if source.casefold() == "yaml":
+        if _has_tab(text):
+            return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
     return JSON_BUSY_BYTES, JSON_PROGRESS_BYTES
 

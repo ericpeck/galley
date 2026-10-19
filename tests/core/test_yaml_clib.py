@@ -524,10 +524,32 @@ def test_quoted_tab_reparses_the_whole_document(
 
 def test_tab_short_circuits_pure_reparse() -> None:
     """A tab returns the pure-reparse decision before tokens are inspected."""
+    assert format_module._has_tab("a: 1 # \there\n") is True
+    assert format_module._has_tab(b'note: "a\tb"\n') is True
+    assert format_module._has_tab("a: 1\n") is False
+    assert format_module._has_tab(b"a: 1\n") is False
     assert format_module._needs_pure_reparse("a: 1 # \there\n", []) is True
     assert format_module._needs_pure_reparse(b'note: "a\tb"\n', []) is True
     assert format_module._needs_pure_reparse("a: 1\n", []) is False
     assert format_module._needs_pure_reparse(b"a: 1\n", []) is False
+
+
+def test_needs_pure_reparse_uses_has_tab(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tab early exit is ``_has_tab``, not a second copy of the check."""
+    seen: list[str | bytes] = []
+
+    def _answer(result: bool):
+        def _check(text: str | bytes) -> bool:
+            seen.append(text)
+            return result
+
+        return _check
+
+    monkeypatch.setattr(format_module, "_has_tab", _answer(True))
+    assert format_module._needs_pure_reparse("a: 1\n", []) is True
+    monkeypatch.setattr(format_module, "_has_tab", _answer(False))
+    assert format_module._needs_pure_reparse("a: 1\n", []) is False
+    assert seen == ["a: 1\n", "a: 1\n"]
 
 
 @pytest.mark.parametrize(

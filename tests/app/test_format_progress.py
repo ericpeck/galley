@@ -15,19 +15,25 @@ from galley.app.main_window import (
     CANCELED_STATUS_MS,
     CANCELLED_MESSAGE,
     ELAPSED_STATUS_MS,
+    FORMAT_NOT_STARTED_MESSAGE,
     FORMATTING_MESSAGE,
     JSON_BUSY_BYTES,
     JSON_PROGRESS_BYTES,
     JSON_WARNING_BYTES,
     PROGRESS_BAR_REVEAL_MS,
     PROGRESS_WIDTH_PX,
+    SIZE_WARNING_DETAIL,
     SPINNER_REVEAL_MS,
     SPINNER_WIDTH_PX,
     YAML_BUSY_BYTES,
     YAML_PROGRESS_BYTES,
+    YAML_TAB_BUSY_BYTES,
+    YAML_TAB_PROGRESS_BYTES,
     YAML_WARNING_BYTES,
+    _busy_progress_bytes,
     si_size,
 )
+from galley.app.parse_session import ParseSession
 
 _FORMATTED = '{\n  "a": 1\n}\n'
 
@@ -36,7 +42,9 @@ def test_si_size_uses_decimal_units() -> None:
     assert si_size(0) == "0 B"
     assert si_size(999) == "999 B"
     assert si_size(YAML_BUSY_BYTES) == "192 KB"
+    assert si_size(YAML_TAB_BUSY_BYTES) == "96 KB"
     assert si_size(YAML_WARNING_BYTES) == "352 KB"
+    assert si_size(YAML_TAB_PROGRESS_BYTES) == "352 KB"
     assert si_size(YAML_PROGRESS_BYTES) == "704 KB"
     assert si_size(1_200_000) == "1.2 MB"
     assert si_size(JSON_BUSY_BYTES) == "5 MB"
@@ -129,6 +137,69 @@ def test_progress_bar_and_cancel_appear_at_2_s(qtbot, monkeypatch) -> None:
     window.shutdown_parse_worker()
 
 
+def test_yaml_limits_follow_whether_the_document_has_a_tab() -> None:
+    assert _busy_progress_bytes("YAML", "a: 1\n") == (
+        YAML_BUSY_BYTES,
+        YAML_PROGRESS_BYTES,
+    )
+    assert _busy_progress_bytes("yaml", 'note: "a\tb"\n') == (
+        YAML_TAB_BUSY_BYTES,
+        YAML_TAB_PROGRESS_BYTES,
+    )
+    assert _busy_progress_bytes("JSON", "\t") == (JSON_BUSY_BYTES, JSON_PROGRESS_BYTES)
+    assert YAML_TAB_BUSY_BYTES == 96 * 1000
+    assert YAML_TAB_PROGRESS_BYTES == 352 * 1000
+    assert YAML_WARNING_BYTES == 352 * 1000
+
+
+def test_yaml_document_size_picks_the_indicator(qtbot, monkeypatch) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    editor, _output, status, spinner, bar, cancel, _button = _parts(window)
+    _as_yaml(window)
+
+    tab_free = "a" * (200 * 1000)
+    assert si_size(len(tab_free.encode())) == "200 KB"
+    assert "\t" not in tab_free
+    editor.setPlainText(tab_free)
+    window._actions.format.trigger()
+    assert spinner.isVisible()
+    assert not bar.isVisible()
+    assert not cancel.isVisible()
+    assert _visible_warning(window) is None
+    assert status.text() == FORMATTING_MESSAGE
+    window._cancel_format()
+
+    with_tab = "\t" + "b" * (100 * 1000 - 1)
+    assert si_size(len(with_tab.encode())) == "100 KB"
+    assert "\t" in with_tab
+    editor.setPlainText(with_tab)
+    window._actions.format.trigger()
+    assert spinner.isVisible()
+    assert not bar.isVisible()
+    assert not cancel.isVisible()
+    assert _visible_warning(window) is None
+    assert status.text() == FORMATTING_MESSAGE
+    window._cancel_format()
+
+    over_warning = "\t" + "c" * (353 * 1000 - 1)
+    assert len(over_warning.encode()) == 353 * 1000
+    assert len(over_warning.encode()) > YAML_WARNING_BYTES
+    assert si_size(len(over_warning.encode())) == "353 KB"
+    editor.setPlainText(over_warning)
+    window._actions.format.trigger()
+    warning = _visible_warning(window)
+    assert warning is not None
+    assert warning.text() == "Format this 353 KB document?"
+    assert not window._formatting
+    warning.defaultButton().click()
+    qtbot.waitUntil(lambda: window._formatting)
+    assert bar.isVisible()
+    assert cancel.isVisible()
+    assert not spinner.isVisible()
+    assert status.text() == FORMATTING_MESSAGE
+    window.shutdown_parse_worker()
+
+
 def test_size_limit_shows_the_indicator_immediately(qtbot, monkeypatch) -> None:
     window, clock = _held(qtbot, monkeypatch)
     editor, _output, status, spinner, bar, cancel, _button = _parts(window)
@@ -199,7 +270,8 @@ def test_cancel_discards_the_result_and_shows_the_status(qtbot, monkeypatch) -> 
     assert editor.toPlainText() == '{"a": 1}'
     assert not editor.isReadOnly()
     assert not output.isReadOnly()
-    assert status.text() == CANCELLED_MESSAGE
+    assert CANCELLED_MESSAGE == "Formatting canceled."
+    assert status.text() == "Formatting canceled."
     assert window._cancel_status_timer.isActive()
     assert window._cancel_status_timer.interval() == CANCELED_STATUS_MS
     assert not bar.isVisible()
@@ -263,6 +335,33 @@ def test_older_result_does_not_overwrite_a_newer_one(qtbot, monkeypatch) -> None
     window.shutdown_parse_worker()
 
 
+def test_submit_noop_unlocks_editors_and_shows_an_error(qtbot) -> None:
+    window = _show(qtbot)
+    editor, output, status, spinner, bar, cancel, button = _parts(window)
+    editor.setPlainText('{"a": 1}')
+    output.setPlainText("keep\n")
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    try:
+        window._actions.format.trigger()
+        assert window._accepted_job_id is None
+        assert not window._formatting
+        assert not editor.isReadOnly()
+        assert not output.isReadOnly()
+        assert editor.toPlainText() == '{"a": 1}'
+        assert output.toPlainText() == "keep\n"
+        assert status.text() == FORMAT_NOT_STARTED_MESSAGE
+        assert status.text() == (
+            "Formatting didn't start. The formatter is shut down or already running."
+        )
+        assert not spinner.isVisible()
+        assert not bar.isVisible()
+        assert not cancel.isVisible()
+        assert window._actions.format.isEnabled()
+        assert button.isEnabled()
+    finally:
+        window.shutdown_parse_worker()
+
+
 def test_size_warning_asks_once_and_cancel_aborts(qtbot, monkeypatch) -> None:
     window, _clock = _held(qtbot, monkeypatch)
     editor, _output, _status, spinner, _bar, _cancel, _button = _parts(window)
@@ -278,7 +377,11 @@ def test_size_warning_asks_once_and_cancel_aborts(qtbot, monkeypatch) -> None:
     warning = _visible_warning(window)
     assert warning is not None
     assert warning.windowModality() == Qt.WindowModality.WindowModal
-    assert warning.text() == "This document is 352 KB."
+    assert warning.text() == "Format this 352 KB document?"
+    assert warning.informativeText() == SIZE_WARNING_DETAIL
+    assert warning.informativeText() == (
+        "Large documents can take a while to format. You can cancel while it runs."
+    )
     anyway = warning.defaultButton()
     assert anyway is not None
     assert anyway.text() == "Format anyway"
@@ -304,6 +407,12 @@ def test_size_warning_asks_once_and_cancel_aborts(qtbot, monkeypatch) -> None:
     window.shutdown_parse_worker()
 
 
+def _hold_submit(monkeypatch, window) -> None:
+    """Keep the format in progress without sending a job to the worker."""
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+
+
 def _show(qtbot):
     window = create_main_window()
     qtbot.addWidget(window)
@@ -316,7 +425,7 @@ def _held(qtbot, monkeypatch):
     clock = {"now": 1_000.0}
     monkeypatch.setattr("galley.app.main_window._monotonic", lambda: clock["now"])
     window = _show(qtbot)
-    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    _hold_submit(monkeypatch, window)
     return window, clock
 
 

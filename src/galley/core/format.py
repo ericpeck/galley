@@ -241,6 +241,11 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
     return buffer.getvalue()
 
 
+def _has_tab(text: str | bytes) -> bool:
+    """Return True when ``text`` contains a tab."""
+    return (b"\t" if isinstance(text, bytes) else "\t") in text
+
+
 def _needs_pure_reparse(text: str | bytes, tokens: list[object]) -> bool:
     """Return True when the C tokens are one of the pure-Python mismatches.
 
@@ -253,7 +258,7 @@ def _needs_pure_reparse(text: str | bytes, tokens: list[object]) -> bool:
     Token indexes from the C scanner count characters and skip a leading
     BOM, so the check runs on decoded text with that BOM removed.
     """
-    if (b"\t" if isinstance(text, bytes) else "\t") in text:
+    if _has_tab(text):
         return True
     source = _scanner_text(text)
     cursor = 0

@@ -28,6 +28,7 @@ from galley.app.main_window import (
     SPINNER_REVEAL_MS,
     SPINNER_WIDTH_PX,
 )
+from galley.app.parse_session import ParseSession
 from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -511,6 +512,7 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
     idle_text = button.text()
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     started = 1_000.0
     clock["now"] = started
