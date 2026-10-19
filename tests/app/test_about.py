@@ -118,7 +118,8 @@ def test_about_dialog_shows_runtime_versions(qtbot) -> None:
         assert any(href.startswith("file:") and "LICENSES" in href for href in hrefs)
         assert SOURCE_CODE_URL in hrefs
         qtbot.keyClick(dialog, Qt.Key.Key_Escape)
-        assert not dialog.isVisible()
+        # macOS animates the escape button before the dialog closes.
+        qtbot.waitUntil(lambda: not dialog.isVisible(), timeout=1000)
 
     _run_about(qtbot, window, inspect)
     assert "text" in seen
