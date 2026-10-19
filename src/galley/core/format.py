@@ -237,6 +237,7 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
     """Dump ``value`` with safe YAML, using the pure emitter when asked."""
     yaml = _safe_yaml(pure=pure)
     yaml.default_flow_style = False
+    yaml.representer.sort_base_mapping_type_on_output = False
     buffer = StringIO()
     yaml.dump(value, buffer)
     return buffer.getvalue()
@@ -905,6 +906,7 @@ def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with the same safe block style ``format_yaml`` uses."""
     yaml = YAML(typ="safe")
     yaml.default_flow_style = False
+    yaml.representer.sort_base_mapping_type_on_output = False
     buffer = StringIO()
     try:
         yaml.dump(value, buffer)
