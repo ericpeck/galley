@@ -20,9 +20,6 @@ import galley
 COPYRIGHT_NOTICE = "© 2026 [copyright holder TBD]"
 
 SOURCE_CODE_URL = "https://github.com/ericpeck/galley"
-# Used when the LICENSES folder is not on disk. A frozen app still fails
-# --self-check in that case; this link is only for the About dialog.
-LICENSE_TEXTS_URL = "https://github.com/ericpeck/galley/tree/main/LICENSES"
 TAGLINE = "Format and validate JSON and YAML."
 _LICENSE_NAME_MARKERS = ("license", "licence", "copying", "lgpl", "gpl")
 
@@ -106,8 +103,8 @@ def licenses_self_check() -> str | None:
     """Return None when a frozen app has its bundled license files.
 
     A development checkout skips this. The About dialog can fall back to
-    ``LICENSE_TEXTS_URL``; the frozen check still fails when the folder
-    inside the app is missing or has no license files.
+    the GitHub tree for this version; the frozen check still fails when
+    the folder inside the app is missing or has no license files.
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -135,10 +132,15 @@ def license_file_names(folder: Path) -> list[str]:
     return names
 
 
+def license_texts_url() -> str:
+    """GitHub tree for the license files shipped with this version."""
+    return f"https://github.com/ericpeck/galley/tree/v{galley.__version__}/LICENSES"
+
+
 def _license_markup(licenses: Path | None) -> str:
     label = "License texts"
     if licenses is None:
-        href = html.escape(LICENSE_TEXTS_URL, quote=True)
+        href = html.escape(license_texts_url(), quote=True)
     else:
         href = html.escape(_file_url(licenses), quote=True)
     return f'<a href="{href}">{label}</a>'

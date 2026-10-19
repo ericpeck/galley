@@ -14,9 +14,9 @@ import galley
 import galley.app.about as about
 from galley.app.about import (
     COPYRIGHT_NOTICE,
-    LICENSE_TEXTS_URL,
     SOURCE_CODE_URL,
     about_text,
+    license_texts_url,
     licenses_directory,
 )
 from galley.app.main import create_main_window
@@ -130,14 +130,17 @@ def test_about_dialog_shows_runtime_versions(qtbot) -> None:
 
 
 def test_missing_licenses_links_to_github(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(galley, "__version__", "9.9.9")
     monkeypatch.setattr("galley.app.about.licenses_directory", lambda: None)
+    expected = "https://github.com/ericpeck/galley/tree/v9.9.9/LICENSES"
     window = _show(qtbot)
 
     def inspect(dialog: QMessageBox) -> None:
         text = dialog.text()
         hrefs = _HREF.findall(text)
         assert ">License texts</a>" in text
-        assert LICENSE_TEXTS_URL in hrefs
+        assert expected in hrefs
+        assert "tree/main/LICENSES" not in text
         assert not any(href.startswith("file:") for href in hrefs)
         assert SOURCE_CODE_URL in hrefs
         assert "used under the LGPLv3" in text
@@ -145,7 +148,8 @@ def test_missing_licenses_links_to_github(qtbot, monkeypatch) -> None:
 
     _run_about(qtbot, window, inspect)
     plain = about_text()
-    assert f'href="{LICENSE_TEXTS_URL}">License texts</a>' in plain
+    assert f'href="{expected}">License texts</a>' in plain
+    assert license_texts_url() == expected
 
 
 def test_license_link_opens_the_folder(qtbot, monkeypatch) -> None:
