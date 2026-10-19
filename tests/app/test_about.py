@@ -126,7 +126,7 @@ def test_about_dialog_shows_runtime_versions(qtbot) -> None:
     assert "text" in seen
     assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
     assert "Not yet" not in window.statusBar().currentMessage()
-    assert COPYRIGHT_NOTICE == "© 2026 [copyright holder TBD]"
+    assert COPYRIGHT_NOTICE == "© 2026 Eric Mercury Peck"
 
 
 def test_missing_licenses_links_to_github(qtbot, monkeypatch) -> None:

@@ -1,7 +1,7 @@
 """About Galley dialog.
 
-Versions come from the running interpreter. The copyright line stays in
-``COPYRIGHT_NOTICE`` until Eric chooses the wording.
+Versions come from the running interpreter. The copyright line is
+``COPYRIGHT_NOTICE``.
 """
 
 import html
@@ -15,9 +15,7 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 
 import galley
 
-# TODO: Eric has not chosen the copyright wording. Replace this placeholder
-# when he supplies it. Do not invent a holder name.
-COPYRIGHT_NOTICE = "© 2026 [copyright holder TBD]"
+COPYRIGHT_NOTICE = "© 2026 Eric Mercury Peck"
 
 SOURCE_CODE_URL = "https://github.com/ericpeck/galley"
 TAGLINE = "Format and validate JSON and YAML."
