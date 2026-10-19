@@ -13,6 +13,7 @@ from galley.app.shortcuts import (
     CLOSE_OTHERS,
     ESCAPE_AS_STRING,
     FORMAT,
+    SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     UNESCAPE_STRING,
     WORD_WRAP,
@@ -131,6 +132,13 @@ class ShellActions:
             "Enter Full Screen",
             standard=QKeySequence.StandardKey.FullScreen,
             checkable=True,
+        )
+        self.show_problems = _action(
+            parent,
+            "Show Problems",
+            shortcut=SHOW_PROBLEMS,
+            checkable=True,
+            checked=True,
         )
 
         self.pop_out = _action(parent, "Pop out into window")

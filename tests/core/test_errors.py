@@ -18,6 +18,16 @@ _BANNER_PHRASES = (
     "The formatter stopped unexpectedly",
     "Your text and file weren't changed",
     "Press Format to try again",
+    "Missing comma",
+    "Unclosed quote",
+    "Trailing comma",
+    "Couldn't read this JSON",
+    "Couldn't read this YAML",
+    "YAML needs spaces",
+    "before the JSON document finishes",
+    "before the YAML document finishes",
+    "A key is repeated",
+    "Missing colon",
 )
 
 

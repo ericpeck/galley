@@ -7,6 +7,7 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPalette,
     QResizeEvent,
+    QTextCursor,
     QTextFormat,
 )
 from PySide6.QtWidgets import QFrame, QPlainTextEdit, QTextEdit, QWidget
@@ -14,15 +15,19 @@ from PySide6.QtWidgets import QFrame, QPlainTextEdit, QTextEdit, QWidget
 from galley.app.fonts import code_font
 from galley.app.theme import (
     EDITOR_BG,
+    ERROR,
+    ERROR_TINT,
     GUTTER_BG,
     LINE_CURRENT,
     SELECTION,
     TEXT,
     TEXT_MUTED,
+    TEXT_ON_ACCENT,
 )
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
+_MARKER_SLOT = 16
 
 
 class LineNumberArea(QWidget):
@@ -46,6 +51,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self._line_number_color = QColor(TEXT_MUTED)
         self._gutter_color = QColor(GUTTER_BG)
+        self._problem_lines: set[int] = set()
         self._overlay: QWidget | None = None
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -53,6 +59,7 @@ class CodeEditor(QPlainTextEdit):
         self.document().setDocumentMargin(10)
         self._apply_palette()
         self._line_numbers = LineNumberArea(self)
+        self._line_numbers.setObjectName("lineNumberArea")
         self.blockCountChanged.connect(self._update_line_number_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -70,7 +77,35 @@ class CodeEditor(QPlainTextEdit):
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
         measured = _GUTTER_PAD + self.fontMetrics().horizontalAdvance("9") * digits
+        if self._problem_lines:
+            measured += _MARKER_SLOT
         return max(GUTTER_MIN_WIDTH, measured)
+
+    def line_number_area(self) -> QWidget:
+        """Gutter widget. Tests read the painted marker from it."""
+        return self._line_numbers
+
+    def problem_lines(self) -> set[int]:
+        """1-based lines that show an error marker."""
+        return set(self._problem_lines)
+
+    def set_problem_lines(self, lines: set[int]) -> None:
+        """Mark ``lines`` with an error tint and a gutter marker."""
+        self._problem_lines = set(lines)
+        self._update_line_number_width(0)
+        self._highlight_current_line()
+        self._line_numbers.update()
+
+    def reveal_line(self, lineno: int) -> None:
+        """Move the cursor to ``lineno``, scroll it into view, and focus."""
+        block = self.document().findBlockByNumber(max(lineno, 1) - 1)
+        if not block.isValid():
+            block = self.document().lastBlock()
+        cursor = self.textCursor()
+        cursor.setPosition(block.position())
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        self.setFocus()
 
     def attach_overlay(self, overlay: QWidget) -> None:
         """Center ``overlay`` in the text viewport."""
@@ -118,13 +153,19 @@ class CodeEditor(QPlainTextEdit):
         area_width = self._line_numbers.width() - _GUTTER_PAD
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
+                lineno = number + 1
+                if lineno in self._problem_lines:
+                    self._paint_error_marker(painter, top)
+                    painter.setPen(QColor(ERROR))
+                else:
+                    painter.setPen(self._line_number_color)
                 painter.drawText(
-                    0,
+                    _MARKER_SLOT if self._problem_lines else 0,
                     top,
-                    area_width,
+                    area_width - (_MARKER_SLOT if self._problem_lines else 0),
                     self.fontMetrics().height(),
                     int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                    str(number + 1),
+                    str(lineno),
                 )
             block = block.next()
             top = bottom
@@ -157,9 +198,38 @@ class CodeEditor(QPlainTextEdit):
             self._update_line_number_width(0)
 
     def _highlight_current_line(self) -> None:
+        selections: list[QTextEdit.ExtraSelection] = []
+        current = self.textCursor().blockNumber() + 1
+        if current not in self._problem_lines:
+            selections.append(self._line_band(self.textCursor(), LINE_CURRENT))
+        block = self.document().firstBlock()
+        while block.isValid():
+            if block.blockNumber() + 1 in self._problem_lines:
+                selections.append(self._line_band(QTextCursor(block), ERROR_TINT))
+            block = block.next()
+        self.setExtraSelections(selections)
+
+    def _line_band(self, cursor: QTextCursor, color: str) -> QTextEdit.ExtraSelection:
         selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(QColor(LINE_CURRENT))
+        selection.format.setBackground(QColor(color))
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        selection.cursor = self.textCursor()
+        selection.cursor = cursor
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        return selection
+
+    def _paint_error_marker(self, painter: QPainter, top: int) -> None:
+        """Draw a circled exclamation so the error is not color alone."""
+        diameter = 12
+        marker_y = top + max(0, (self.fontMetrics().height() - diameter) // 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(ERROR))
+        painter.drawEllipse(2, marker_y, diameter, diameter)
+        painter.setPen(QColor(TEXT_ON_ACCENT))
+        painter.drawText(
+            2,
+            marker_y,
+            diameter,
+            diameter,
+            int(Qt.AlignmentFlag.AlignCenter),
+            "!",
+        )

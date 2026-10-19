@@ -113,11 +113,17 @@ def pane_style(object_name: str) -> str:
 
 
 def status_bar_style() -> str:
-    """Status bar surface. Messages use the muted text color."""
+    """Status bar surface. Messages use the muted text color.
+
+    Left and right padding keep the message off the frame so the first
+    glyph is not clipped.
+    """
     return f"""
         QStatusBar {{
             background: {WINDOW_BG};
             color: {TEXT_MUTED};
+            padding-left: 8px;
+            padding-right: 8px;
         }}
         QStatusBar::item {{
             border: none;

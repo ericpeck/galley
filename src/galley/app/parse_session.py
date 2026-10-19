@@ -26,6 +26,11 @@ from queue import Empty
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from galley.app.banner import FORMATTER_STOPPED, banner_text
+from galley.app.problem_text import (
+    DisplayProblem,
+    display_input_error,
+    display_problem,
+)
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
     FailureEvent,
@@ -158,6 +163,7 @@ class ParseSession(QObject):
     write_progress = Signal(int, int)
     succeeded = Signal(str)
     failed = Signal(str)
+    problems_found = Signal(object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -574,6 +580,10 @@ class ParseSession(QObject):
         self._active = None
         self._pending = None
         unlink_temp(path)
+        rows = _displayed_problems(event)
+        if rows:
+            self.problems_found.emit(rows)
+            return
         self.failed.emit(_failure_text(event))
 
     def _release_unsent_temp(self, temp_path: str | None) -> None:
@@ -621,6 +631,13 @@ def _kill(process: BaseProcess | None) -> None:
 
 def _elapsed_ms(started_s: float) -> float:
     return (time.monotonic() - started_s) * 1000
+
+
+def _displayed_problems(event: FailureEvent) -> tuple[DisplayProblem, ...]:
+    """Pane rows for a located failure. Empty when the failure has no line."""
+    if event.error is not None:
+        return (display_input_error(event.error),)
+    return tuple(display_problem(problem) for problem in event.problems)
 
 
 def _failure_text(event: FailureEvent) -> str:
