@@ -156,12 +156,13 @@ def test_check_release_version_step_follows_the_build() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     install = workflow.find("- name: Install Galley")
     tag_check = workflow.find("- name: Check tag matches version")
+    copyright_check = workflow.find("- name: Check copyright notice")
     build = workflow.find("- name: Build Galley.app")
     check = workflow.find("- name: Check release version")
     bundle = workflow.find("- name: Check the app bundle")
     assert install != -1
-    assert install < tag_check < build < check < bundle
-    early = workflow[tag_check:build]
+    assert install < tag_check < copyright_check < build < check < bundle
+    early = workflow[tag_check:copyright_check]
     assert "if: startsWith(github.ref, 'refs/tags/v')" in early
     assert "packaging/check_release_version.py" in early
     assert '--package "${package}"' in early
