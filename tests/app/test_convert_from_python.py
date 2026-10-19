@@ -146,8 +146,10 @@ def test_convert_success_names_the_output_format(qtbot) -> None:
 
 
 def _menu(window, title: str) -> QMenu:
-    for action in window.menuBar().actions():
-        menu = action.menu()
-        if menu is not None and menu.title() == title:
-            return menu
-    raise AssertionError(title)
+    # See tests/app/test_main_window.py:_menu. PySide 6.9 invalidates some
+    # QAction.menu() wrappers after QMenuBar.actions() is released.
+    menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
+    assert menu is not None, title
+    assert menu.title() == title
+    assert menu.menuAction() in window.menuBar().actions()
+    return menu
