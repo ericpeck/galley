@@ -3,9 +3,11 @@ name = "galley"
 version = "0.1.0"
 description = "Desktop app for formatting, validating, and converting JSON and YAML."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "PySide6>=6.8",
+    "PySide6==6.9.3",
+    "PySide6-Essentials==6.9.3",
+    "PySide6-Addons==6.9.3",
     "ruamel.yaml>=0.18",
     # Bumping ruamel.yaml.clib requires re-running the pure-Python comparison
     # test in tests/core/test_yaml_clib.py first.

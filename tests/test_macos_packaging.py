@@ -123,7 +123,7 @@ def test_minimum_macos_is_written_into_the_bundle() -> None:
         for keyword in node.keywords:
             if keyword.arg == "info_plist":
                 plist_values.append(keyword.value)
-    assert assignments == ["14.4"]
+    assert assignments == ["14.0"]
     assert len(plist_values) == 1
     plist = plist_values[0]
     assert isinstance(plist, ast.Dict)
@@ -195,7 +195,7 @@ def test_verify_bundle_metadata_is_its_own_step() -> None:
 def test_releasing_docs_name_the_minimum_and_licenses() -> None:
     text = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
     assert "LSMinimumSystemVersion" in text
-    assert "`14.4`" in text
+    assert "`14.0`" in text
     assert "Contents/Resources/LICENSES" in text
     assert "vtool -show-build" in text
     assert "pin dependencies lower or raise MINIMUM_MACOS in galley.spec" in text
