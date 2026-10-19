@@ -12,7 +12,7 @@ from galley.app import parse_session as parse_session_module
 from galley.app.banner import FORMATTER_STOPPED
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.main_window import CANCELLED_MESSAGE, WRITING_MESSAGE
+from galley.app.main_window import CANCELLED_MESSAGE, FORMATTING_MESSAGE
 from galley.app.parse_session import REAP_DEADLINE_MS, ParseSession, _Retired
 from galley.core.format import format_json
 from galley.core.worker import FAULT_AFTER_TEMP
@@ -155,12 +155,13 @@ def test_cancel_updates_the_window_before_the_worker_is_killed(
     output.setPlainText(previous)
     window._output_before_format = previous
     window._formatting = True
+    window._format_started_s = time.monotonic()
     _submit_slow(session, destination)
     qtbot.waitUntil(
         lambda: _mid_write(session)() and bar.isVisible(),
         timeout=_SPAWN_TIMEOUT_MS,
     )
-    assert status.text() == WRITING_MESSAGE
+    assert status.text() == FORMATTING_MESSAGE
     process = session.process
     assert process is not None
     joined: list[str] = []

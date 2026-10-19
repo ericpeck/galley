@@ -23,9 +23,12 @@ from galley.app.main import create_main_window
 from galley.app.main_window import (
     FORMATTING_MESSAGE,
     NOT_YET_MESSAGE,
+    PROGRESS_BAR_REVEAL_MS,
+    PROGRESS_WIDTH_PX,
     SPINNER_REVEAL_MS,
-    WRITING_MESSAGE,
+    SPINNER_WIDTH_PX,
 )
+from galley.app.parse_session import ParseSession
 from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
@@ -488,7 +491,8 @@ def test_quick_format_hides_the_spinner_and_cancel(qtbot, monkeypatch) -> None:
         assert not cancel.isVisible()
         assert not bar.isVisible()
         assert button.text() == idle_text
-        assert status.text() not in {FORMATTING_MESSAGE, WRITING_MESSAGE}
+        assert status.text() != FORMATTING_MESSAGE
+        assert not status.text().startswith(f"{FORMATTING_MESSAGE} ")
         return output.toPlainText() != ""
 
     qtbot.waitUntil(_done, timeout=15000)
@@ -498,7 +502,7 @@ def test_quick_format_hides_the_spinner_and_cancel(qtbot, monkeypatch) -> None:
     assert button.isEnabled()
 
 
-def test_spinner_and_cancel_appear_with_the_spinner_delay(qtbot, monkeypatch) -> None:
+def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None:
     clock = _freeze_clock(monkeypatch)
     window = _show(qtbot)
     editor = window.findChild(CodeEditor, "inputEditor")
@@ -515,6 +519,7 @@ def test_spinner_and_cancel_appear_with_the_spinner_delay(qtbot, monkeypatch) ->
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
     idle_text = button.text()
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     started = 1_000.0
     clock["now"] = started
@@ -531,8 +536,9 @@ def test_spinner_and_cancel_appear_with_the_spinner_delay(qtbot, monkeypatch) ->
     clock["now"] = started + SPINNER_REVEAL_MS / 1000
     window._apply_deferred_reveal()
     assert spinner.isVisible()
-    assert cancel.isVisible()
+    assert not cancel.isVisible()
     assert not bar.isVisible()
+    assert spinner.width() == SPINNER_WIDTH_PX
     assert spinner.accessibleName() == "Formatting"
     assert spinner.minimum() == 0
     assert spinner.maximum() == 0
@@ -540,6 +546,8 @@ def test_spinner_and_cancel_appear_with_the_spinner_delay(qtbot, monkeypatch) ->
     assert status.text() == FORMATTING_MESSAGE
     assert button.text() == idle_text
     assert not button.isEnabled()
+    assert not _action(window, "Format").isEnabled()
+    assert editor.isReadOnly()
 
 
 def test_write_bar_appears_after_the_progress_delay(
@@ -595,18 +603,24 @@ def test_write_bar_appears_after_the_progress_delay(
         clock["now"] = started + SPINNER_REVEAL_MS / 1000
         window._apply_deferred_reveal()
         assert spinner.isVisible()
-        assert cancel.isVisible()
+        assert not cancel.isVisible()
         assert not bar.isVisible()
         assert status.text() == FORMATTING_MESSAGE
-        clock["now"] = started + 1999 / 1000
+        clock["now"] = started + (PROGRESS_BAR_REVEAL_MS - 1) / 1000
         window._apply_deferred_reveal()
         assert not bar.isVisible()
-        clock["now"] = started + 2000 / 1000
+        clock["now"] = started + PROGRESS_BAR_REVEAL_MS / 1000
         window._apply_deferred_reveal()
         assert bar.isVisible()
         assert not spinner.isVisible()
         assert cancel.isVisible()
-        assert status.text() == WRITING_MESSAGE
+        assert bar.width() == PROGRESS_WIDTH_PX
+        assert bar.accessibleName() == "Formatting"
+        assert bar.minimum() == 0
+        assert bar.maximum() == 0
+        assert not bar.isTextVisible()
+        assert status.text() == FORMATTING_MESSAGE
+        assert "%" not in status.text()
         assert button.text() == idle_text
         assert not button.isEnabled()
     finally:

@@ -2,15 +2,17 @@
 
 import time
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QKeyEvent,
     QKeySequence,
     QPalette,
     QResizeEvent,
     QShowEvent,
+    QTextCursor,
     QTextOption,
 )
 from PySide6.QtWidgets import (
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMenuBar,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -66,17 +69,43 @@ from galley.app.theme import (
     WINDOW_BG,
 )
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.format import _has_tab
 
 NOT_YET_MESSAGE = "Not yet available."
-CANCELLED_MESSAGE = "Cancelled. Showing the previous result."
+CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
-WRITING_MESSAGE = "Writing output…"
+FORMAT_NOT_STARTED_MESSAGE = (
+    "Formatting didn't start. The formatter is shut down or already running."
+)
+SIZE_WARNING_DETAIL = (
+    "Large documents can take a while to format. You can cancel while it runs."
+)
 _NOT_YET_MS = 4000
 
-# Placeholders until Isaac's benchmark (ADR 0001, UI spec §10). Not tuned.
-# The spinner and Cancel wait this long. The write bar waits longer.
+# Final timings. The busy indicator waits 500 ms, the progress bar and
+# Cancel wait 2 s, and the status text counts up from 10 s.
 SPINNER_REVEAL_MS = 500
 PROGRESS_BAR_REVEAL_MS = 2000
+ELAPSED_STATUS_MS = 10_000
+CANCELED_STATUS_MS = 3_000
+SPINNER_WIDTH_PX = 80
+PROGRESS_WIDTH_PX = 160
+
+# Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
+# 1_000_000 bytes, the same SI units the warning shows.
+# YAML busy and progress limits depend on the document: a tab takes the
+# pure parser, so those documents reach each state at a smaller size.
+# The warning limit is the same either way.
+_SI_KB = 1000
+_SI_MB = 1_000_000
+YAML_BUSY_BYTES = 192 * _SI_KB
+YAML_TAB_BUSY_BYTES = 96 * _SI_KB
+YAML_PROGRESS_BYTES = 704 * _SI_KB
+YAML_TAB_PROGRESS_BYTES = 352 * _SI_KB
+YAML_WARNING_BYTES = 352 * _SI_KB
+JSON_BUSY_BYTES = 5 * _SI_MB
+JSON_PROGRESS_BYTES = 20 * _SI_MB
+JSON_WARNING_BYTES = 100 * _SI_MB
 
 
 class MainWindow(QMainWindow):
@@ -89,10 +118,18 @@ class MainWindow(QMainWindow):
         self._splitter: PaneSplitter | None = None
         self._formatting = False
         self._format_started_s = 0.0
-        self._pending_write: tuple[int, int] | None = None
+        self._size_forces_busy = False
+        self._size_forces_progress = False
+        self._accepted_job_id: int | None = None
+        self._size_warning_accepted = False
+        self._size_warning: QMessageBox | None = None
+        self._status_before_format = "Ready"
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setSingleShot(True)
         self._reveal_timer.timeout.connect(self._apply_deferred_reveal)
+        self._cancel_status_timer = QTimer(self)
+        self._cancel_status_timer.setSingleShot(True)
+        self._cancel_status_timer.timeout.connect(self._clear_canceled_status)
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
@@ -375,15 +412,15 @@ class MainWindow(QMainWindow):
         self._format_spinner.setAccessibleName("Formatting")
         self._format_spinner.setRange(0, 0)
         self._format_spinner.setTextVisible(False)
-        self._format_spinner.setFixedWidth(48)
+        self._format_spinner.setFixedWidth(SPINNER_WIDTH_PX)
         self._format_spinner.setStyleSheet(progress_style())
         self._format_spinner.hide()
         self._write_progress = QProgressBar()
         self._write_progress.setObjectName("writeProgress")
-        self._write_progress.setAccessibleName("Writing output")
-        self._write_progress.setTextVisible(True)
-        self._write_progress.setFormat("%p%")
-        self._write_progress.setFixedWidth(120)
+        self._write_progress.setAccessibleName("Formatting")
+        self._write_progress.setRange(0, 0)
+        self._write_progress.setTextVisible(False)
+        self._write_progress.setFixedWidth(PROGRESS_WIDTH_PX)
         self._write_progress.setStyleSheet(progress_style())
         self._write_progress.hide()
         self._cancel_button = QPushButton("Cancel")
@@ -486,6 +523,20 @@ class MainWindow(QMainWindow):
         application = QApplication.instance()
         if isinstance(application, QApplication):
             application.focusChanged.connect(self._on_focus_changed)
+            application.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Esc cancels the running format from whichever editor has focus."""
+        if (
+            self._formatting
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Escape
+            and _is_inside(watched if isinstance(watched, QWidget) else None, self)
+        ):
+            self._cancel_format()
+            return True
+        return super().eventFilter(watched, event)
 
     def _bind_pane(self, pane: PaneWidget) -> None:
         pane.tab_strip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -514,25 +565,72 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)
 
     def _format(self) -> None:
-        if self._formatting:
+        if self._formatting or self._size_warning is not None:
             return
         text = self._input_pane.editor.toPlainText()
         if text == "":
             return
+        source = self._input_pane.format_name()
+        size = _utf8_size(text)
+        if size >= _warning_bytes(source) and not self._size_warning_accepted:
+            self._open_size_warning(text, size)
+            return
+        self._start_format(text)
+
+    def _open_size_warning(self, text: str, size: int) -> None:
+        """Ask once, with a window-modal sheet, before a large format."""
+        box = QMessageBox(self)
+        box.setObjectName("sizeWarning")
+        box.setWindowTitle("Galley")
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setText(f"Format this {si_size(size)} document?")
+        box.setInformativeText(SIZE_WARNING_DETAIL)
+        anyway = box.addButton("Format anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(anyway)
+        box.setEscapeButton(cancel)
+        self._size_warning = box
+
+        def _choose() -> None:
+            accepted = box.clickedButton() is anyway
+            self._size_warning = None
+            box.deleteLater()
+            if not accepted:
+                return
+            self._size_warning_accepted = True
+            if self._input_pane.editor.toPlainText() == "":
+                return
+            self._start_format(text)
+
+        box.finished.connect(_choose)
+        box.open()
+
+    def _start_format(self, text: str) -> None:
+        self._cancel_status_timer.stop()
         self._formatting = True
         self._format_started_s = _monotonic()
-        self._pending_write = None
         self._reveal_timer.stop()
+        self._status_before_format = self._status_message.text()
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         self._format_target = self._output_pane.format_name()
+        busy, progress = _busy_progress_bytes(self._format_source, text)
+        size = _utf8_size(text)
+        self._size_forces_busy = size >= busy
+        self._size_forces_progress = size >= progress
+        self._set_editors_locked(True)
         self._write_progress.hide()
         self._format_spinner.hide()
         self._cancel_button.hide()
         self._sync_format_button()
         self._apply_deferred_reveal()
+        self._accepted_job_id = None
         self._session.start()
         self._session.submit(text, self._format_source, self._format_target)
+        self._accepted_job_id = self._session.active_job_id
+        if self._accepted_job_id is None:
+            self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
 
     def _convert_python(self) -> None:
         """Convert the input literal into the output editor and show notices."""
@@ -555,48 +653,59 @@ class MainWindow(QMainWindow):
         self._status_message.show_text(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
-        """Restore the previous output, then kill the worker."""
+        """Drop the result, restore the previous output, then kill the worker."""
         if not self._formatting:
             return
-        self._output_pane.editor.setPlainText(self._output_before_format)
+        self._restore_output()
         self._status_message.show_text(CANCELLED_MESSAGE)
+        self._cancel_status_timer.start(CANCELED_STATUS_MS)
         self._write_progress.hide()
         self._format_spinner.hide()
         self._cancel_button.hide()
         self._formatting = False
-        self._pending_write = None
+        self._size_forces_busy = False
+        self._size_forces_progress = False
         self._reveal_timer.stop()
+        self._set_editors_locked(False)
         self._sync_format_button()
         self._session.cancel()
 
-    def _on_write_progress(self, written: int, total: int) -> None:
+    def _clear_canceled_status(self) -> None:
+        if self._formatting or self._status_message.text() != CANCELLED_MESSAGE:
+            return
+        restored = self._status_before_format
+        count = self._problems_pane.count()
+        if count and restored == problem_count_text(count):
+            self._status_message.show_problem_count(count)
+            return
+        self._status_message.show_text(restored)
+
+    def _on_write_progress(self, _written: int, _total: int) -> None:
         if not self._formatting:
             return
-        self._pending_write = (written, total)
         self._apply_deferred_reveal()
 
     def _apply_deferred_reveal(self) -> None:
-        """Show the spinner status and the bar once their placeholders elapse."""
+        """Show the busy indicator, then the progress bar, on time or size."""
         if not self._formatting:
             return
-        spinner_due = _reveal_due(SPINNER_REVEAL_MS, self._format_started_s)
-        write_due = self._pending_write is not None and _reveal_due(
+        elapsed = _elapsed_ms(self._format_started_s)
+        progress_due = self._size_forces_progress or _reveal_due(
             PROGRESS_BAR_REVEAL_MS, self._format_started_s
         )
-        if write_due and self._pending_write is not None:
-            written, total = self._pending_write
-            maximum = total if total > 0 else 1
-            self._write_progress.setMaximum(maximum)
-            self._write_progress.setValue(min(written, maximum))
+        busy_due = self._size_forces_busy or _reveal_due(
+            SPINNER_REVEAL_MS, self._format_started_s
+        )
+        if progress_due:
             self._write_progress.show()
             self._format_spinner.hide()
             self._cancel_button.show()
-            self._status_message.show_text(WRITING_MESSAGE)
-        elif spinner_due:
+            self._status_message.show_text(_formatting_status(elapsed))
+        elif busy_due:
             self._format_spinner.show()
-            self._cancel_button.show()
-            if not self._write_progress.isVisible():
-                self._status_message.show_text(FORMATTING_MESSAGE)
+            self._write_progress.hide()
+            self._cancel_button.hide()
+            self._status_message.show_text(FORMATTING_MESSAGE)
         self._arm_reveal_timer()
 
     def _arm_reveal_timer(self) -> None:
@@ -604,12 +713,21 @@ class MainWindow(QMainWindow):
             return
         elapsed = _elapsed_ms(self._format_started_s)
         remaining: list[float] = []
-        if not _reveal_due(SPINNER_REVEAL_MS, self._format_started_s):
+        if not (
+            self._size_forces_busy
+            or _reveal_due(SPINNER_REVEAL_MS, self._format_started_s)
+        ):
             remaining.append(SPINNER_REVEAL_MS - elapsed)
-        if self._pending_write is not None and not _reveal_due(
-            PROGRESS_BAR_REVEAL_MS, self._format_started_s
+        if not (
+            self._size_forces_progress
+            or _reveal_due(PROGRESS_BAR_REVEAL_MS, self._format_started_s)
         ):
             remaining.append(PROGRESS_BAR_REVEAL_MS - elapsed)
+        if elapsed < ELAPSED_STATUS_MS:
+            remaining.append(ELAPSED_STATUS_MS - elapsed)
+        elif self._write_progress.isVisible():
+            next_second = (int(elapsed // 1000) + 1) * 1000
+            remaining.append(next_second - elapsed)
         if not remaining:
             return
         self._reveal_timer.start(max(0, int(min(remaining))))
@@ -617,7 +735,10 @@ class MainWindow(QMainWindow):
     def _on_format_succeeded(self, text: str) -> None:
         if not self._formatting:
             return
-        self._output_pane.editor.setPlainText(text)
+        if self._session.finished_job_id != self._accepted_job_id:
+            return
+        self._set_editors_locked(False)
+        _replace_as_one_undo(self._output_pane.editor, text)
         self._clear_problems()
         self._finish_format(self._success_status())
 
@@ -647,14 +768,27 @@ class MainWindow(QMainWindow):
         self._apply_problems(rows)
 
     def _finish_format(self, status: str) -> None:
+        self._cancel_status_timer.stop()
         self._formatting = False
-        self._pending_write = None
+        self._size_forces_busy = False
+        self._size_forces_progress = False
         self._reveal_timer.stop()
         self._status_message.show_text(status)
         self._write_progress.hide()
         self._format_spinner.hide()
         self._cancel_button.hide()
+        self._set_editors_locked(False)
         self._sync_format_button()
+
+    def _restore_output(self) -> None:
+        editor = self._output_pane.editor
+        if editor.toPlainText() == self._output_before_format:
+            return
+        editor.setPlainText(self._output_before_format)
+
+    def _set_editors_locked(self, locked: bool) -> None:
+        self._input_pane.editor.setReadOnly(locked)
+        self._output_pane.editor.setReadOnly(locked)
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
         self._problems_pane.set_problems(rows)
@@ -892,7 +1026,11 @@ class MainWindow(QMainWindow):
 
     def _sync_format_button(self) -> None:
         """Keep Format and Convert disabled for the whole job."""
-        available = self._actions.format.isEnabled() and not self._formatting
+        has_input = self._input_pane.editor.toPlainText() != ""
+        available = has_input and not self._formatting
+        action = self._actions.format
+        if action.isEnabled() != available:
+            action.setEnabled(available)
         self._format_button.setEnabled(available)
         self._actions.convert_python.setEnabled(available)
 
@@ -900,7 +1038,8 @@ class MainWindow(QMainWindow):
         editor = self._input_pane.editor
         text = editor.toPlainText()
         empty = text == ""
-        self._actions.format.setEnabled(not empty)
+        if empty:
+            self._size_warning_accepted = False
         self._sync_format_button()
         clear_button = self._input_pane.clear_button
         if clear_button is not None:
@@ -958,6 +1097,61 @@ def _reveal_due(delay_ms: int, started_s: float) -> bool:
     if delay_ms <= 0:
         return True
     return _elapsed_ms(started_s) >= delay_ms
+
+
+def _formatting_status(elapsed_ms: float) -> str:
+    if elapsed_ms < ELAPSED_STATUS_MS:
+        return FORMATTING_MESSAGE
+    total_seconds = int(elapsed_ms // 1000)
+    minutes, seconds = divmod(total_seconds, 60)
+    return f"{FORMATTING_MESSAGE} {minutes}:{seconds:02d}"
+
+
+def _utf8_size(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
+    if source.casefold() == "yaml":
+        if _has_tab(text):
+            return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
+        return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
+    return JSON_BUSY_BYTES, JSON_PROGRESS_BYTES
+
+
+def _warning_bytes(source: str) -> int:
+    if source.casefold() == "yaml":
+        return YAML_WARNING_BYTES
+    return JSON_WARNING_BYTES
+
+
+def si_size(num_bytes: int) -> str:
+    """Return ``num_bytes`` in SI units, such as ``1.2 MB``."""
+    if num_bytes < _SI_KB:
+        return f"{num_bytes} B"
+    for scale, label in (
+        (1_000_000_000_000, "TB"),
+        (1_000_000_000, "GB"),
+        (_SI_MB, "MB"),
+        (_SI_KB, "KB"),
+    ):
+        if num_bytes < scale:
+            continue
+        value = num_bytes / scale
+        if abs(value - round(value)) < 1e-9:
+            return f"{int(round(value))} {label}"
+        return f"{value:.1f} {label}"
+    return f"{num_bytes} B"
+
+
+def _replace_as_one_undo(editor: CodeEditor, text: str) -> None:
+    """Replace the whole document as a single undo step."""
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    cursor.select(QTextCursor.SelectionType.Document)
+    cursor.insertText(text)
+    cursor.endEditBlock()
+    editor.setTextCursor(cursor)
 
 
 def _editor_from(widget: QWidget | None) -> CodeEditor | None:

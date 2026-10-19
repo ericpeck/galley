@@ -50,17 +50,17 @@ Natural mix, on by item index:
 
 A bare ``!`` keeps the C value only when the same line continues with a
 non-empty scalar or a flow collection. An empty ``!`` node, ``! ""``, and
-a block collection on the next line still re-parse. A tab keeps the C
-value only inside a single-line quoted scalar. A tab between tokens, or
-in a multi-line quoted scalar, still re-parses. A ``%YAML`` or ``%TAG``
-directive always re-parses. The forms above are the keep-C forms, and
-the generator is left unchanged so the mixed corpus keeps this mix.
-``format_yaml_realistic_clib`` must be C parse plus pure writer at every
-size. The bare-tag and quoted-tab rows already use those keep-C forms,
-so there is no second row that injects the same text. The clean profile
-turns the bare tag, the quoted tab, and the embedded ``%YAML`` text off
-(no bare or non-core tag, no ``%YAML``/``%TAG`` directive, no tab outside
-a comment, no odd block-scalar indent) and keeps the block scalars,
+a block collection on the next line still re-parse. A tab anywhere in
+the text forces a pure re-parse, including a tab inside a comment or a
+single-line quoted scalar. A ``%YAML`` or ``%TAG`` directive always
+re-parses. The generator is left unchanged so the mixed corpus keeps
+this mix.
+``format_yaml_realistic_clib`` includes a quoted tab once the file reaches
+that item, and every default ladder size does, so that row must be a pure
+re-parse. The bare-tag row keeps the C value. The clean profile turns the
+bare tag, the quoted tab, and the embedded ``%YAML`` text off (no bare or
+non-core tag, no ``%YAML``/``%TAG`` directive, no tab, no odd block-scalar
+indent) and keeps the block scalars,
 accented text, emoji, CJK, ``!!binary``, and escapes.
 ``format_yaml_realistic_clean_pure`` and ``format_yaml_realistic_clean_clib``
 time that profile. Clean clib must be C parse plus pure writer at every size.
@@ -71,8 +71,7 @@ document header, once:
 - ``format_yaml_realistic_only_bare_tag_clib`` adds ``channel: ! stable``
   and must be C parse plus pure writer at every size
 - ``format_yaml_realistic_only_tab_in_quotes_clib`` adds
-  ``column: "name\\tregion"`` and must be C parse plus pure writer at
-  every size
+  ``column: "name\\tregion"`` and must be a pure re-parse at every size
 - ``format_yaml_realistic_only_directive_clib`` prefixes ``%YAML 1.2`` and
   ``---`` and must be a pure re-parse at every size
 
@@ -413,7 +412,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
                 cutoff_role="comparison",
                 corpus="realistic",
                 track_path=True,
-                require_path=PATH_C_PARSE_PURE_WRITER,
+                require_path=PATH_PURE_REPARSE,
             ),
             Operation(
                 operation_id="format_yaml_realistic_clib_reparse",
@@ -466,7 +465,7 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             _shipped_clib_operation(
                 "format_yaml_realistic_only_tab_in_quotes_clib",
                 corpus="realistic-only-tab",
-                require_path=PATH_C_PARSE_PURE_WRITER,
+                require_path=PATH_PURE_REPARSE,
             ),
             _shipped_clib_operation(
                 "format_yaml_realistic_only_directive_clib",
@@ -2577,10 +2576,11 @@ def _path_section(report: dict[str, Any]) -> list[str]:
             "and a C dump. "
             "`yaml_safe_c_realistic` is C parse plus C writer by construction. "
             "The forced reparse row and the directive-only row must take the "
-            "pure re-parse path at every size. The clean clib row, the "
-            "unforced realistic row, the bare-tag row, and the quoted-tab "
-            "row must be C parse plus pure writer. A different path fails "
-            "the bench. The unforced fraction below is how many realistic "
+            "pure re-parse path at every size. The clean clib row and the "
+            "bare-tag row must be C parse plus pure writer. The unforced "
+            "realistic row and the quoted-tab row must be a pure re-parse, "
+            "because a tab forces that path. A different path fails the "
+            "bench. The unforced fraction below is how many realistic "
             "sizes kept the C value."
         ),
         "",
