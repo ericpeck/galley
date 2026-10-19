@@ -1,9 +1,9 @@
-"""Check Galley.app metadata and Mach-O deployment minima.
+"""Check Galley.app metadata, its icon, and Mach-O deployment minima.
 
 The Release macOS workflow runs this after the ruamel.yaml.clib self-check.
 It compares ``LSMinimumSystemVersion`` with ``MINIMUM_MACOS`` in the spec,
-checks that license texts are present, and fails when any Mach-O file records
-a minimum macOS higher than ``LSMinimumSystemVersion``.
+checks that license texts and ``CFBundleIconFile`` are present, and fails
+when any Mach-O file records a minimum macOS higher than that same floor.
 """
 
 import ast
@@ -76,7 +76,7 @@ def _version_parts(value: str) -> tuple[int, ...]:
 def version_is_above(minimum: str, floor: str) -> bool:
     """Return whether ``minimum`` is a higher dotted version than ``floor``.
 
-    Missing trailing components are zeros, so ``14.4`` and ``14.4.0`` match.
+    Missing trailing components are zeros, so ``14.0`` and ``14.0.0`` match.
     """
     left = _version_parts(minimum)
     right = _version_parts(floor)
@@ -286,8 +286,9 @@ def macho_minimum_violations(
 ) -> tuple[list[MachOViolation], list[str]]:
     """Return minima above ``floor`` and files with no readable minimum.
 
-    ``floor`` is ``LSMinimumSystemVersion`` from the app's Info.plist.
-    ``run_vtool`` receives the arguments after the ``vtool`` executable.
+    ``floor`` is ``MINIMUM_MACOS`` from the spec, the same value
+    ``LSMinimumSystemVersion`` must match. ``run_vtool`` receives the
+    arguments after the ``vtool`` executable.
     """
     try:
         _version_parts(floor)
@@ -369,7 +370,46 @@ def expected_minimum(spec: Path) -> str:
     return found[0]
 
 
-def bundle_problems(app: Path, expected: str) -> list[str]:
+def expected_icon_name(spec: Path) -> str:
+    """Return the ``.icns`` file name in the ``BUNDLE`` icon argument."""
+    tree = ast.parse(spec.read_text(encoding="utf-8"), filename=str(spec))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Name) or func.id != "BUNDLE":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "icon":
+                continue
+            for child in ast.walk(keyword.value):
+                if (
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and child.value.endswith(".icns")
+                ):
+                    found.append(Path(child.value).name)
+    if len(found) != 1:
+        raise SystemExit(
+            f"expected one .icns name in the BUNDLE icon of {spec}, found {found}"
+        )
+    return found[0]
+
+
+def _icns_filename(declared: str) -> str:
+    """Return ``declared`` as a bare ``.icns`` file name."""
+    name = declared.replace("\\", "/").rsplit("/", 1)[-1]
+    if name.endswith(".icns"):
+        return name
+    return f"{name}.icns"
+
+
+def bundle_problems(
+    app: Path,
+    expected: str,
+    icon_name: str = "galley.icns",
+) -> list[str]:
     """Return human-readable problems for ``app``, or an empty list."""
     problems: list[str] = []
     plist_path = app / "Contents" / "Info.plist"
@@ -392,11 +432,30 @@ def bundle_problems(app: Path, expected: str) -> list[str]:
                 problems.append(
                     f"LSMinimumSystemVersion is {actual!r}, expected {expected!r}"
                 )
+            declared = plist.get("CFBundleIconFile")
+            if not isinstance(declared, str) or not declared.strip():
+                problems.append(
+                    "CFBundleIconFile is missing from "
+                    f"{app}/Contents/Info.plist; expected {icon_name}"
+                )
+            else:
+                filename = _icns_filename(declared.strip())
+                if filename != icon_name:
+                    problems.append(
+                        f"CFBundleIconFile is {declared!r}, expected {icon_name!r}"
+                    )
     licenses = app / "Contents" / "Resources" / "LICENSES"
     if not licenses.is_dir():
         problems.append(f"Contents/Resources/LICENSES is missing from {app}")
     elif not any(path.is_file() for path in licenses.rglob("*")):
         problems.append(f"Contents/Resources/LICENSES in {app} is empty")
+    icon_path = app / "Contents" / "Resources" / icon_name
+    if not icon_path.is_file():
+        problems.append(f"Contents/Resources/{icon_name} is missing from {app}")
+    elif icon_path.stat().st_size == 0:
+        problems.append(f"Contents/Resources/{icon_name} in {app} is empty")
+    elif icon_path.read_bytes()[:4] != b"icns":
+        problems.append(f"Contents/Resources/{icon_name} in {app} is not an icns file")
     return problems
 
 
@@ -429,26 +488,22 @@ def main(
             file=sys.stderr,
         )
         return 2
-    expected = expected_minimum(spec_path())
+    spec = spec_path()
+    floor = expected_minimum(spec)
+    icon_name = expected_icon_name(spec)
     app = Path(args[0])
-    problems = bundle_problems(app, expected)
-    floor = plist_minimum(app)
+    problems = bundle_problems(app, floor, icon_name)
     violations: list[MachOViolation] = []
-    if floor is None:
-        if not problems:
-            problems.append(
-                "LSMinimumSystemVersion could not be read from "
-                f"{app}/Contents/Info.plist"
-            )
+    if plist_minimum(app) is None and not problems:
+        problems.append(
+            f"LSMinimumSystemVersion could not be read from {app}/Contents/Info.plist"
+        )
+    try:
+        violations, unread = macho_minimum_violations(app, floor, run_vtool=run_vtool)
+    except VtoolUnavailable:
+        problems.append("vtool is not available")
     else:
-        try:
-            violations, unread = macho_minimum_violations(
-                app, floor, run_vtool=run_vtool
-            )
-        except VtoolUnavailable:
-            problems.append("vtool is not available")
-        else:
-            problems.extend(unread)
+        problems.extend(unread)
     if problems or violations:
         print("Verify bundle metadata failed:")
         for problem in problems:
@@ -457,8 +512,9 @@ def main(
             print(format_macho_violations(violations))
         return 1
     print(
-        f"LSMinimumSystemVersion is {expected!r} and "
-        "Contents/Resources/LICENSES is present."
+        f"LSMinimumSystemVersion is {floor!r} and "
+        "Contents/Resources/LICENSES is present. "
+        f"CFBundleIconFile is {icon_name!r}."
     )
     return 0
 

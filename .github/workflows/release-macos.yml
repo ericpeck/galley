@@ -155,7 +155,9 @@ jobs:
             printf '%s\n' "${stderr}"
           fi
           printf '%s\n' "${stdout}"
-          if [[ "${status}" -ne 0 || "${stdout}" != "ruamel.yaml.clib self-check: ok" ]]; then
+          # Frozen --self-check prints the clib line, then the LICENSES line.
+          licenses_ok=$'ruamel.yaml.clib self-check: ok\nLICENSES self-check: ok '
+          if [[ "${status}" -ne 0 || "${stdout}" != ${licenses_ok}* ]]; then
             if [[ -n "${stdout}" ]]; then
               detail="exit ${status}; ${stdout}"
             else
