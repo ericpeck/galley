@@ -100,16 +100,15 @@ def test_realistic_rows_are_opt_in_and_capped() -> None:
     assert reparse.require_path == PATH_PURE_REPARSE
     assert reparse.cutoff_role == "comparison"
     natural = by_id["format_yaml_realistic_clib"]
-    assert natural.require_path == PATH_C_PARSE_PURE_WRITER
+    assert natural.require_path == PATH_PURE_REPARSE
     clean = by_id["format_yaml_realistic_clean_clib"]
     assert clean.require_path == PATH_C_PARSE_PURE_WRITER
-    for operation_id in (
-        "format_yaml_realistic_only_bare_tag_clib",
-        "format_yaml_realistic_only_tab_in_quotes_clib",
-    ):
-        trigger = by_id[operation_id]
-        assert trigger.require_path == PATH_C_PARSE_PURE_WRITER
-        assert trigger.expect_path is None
+    bare = by_id["format_yaml_realistic_only_bare_tag_clib"]
+    assert bare.require_path == PATH_C_PARSE_PURE_WRITER
+    assert bare.expect_path is None
+    quoted_tab = by_id["format_yaml_realistic_only_tab_in_quotes_clib"]
+    assert quoted_tab.require_path == PATH_PURE_REPARSE
+    assert quoted_tab.expect_path is None
     directive = by_id["format_yaml_realistic_only_directive_clib"]
     assert directive.require_path == PATH_PURE_REPARSE
     assert directive.expect_path is None
@@ -356,15 +355,18 @@ def test_shipped_clib_paths_match_the_document() -> None:
     plain = "catalog: bench\nversion: 1\nitems:\n- id: 1\n  name: widget\n"
     plain_row = _measure_loaded(by_id["format_yaml_plain_clib"], plain, 0.01, 1, 1)
     assert plain_row["yaml_path"] in {PATH_C_ONLY, PATH_C_PARSE_PURE_WRITER}
-    natural = render_realistic_yaml(8 * 1024)
+    # 12 KB is the smallest realistic file that includes a quoted tab.
+    # A tab forces the pure reparse path.
+    natural = render_realistic_yaml(12 * 1024)
     natural_row = _measure_loaded(
         by_id["format_yaml_realistic_clib"],
         natural,
-        0.01,
+        12 / 1024,
         1,
         1,
     )
-    assert natural_row["yaml_path"] == PATH_C_PARSE_PURE_WRITER
+    assert "\t" in natural
+    assert natural_row["yaml_path"] == PATH_PURE_REPARSE
     forced = render_realistic_yaml(8 * 1024, directive=True)
     forced_row = _measure_loaded(
         by_id["format_yaml_realistic_clib_reparse"],
@@ -392,7 +394,7 @@ def test_shipped_clib_paths_match_the_document() -> None:
         (
             "quoted_tab",
             "format_yaml_realistic_only_tab_in_quotes_clib",
-            PATH_C_PARSE_PURE_WRITER,
+            PATH_PURE_REPARSE,
         ),
         ("directive", "format_yaml_realistic_only_directive_clib", PATH_PURE_REPARSE),
     ):

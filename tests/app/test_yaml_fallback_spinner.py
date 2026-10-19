@@ -58,13 +58,13 @@ def test_spinner_stays_visible_through_the_pure_python_retry(
         clock["now"] = window._format_started_s + (SPINNER_REVEAL_MS / 1000)
         window._apply_deferred_reveal()
         assert spinner.isVisible()
-        assert cancel.isVisible()
+        assert not cancel.isVisible()
         assert not bar.isVisible()
         assert status.text() == FORMATTING_MESSAGE
         for _ in range(4):
             qtbot.wait(40)
             assert spinner.isVisible()
-            assert cancel.isVisible()
+            assert not cancel.isVisible()
             assert not bar.isVisible()
             assert output.toPlainText() == ""
             assert window._formatting

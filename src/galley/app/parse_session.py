@@ -177,6 +177,7 @@ class ParseSession(QObject):
         self._job_ids = 0
         self._closing = False
         self._shut_down = False
+        self.finished_job_id: int | None = None
         self.reaped_pid: int | None = None
         self.reaped_exitcode: int | None = None
         self.last_temp_path: str | None = None
@@ -196,6 +197,13 @@ class ParseSession(QObject):
     @property
     def reaped_process(self) -> BaseProcess | None:
         return self._reaped_process
+
+    @property
+    def active_job_id(self) -> int | None:
+        """Job id of the format run the session is waiting on, if any."""
+        if self._active is None:
+            return None
+        return self._active.job_id
 
     @property
     def has_pending_job(self) -> bool:
@@ -553,6 +561,7 @@ class ParseSession(QObject):
         if active is None or event.job_id != active.job_id:
             unlink_temp(event.temp_path)
             return
+        self.finished_job_id = event.job_id
         self._active = None
         self._pending = None
         if event.temp_path is not None and active.destination is not None:
