@@ -33,14 +33,17 @@ from galley.app.problems_settings import problems_settings
 from galley.app.theme import (
     ACCENT,
     ACCENT_TEXT_DARK,
+    DISABLED_TEXT_CONTRAST,
     EDGE_CONTRAST,
     ERROR_DARK,
     ERROR_TINT,
     LINE_NUMBER_DARK,
     TEXT_MIN_CONTRAST,
+    button_face,
     contrast_ratio,
     dark_palette,
     error_color,
+    light_palette,
     line_number_color,
     problem_line_tint,
 )
@@ -461,6 +464,11 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
             assert _ratio(enabled, surface) - ratio >= 2.0, (
                 f"{label} disabled {role.name} is not clearly dimmer"
             )
+        face = button_face(palette)
+        faded = palette.color(QPalette.ColorGroup.Disabled, _R.ButtonText)
+        on_face = _ratio(faded, face)
+        assert on_face >= DISABLED_TEXT_CONTRAST, f"{label} on face {on_face:.2f}"
+        assert on_face < _ratio(enabled, face), f"{label} disabled is not dimmer"
         inactive = palette.color(QPalette.ColorGroup.Inactive, _R.ButtonText)
         assert _ratio(inactive, surface) >= TEXT_MIN_CONTRAST
 
@@ -471,9 +479,40 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
             ink, background = _label_ink(button)
             assert ink.name() != paste_ink.name(), button.defaultAction().text()
             ratio = contrast_ratio(ink, background)
-            assert 2.5 <= ratio < paste_ratio - 1.5, (
+            assert DISABLED_TEXT_CONTRAST <= ratio < paste_ratio - 1.5, (
                 f"{label} {button.defaultAction().text()}: {ratio:.2f}"
             )
+
+
+@pytest.mark.parametrize(
+    ("window", "base", "text", "face"),
+    [
+        # Cocoa roles and the tool button face measured in a cocoa render.
+        ("#F3F2F2", "#FFFFFF", "#201E1D", "#F0F0F0"),
+        ("#323232", "#171717", "#D8FFFFFF", "#3E3E3E"),
+    ],
+    ids=["light", "dark"],
+)
+def test_disabled_button_text_is_3_to_1_on_the_measured_cocoa_face(
+    window: str, base: str, text: str, face: str
+) -> None:
+    """Bill: 3:1 on the face the toolbar buttons actually sit on."""
+    platform = QPalette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        platform.setColor(group, _R.Window, QColor(window))
+        platform.setColor(group, _R.Base, QColor(base))
+        for role in (_R.Text, _R.WindowText, _R.ButtonText):
+            platform.setColor(group, role, QColor(text))
+    built = (
+        dark_palette(platform) if _is_dark(QColor(window)) else light_palette(platform)
+    )
+    surface = QColor(face)
+    faded = built.color(QPalette.ColorGroup.Disabled, _R.ButtonText)
+    enabled = built.color(QPalette.ColorGroup.Active, _R.ButtonText)
+    assert faded.alpha() == 255
+    ratio = _ratio(faded, surface)
+    assert ratio >= DISABLED_TEXT_CONTRAST, f"{ratio:.2f}"
+    assert _ratio(enabled, surface) - ratio >= 2.0
 
 
 def test_dark_palette_fixes_black_inactive_button_text() -> None:

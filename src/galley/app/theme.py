@@ -221,10 +221,13 @@ def light_palette(current: QPalette) -> QPalette:
 
 # Text minimum from AGENTS.md. EDGE_CONTRAST above is the 3:1 edge rule.
 TEXT_MIN_CONTRAST: Final = 4.5
-# Disabled labels are exempt from 4.5:1 but must stay legible and clearly
-# dimmer than enabled text. 3.5:1 on the window lands near 3:1 on the
-# slightly lighter native button face.
-DISABLED_TEXT_CONTRAST: Final = 3.5
+# Disabled labels are exempt from 4.5:1 but must stay legible (3:1, per
+# Bill) on the button face and clearly dimmer than enabled text.
+DISABLED_TEXT_CONTRAST: Final = 3.0
+# Native button faces sit a little toward the text from the window: the
+# cocoa dark tool button face is #3E3E3E on the #323232 window. A share of
+# 0.08 covers that with some margin in both schemes.
+_BUTTON_FACE_SHARE: Final = 0.08
 # Share of ERROR_DARK mixed into the dark editor Base for a problem line.
 _ERROR_TINT_DARK_SHARE: Final = 0.2
 # Share of ACCENT over the window for the disabled Format fill, as in
@@ -296,13 +299,16 @@ def _set_disabled_text(palette: QPalette) -> None:
 
     The platform fade is 25% alpha on macOS (about 1.9:1 in light and 2.1:1
     in dark on the toolbar), so Coming soon buttons read as faint smudges.
+    The blend stops at the first step that reaches 3:1 on the window, the
+    base, and the button face.
     """
     window = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Window)
     base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
     text = composite(
         palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text), window
     )
-    faded = _first_passing(window, text, (window, base), DISABLED_TEXT_CONTRAST)
+    face = button_face(palette)
+    faded = _first_passing(window, text, (window, base, face), DISABLED_TEXT_CONTRAST)
     for role in (
         QPalette.ColorRole.Text,
         QPalette.ColorRole.ButtonText,
@@ -310,6 +316,15 @@ def _set_disabled_text(palette: QPalette) -> None:
         QPalette.ColorRole.PlaceholderText,
     ):
         palette.setColor(QPalette.ColorGroup.Disabled, role, faded)
+
+
+def button_face(palette: QPalette) -> QColor:
+    """Where native buttons draw their face: a step from Window toward Text."""
+    window = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Window)
+    text = composite(
+        palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text), window
+    )
+    return mix(window, text, _BUTTON_FACE_SHARE)
 
 
 def is_dark(palette: QPalette) -> bool:
