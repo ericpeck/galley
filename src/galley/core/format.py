@@ -897,6 +897,35 @@ def format_document(text: str | bytes, source: str, target: str) -> str:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
 
+def load_document(text: str | bytes, source: str) -> object:
+    """Return the value ``format_document`` formats from ``text``.
+
+    The text passes the same checks as ``format_json`` or ``format_yaml``
+    and raises the same errors. YAML is then loaded from ``text`` itself
+    with the pure-Python parser, not from the rendered text, so an anchor
+    and each of its aliases are one shared object, scalars included.
+    """
+    if _normalize_format(source) == "json":
+        return json.loads(format_json(text))
+    format_yaml(text)
+    return _load_parsed(text, _yaml_limits(text, pure=True), pure=True)
+
+
+def dump_value(value: object, target: str) -> str:
+    """Serialize ``value`` the way ``format_document`` writes ``target``.
+
+    JSON uses the JSON dumper. YAML uses the pure-Python safe emitter that
+    ``format_yaml`` shows, and falls back to the explicit-stack block dump
+    for a value too deep for ruamel.
+    """
+    if _normalize_format(target) == "json":
+        return _dump_json(value)
+    try:
+        return _dump_parsed(value, pure=True)
+    except RecursionError:
+        return _dump_block(value)
+
+
 def _normalize_format(name: str) -> str:
     kind = name.strip().lower()
     if kind not in {"json", "yaml"}:
