@@ -1,0 +1,88 @@
+"""Plain-language sentences for syntax problems.
+
+Core reports a code and a line. The words live here, with no column and
+no character offset.
+"""
+
+from typing import assert_never
+
+from galley.app.banner import banner_text
+from galley.core.errors import InputError
+from galley.core.problems import Problem, ProblemCode
+
+
+def message_for(problem: Problem) -> str:
+    """Return the sentence for ``problem``."""
+    line = problem.lineno
+    code: ProblemCode = problem.code
+    if code == "missing_comma":
+        return f"Missing comma at the end of line {line}."
+    if code == "unclosed_quote":
+        return f"Unclosed quote on line {line}."
+    if code == "trailing_comma":
+        return f"Trailing comma at the end of line {line}."
+    if code == "unexpected_close":
+        token = problem.token if problem.token else "}"
+        return f"Unexpected {token} on line {line}."
+    if code == "incomplete":
+        return f"The text ends on line {line} before the JSON document finishes."
+    if code == "json_other":
+        return f"Couldn't read this JSON on line {line}."
+    if code == "yaml_tab":
+        return f"Line {line} starts with a tab. YAML needs spaces for indenting."
+    if code == "yaml_incomplete":
+        return f"The text ends on line {line} before the YAML document finishes."
+    if code == "yaml_duplicate":
+        return f"A key is repeated on line {line}."
+    if code == "yaml_colon":
+        return f"Missing colon after the key on line {line}."
+    if code == "yaml_other":
+        return f"Couldn't read this YAML on line {line}."
+    assert_never(code)
+
+
+def accessible_text(problem: Problem) -> str:
+    """Return the screen-reader text for one problem row."""
+    if problem.code == "yaml_tab":
+        return (
+            f"Line {problem.lineno}: Starts with a tab. "
+            "YAML needs spaces for indenting."
+        )
+    return f"Line {problem.lineno}: {message_for(problem)}"
+
+
+def problem_count_text(count: int) -> str:
+    """Return the status-bar count. Zero is not a status."""
+    noun = "problem" if count == 1 else "problems"
+    return f"{count} {noun}"
+
+
+class DisplayProblem:
+    """One row in the Problems pane."""
+
+    def __init__(self, lineno: int, message: str, accessible: str, code: str) -> None:
+        self.lineno = lineno
+        self.message = message
+        self.accessible = accessible
+        self.code = code
+
+
+def display_problem(problem: Problem) -> DisplayProblem:
+    """Build a pane row from a core problem."""
+    return DisplayProblem(
+        problem.lineno,
+        message_for(problem),
+        accessible_text(problem),
+        problem.code,
+    )
+
+
+def display_input_error(error: InputError) -> DisplayProblem:
+    """Build a pane row from a located input error.
+
+    Those banners were already approved, including a column where the
+    byte or the escape needs one.
+    """
+    message = banner_text(error)
+    line = error.lineno if error.lineno is not None else 1
+    return DisplayProblem(line, message, f"Line {line}: {message}", error.kind)

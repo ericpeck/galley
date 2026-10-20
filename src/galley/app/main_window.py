@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -38,7 +39,19 @@ from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.pane import PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
+from galley.app.problem_text import DisplayProblem, problem_count_text
+from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
+from galley.app.problems_settings import (
+    MIN_WIDTH,
+    STATE_CLOSED,
+    STATE_MINIMIZED,
+    STATE_OPEN,
+    STRIP_WIDTH,
+    load_problems_preferences,
+    save_problems_preferences,
+)
 from galley.app.splitter import PaneSplitter
+from galley.app.status_message import StatusMessage
 from galley.app.style import (
     menu_style,
     muted_text_style,
@@ -46,6 +59,7 @@ from galley.app.style import (
     progress_style,
     status_bar_style,
 )
+from galley.app.tab_repair import replace_leading_tabs
 from galley.app.theme import (
     EDITOR_BG,
     GUTTER_BG,
@@ -132,6 +146,11 @@ class MainWindow(QMainWindow):
         self._output_pane = PaneWidget(PaneRole.OUTPUT)
         self._active_editor = self._input_pane.editor
         self._splitter = self._build_splitter()
+        self._problems_state, self._problems_width = load_problems_preferences()
+        self._applying_problems_layout = False
+        self._problems_pane = ProblemsPane()
+        self._problems_splitter = self._build_problems_splitter()
+        self._sync_problems_action()
         self._editing = self._build_caption()
         self._format_button = self._build_format_button()
         toolbar = self._build_toolbar()
@@ -142,6 +161,7 @@ class MainWindow(QMainWindow):
         self._sync_output_state()
         self._sync_direction()
         self._splitter.apply_even_split()
+        self._layout_problems()
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -241,6 +261,7 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_off)
         guides.addAction(actions.guides_lines)
         guides.addAction(actions.guides_depth)
+        view.addAction(actions.show_problems)
         view.addSeparator()
         view.addAction(actions.full_screen)
 
@@ -280,6 +301,18 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._output_pane)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        return splitter
+
+    def _build_problems_splitter(self) -> QSplitter:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("problemsSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(self._problems_pane)
+        splitter.addWidget(self._splitter)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.splitterMoved.connect(self._on_problems_splitter_moved)
+        self._problems_pane.width_changed.connect(self._remember_problems_width)
         return splitter
 
     def _build_caption(self) -> QLabel:
@@ -366,13 +399,14 @@ class MainWindow(QMainWindow):
         row.addWidget(format_column)
         return toolbar
 
-    def _build_status_bar(self) -> tuple[QLabel, QLabel]:
+    def _build_status_bar(self) -> tuple[StatusMessage, QLabel]:
         status = self.statusBar()
         status.setStyleSheet(status_bar_style())
         status.setSizeGripEnabled(True)
-        message = QLabel("Ready")
+        message = StatusMessage("Ready")
         message.setObjectName("statusMessage")
         message.setStyleSheet(muted_text_style())
+        message.clicked.connect(self._on_status_clicked)
         self._format_spinner = QProgressBar()
         self._format_spinner.setObjectName("formatSpinner")
         self._format_spinner.setAccessibleName("Formatting")
@@ -401,6 +435,9 @@ class MainWindow(QMainWindow):
         status.addWidget(self._write_progress)
         status.addWidget(self._cancel_button)
         status.addPermanentWidget(direction)
+        layout = status.layout()
+        if layout is not None:
+            layout.setContentsMargins(8, 0, 8, 0)
         return message, direction
 
     def _assemble(self, toolbar: QWidget) -> None:
@@ -414,7 +451,7 @@ class MainWindow(QMainWindow):
         host = QWidget()
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(16, 8, 16, 8)
-        host_layout.addWidget(self._splitter)
+        host_layout.addWidget(self._problems_splitter)
         layout.addWidget(host, 1)
         self.setCentralWidget(central)
 
@@ -438,10 +475,18 @@ class MainWindow(QMainWindow):
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
         actions.convert_python.triggered.connect(self._convert_python)
+        actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         self._cancel_button.clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
+        self._session.problems_found.connect(self._on_problems)
+        self._problems_pane.jump_requested.connect(self._jump_to_problem)
+        self._problems_pane.close_requested.connect(self._close_problems)
+        self._problems_pane.minimize_requested.connect(self._minimize_problems)
+        self._problems_pane.expand_requested.connect(self._expand_problems)
+        self._problems_pane.replace_tabs_requested.connect(self._replace_tabs)
+        self._order_focus()
 
         self._input_pane.editor.textChanged.connect(self._sync_input_state)
         self._output_pane.editor.textChanged.connect(self._sync_output_state)
@@ -596,23 +641,23 @@ class MainWindow(QMainWindow):
             return
         result = convert_python(text, self._output_pane.format_name())
         if isinstance(result, ConvertError):
-            self._status_message.setText(result.message)
+            self._status_message.show_text(result.message)
             return
         self._output_pane.editor.setPlainText(result.text)
         if result.notices:
-            self._status_message.setText(
+            self._status_message.show_text(
                 " ".join(notice.message for notice in result.notices)
             )
             return
         target = self._output_pane.format_name()
-        self._status_message.setText(f"Converted to {target}.")
+        self._status_message.show_text(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker."""
         if not self._formatting:
             return
         self._restore_output()
-        self._status_message.setText(CANCELLED_MESSAGE)
+        self._status_message.show_text(CANCELLED_MESSAGE)
         self._cancel_status_timer.start(CANCELED_STATUS_MS)
         self._write_progress.hide()
         self._format_spinner.hide()
@@ -628,7 +673,12 @@ class MainWindow(QMainWindow):
     def _clear_canceled_status(self) -> None:
         if self._formatting or self._status_message.text() != CANCELLED_MESSAGE:
             return
-        self._status_message.setText(self._status_before_format)
+        restored = self._status_before_format
+        count = self._problems_pane.count()
+        if count and restored == problem_count_text(count):
+            self._status_message.show_problem_count(count)
+            return
+        self._status_message.show_text(restored)
 
     def _on_write_progress(self, _written: int, _total: int) -> None:
         if not self._formatting:
@@ -650,12 +700,12 @@ class MainWindow(QMainWindow):
             self._write_progress.show()
             self._format_spinner.hide()
             self._cancel_button.show()
-            self._status_message.setText(_formatting_status(elapsed))
+            self._status_message.show_text(_formatting_status(elapsed))
         elif busy_due:
             self._format_spinner.show()
             self._write_progress.hide()
             self._cancel_button.hide()
-            self._status_message.setText(FORMATTING_MESSAGE)
+            self._status_message.show_text(FORMATTING_MESSAGE)
         self._arm_reveal_timer()
 
     def _arm_reveal_timer(self) -> None:
@@ -689,6 +739,7 @@ class MainWindow(QMainWindow):
             return
         self._set_editors_locked(False)
         _replace_as_one_undo(self._output_pane.editor, text)
+        self._clear_problems()
         self._finish_format(self._success_status())
 
     def _on_format_failed(self, message: str) -> None:
@@ -699,9 +750,22 @@ class MainWindow(QMainWindow):
         # and still owns this format, so a later success can replace the banner.
         if self._session.has_pending_job:
             self._reveal_timer.stop()
-            self._status_message.setText(message)
+            self._status_message.show_text(message)
             return
         self._finish_format(message)
+
+    def _on_problems(self, problems: object) -> None:
+        if not self._formatting or not isinstance(problems, tuple):
+            return
+        rows = tuple(item for item in problems if isinstance(item, DisplayProblem))
+        if not rows:
+            return
+        if self._session.has_pending_job:
+            self._reveal_timer.stop()
+            self._apply_problems(rows)
+            return
+        self._finish_format(problem_count_text(len(rows)))
+        self._apply_problems(rows)
 
     def _finish_format(self, status: str) -> None:
         self._cancel_status_timer.stop()
@@ -709,7 +773,7 @@ class MainWindow(QMainWindow):
         self._size_forces_busy = False
         self._size_forces_progress = False
         self._reveal_timer.stop()
-        self._status_message.setText(status)
+        self._status_message.show_text(status)
         self._write_progress.hide()
         self._format_spinner.hide()
         self._cancel_button.hide()
@@ -725,6 +789,117 @@ class MainWindow(QMainWindow):
     def _set_editors_locked(self, locked: bool) -> None:
         self._input_pane.editor.setReadOnly(locked)
         self._output_pane.editor.setReadOnly(locked)
+
+    def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
+        self._problems_pane.set_problems(rows)
+        self._input_pane.editor.set_problem_lines({row.lineno for row in rows})
+        self._layout_problems()
+        self._status_message.show_problem_count(len(rows))
+
+    def _clear_problems(self) -> None:
+        self._problems_pane.set_problems(())
+        self._input_pane.editor.set_problem_lines(set())
+        self._layout_problems()
+
+    def _jump_to_problem(self, lineno: int) -> None:
+        editor = self._input_pane.editor
+        editor.reveal_line(lineno)
+        self._active_editor = editor
+        self._update_caption()
+        self._update_focus_ring()
+
+    def _close_problems(self) -> None:
+        self._set_problems_state(STATE_CLOSED)
+
+    def _minimize_problems(self) -> None:
+        self._set_problems_state(STATE_MINIMIZED)
+
+    def _expand_problems(self) -> None:
+        self._set_problems_state(STATE_OPEN)
+
+    def _on_show_problems_toggled(self, checked: bool) -> None:
+        self._set_problems_state(STATE_OPEN if checked else STATE_CLOSED)
+
+    def _on_status_clicked(self) -> None:
+        if self._problems_pane.count() == 0:
+            return
+        self._set_problems_state(STATE_OPEN)
+
+    def _replace_tabs(self) -> None:
+        if not SHOW_REPLACE_TABS_BUTTON:
+            return
+        replace_leading_tabs(self._input_pane.editor)
+
+    def _set_problems_state(self, state: str) -> None:
+        self._problems_state = state
+        save_problems_preferences(state, self._problems_width)
+        self._sync_problems_action()
+        self._layout_problems()
+
+    def _sync_problems_action(self) -> None:
+        action = self._actions.show_problems
+        checked = self._problems_state != STATE_CLOSED
+        if action.isChecked() == checked:
+            return
+        action.blockSignals(True)
+        action.setChecked(checked)
+        action.blockSignals(False)
+
+    def _layout_problems(self) -> None:
+        self._applying_problems_layout = True
+        try:
+            self._place_problems_pane()
+        finally:
+            self._applying_problems_layout = False
+
+    def _place_problems_pane(self) -> None:
+        pane = self._problems_pane
+        splitter = self._problems_splitter
+        handle = splitter.handle(1)
+        visible = pane.count() > 0 and self._problems_state != STATE_CLOSED
+        minimized = visible and self._problems_state == STATE_MINIMIZED
+        pane.set_minimized(minimized)
+        if not visible:
+            pane.setMinimumWidth(0)
+            pane.setMaximumWidth(0)
+            pane.hide()
+            handle.hide()
+            return
+        pane.show()
+        handle.show()
+        total = max(splitter.width(), 1)
+        if minimized:
+            pane.setMaximumWidth(STRIP_WIDTH)
+            pane.setMinimumWidth(STRIP_WIDTH)
+            splitter.setSizes([STRIP_WIDTH, max(0, total - STRIP_WIDTH)])
+            return
+        pane.setMaximumWidth(16_777_215)
+        pane.setMinimumWidth(MIN_WIDTH)
+        width = min(self._problems_width, max(MIN_WIDTH, total - 240))
+        splitter.setSizes([width, max(0, total - width)])
+
+    def _on_problems_splitter_moved(self, pos: int, _index: int) -> None:
+        sizes = self._problems_splitter.sizes()
+        width = sizes[0] if sizes else pos
+        self._remember_problems_width(width)
+
+    def _remember_problems_width(self, width: int) -> None:
+        if self._applying_problems_layout:
+            return
+        if self._problems_state != STATE_OPEN or width < MIN_WIDTH:
+            return
+        self._problems_width = width
+        save_problems_preferences(self._problems_state, width)
+
+    def _order_focus(self) -> None:
+        """Move from the Problems list to Input, then Output."""
+        problems = self._problems_pane.list_widget()
+        minimize = self._problems_pane.minimize_button()
+        close = self._problems_pane.close_button()
+        QWidget.setTabOrder(minimize, close)
+        QWidget.setTabOrder(close, problems)
+        QWidget.setTabOrder(problems, self._input_pane.editor)
+        QWidget.setTabOrder(self._input_pane.editor, self._output_pane.editor)
 
     def _success_status(self) -> str:
         source = self._format_source.casefold()

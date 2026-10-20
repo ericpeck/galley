@@ -14,6 +14,7 @@ from typing import BinaryIO
 
 from galley.core.errors import InputError
 from galley.core.format import format_document
+from galley.core.problems import Problem, collect_problems
 
 TEMP_PREFIX = ".galley-"
 TEMP_SUFFIX = ".tmp"
@@ -74,6 +75,7 @@ class FailureEvent:
     message: str
     temp_path: str | None = None
     error: InputError | None = None
+    problems: tuple[Problem, ...] = ()
 
 
 def run_worker(job_queue: Queue, event_queue: Queue) -> None:
@@ -122,10 +124,14 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
         event_queue.put(FailureEvent(job.job_id, "Unknown fault.", None))
         return
     event_queue.put(ProgressEvent(job.job_id, "read", 0, 0, None))
+    early = collect_problems(job.text, job.source)
+    if early:
+        event_queue.put(FailureEvent(job.job_id, "", None, None, early))
+        return
     try:
         text = format_document(job.text, job.source, job.target)
     except Exception as exc:
-        event_queue.put(_failure_event(job.job_id, exc, None))
+        event_queue.put(_failure_event(job, exc, None))
         return
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
@@ -135,7 +141,7 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     try:
         temp_path = _write_output(job, payload, event_queue)
     except Exception as exc:
-        event_queue.put(_failure_event(job.job_id, exc, temp_path))
+        event_queue.put(_failure_event(job, exc, temp_path))
         return
     if job.fault == FAULT_AFTER_TEMP:
         event_queue.put(FailureEvent(job.job_id, "forced failure", temp_path))
@@ -196,9 +202,14 @@ def _report_write(
     event_queue.put(ProgressEvent(job_id, "write", written, total, temp_path))
 
 
-def _failure_event(job_id: int, exc: Exception, temp_path: str | None) -> FailureEvent:
+def _failure_event(
+    job: FormatJob, exc: Exception, temp_path: str | None
+) -> FailureEvent:
     error = exc if isinstance(exc, InputError) else None
-    return FailureEvent(job_id, _failure_message(exc), temp_path, error)
+    problems: tuple[Problem, ...] = ()
+    if error is None:
+        problems = collect_problems(job.text, job.source, exc)
+    return FailureEvent(job.job_id, _failure_message(exc), temp_path, error, problems)
 
 
 def _failure_message(exc: Exception) -> str:

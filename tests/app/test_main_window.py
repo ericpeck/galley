@@ -50,6 +50,7 @@ CUSTOM_SHORTCUTS = {
     "Show Whitespace": ["Ctrl+Shift+8"],
     "Actual Size": ["Ctrl+0"],
     "Format": ["Ctrl+Return"],
+    "Show Problems": ["Ctrl+Shift+M"],
 }
 
 STANDARD_SHORTCUTS = {
@@ -176,6 +177,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Word Wrap",
         "Show Whitespace",
         "Indent Guides",
+        "Show Problems",
         "|",
         "Enter Full Screen",
     ]
@@ -360,7 +362,7 @@ def test_typing_enables_format_without_writing_output(qtbot) -> None:
     _action(window, "Format").trigger()
     status = window.findChild(QLabel, "statusMessage")
     assert status is not None
-    qtbot.waitUntil(lambda: "Expecting value" in status.text(), timeout=15000)
+    qtbot.waitUntil(lambda: status.text() == "1 problem", timeout=15000)
     assert output.toPlainText() == ""
     clear = window.findChild(QPushButton, "clearButton")
     assert clear is not None
