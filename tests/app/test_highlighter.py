@@ -1,20 +1,22 @@
 """Syntax colors in the code editors (spec §3, §5.4)."""
 
+from collections.abc import Callable, Iterator
+
 import pytest
-from PySide6.QtGui import QColor, QFont, QPalette, QTextDocument
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette, QTextDocument
 
 from galley.app.editor import CodeEditor
 from galley.app.highlighter import DARK_SYNTAX, LIGHT_SYNTAX, SyntaxHighlighter
 from galley.app.theme import (
     ACCENT_INK,
+    ACCENT_INK_DARK,
     COLORS,
     ERROR_TINT,
-    LINE_CURRENT,
     STRING,
-    SYNTAX_DARK_KEY,
     TEXT_CODE_VALUE,
     TEXT_MUTED,
+    install_light_palette,
 )
 
 KEY = (ACCENT_INK, False)
@@ -35,11 +37,10 @@ _YAML = (
 )
 
 _MIN_CONTRAST = 4.5
-# Light: #57's seeded editor Base and current-line band.
-_LIGHT_SURFACES = (COLORS["editor.bg"], LINE_CURRENT)
-# Dark: macOS native dark Base and Midlight band (measured with the cocoa
-# platform on macOS), and the dark field #57's picker contrast tests use.
-_DARK_SURFACES = ("#171717", "#343434", "#1C1C1C")
+# macOS native dark Base and Midlight (current-line band), read from the
+# cocoa platform with the dark scheme.
+_MAC_DARK_BASE = "#171717"
+_MAC_DARK_BAND = "#343434"
 
 
 def _luminance(color: QColor) -> float:
@@ -65,10 +66,62 @@ def _contrast(foreground: str, background: str) -> float:
 def _dark_palette(palette: QPalette) -> QPalette:
     dark = QPalette(palette)
     for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
-        dark.setColor(group, QPalette.ColorRole.Base, QColor("#171717"))
+        dark.setColor(group, QPalette.ColorRole.Base, QColor(_MAC_DARK_BASE))
         dark.setColor(group, QPalette.ColorRole.Text, QColor("#FFFFFF"))
-        dark.setColor(group, QPalette.ColorRole.Midlight, QColor("#343434"))
+        dark.setColor(group, QPalette.ColorRole.Midlight, QColor(_MAC_DARK_BAND))
     return dark
+
+
+@pytest.fixture
+def color_scheme(qapp) -> Iterator[Callable[[bool], None]]:
+    """Set the color scheme, then the palette that scheme would bring.
+
+    Offscreen CI ignores the OS appearance and has no dark theme, so the
+    scheme request alone leaves the palette light. The test supplies the
+    macOS dark palette, or #57's light one, and restores both afterwards.
+    """
+    hints = QGuiApplication.styleHints()
+    original = QPalette(qapp.palette())
+
+    def apply(dark: bool) -> None:
+        if dark:
+            hints.setColorScheme(Qt.ColorScheme.Dark)
+            qapp.setPalette(_dark_palette(original))
+        else:
+            hints.setColorScheme(Qt.ColorScheme.Light)
+            qapp.setPalette(original)
+            install_light_palette(qapp)
+
+    yield apply
+    hints.unsetColorScheme()
+    qapp.setPalette(original)
+
+
+def _editor_in(qtbot, apply: Callable[[bool], None], dark: bool) -> CodeEditor:
+    """Editor with JSON text after the scheme switch, palette checked."""
+    editor = CodeEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_JSON)
+    apply(dark)
+    _wait_for_palette(qtbot, editor, dark)
+    return editor
+
+
+def _base(editor: CodeEditor) -> QColor:
+    return editor.palette().color(QPalette.ColorRole.Base)
+
+
+def _wait_for_palette(qtbot, editor: CodeEditor, dark: bool) -> None:
+    """Wait until the editor carries the application palette for ``dark``."""
+    app_palette = QGuiApplication.palette()
+
+    def settled() -> bool:
+        return (_base(editor).lightness() < 128) == dark and all(
+            editor.palette().color(role) == app_palette.color(role)
+            for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Midlight)
+        )
+
+    qtbot.waitUntil(settled)
 
 
 def _style(
@@ -278,16 +331,33 @@ def test_colors_leave_line_bands_and_text_alone(qtbot) -> None:
     assert bands == {band, ERROR_TINT}
 
 
-@pytest.mark.parametrize(
-    ("colors", "surfaces"),
-    [(LIGHT_SYNTAX, _LIGHT_SURFACES), (DARK_SYNTAX, _DARK_SURFACES)],
-    ids=["light", "dark"],
-)
-def test_syntax_colors_read_on_their_base(colors, surfaces) -> None:
-    for role, color in colors._asdict().items():
-        for surface in surfaces:
-            ratio = _contrast(color, surface)
-            assert ratio >= _MIN_CONTRAST, (role, color, surface, round(ratio, 2))
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_syntax_colors_read_on_the_base_they_are_drawn_on(
+    qtbot, color_scheme, dark: bool
+) -> None:
+    editor = _editor_in(qtbot, color_scheme, dark)
+    base = _base(editor)
+    band = editor.palette().color(QPalette.ColorRole.Midlight)
+    assert base.name().upper() == (_MAC_DARK_BASE if dark else COLORS["editor.bg"])
+
+    document = editor.document()
+    drawn = {
+        "key": _style(document, 2, '"name"'),
+        "string": _style(document, 2, '"Ada"'),
+        "value": _style(document, 3, "-1.5e3"),
+        "literal": _style(document, 4, "true"),
+        "punctuation": _style(document, 1, "{"),
+    }
+    expected = DARK_SYNTAX if dark else LIGHT_SYNTAX
+    assert drawn["key"][0] == expected.key
+    assert drawn["string"][0] == expected.string
+    assert drawn["value"] == (expected.value, True)
+    assert drawn["literal"] == (expected.value, True)
+    assert drawn["punctuation"][0] == expected.punctuation
+    for role, (color, _bold) in drawn.items():
+        for surface in (base, band):
+            ratio = _contrast(color, surface.name())
+            assert ratio >= _MIN_CONTRAST, (role, color, surface.name(), ratio)
 
 
 def test_highlighter_follows_base_lightness() -> None:
@@ -296,7 +366,7 @@ def test_highlighter_follows_base_lightness() -> None:
     highlighter.follow_base(QColor("#171717"))
 
     assert highlighter.colors() == DARK_SYNTAX
-    assert _style(document, 2, '"name"') == (SYNTAX_DARK_KEY, False)
+    assert _style(document, 2, '"name"') == (ACCENT_INK_DARK, False)
 
     highlighter.follow_base(QColor(COLORS["editor.bg"]))
 
@@ -304,18 +374,16 @@ def test_highlighter_follows_base_lightness() -> None:
     assert _style(document, 2, '"name"') == KEY
 
 
-def test_editor_recolors_when_the_application_turns_dark(qtbot) -> None:
-    app = QApplication.instance()
-    assert isinstance(app, QApplication)
-    editor = CodeEditor()
-    qtbot.addWidget(editor)
-    editor.setPlainText(_JSON)
-    light = QPalette(app.palette())
-    try:
-        app.setPalette(_dark_palette(light))
-        qtbot.waitUntil(
-            lambda: _style(editor.document(), 2, '"name"') == (SYNTAX_DARK_KEY, False)
-        )
-    finally:
-        app.setPalette(light)
-    qtbot.waitUntil(lambda: _style(editor.document(), 2, '"name"') == KEY)
+def test_editor_recolors_when_the_scheme_changes(qtbot, color_scheme) -> None:
+    editor = _editor_in(qtbot, color_scheme, dark=False)
+    assert _style(editor.document(), 2, '"name"') == KEY
+
+    color_scheme(True)
+    _wait_for_palette(qtbot, editor, dark=True)
+
+    assert _style(editor.document(), 2, '"name"') == (ACCENT_INK_DARK, False)
+
+    color_scheme(False)
+    _wait_for_palette(qtbot, editor, dark=False)
+
+    assert _style(editor.document(), 2, '"name"') == KEY

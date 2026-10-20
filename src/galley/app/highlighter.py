@@ -3,7 +3,7 @@
 Colors follow spec §3: keys ``accent.ink``, strings ``string``, numbers and
 literals ``text.code.value`` bold, punctuation and comments ``text.muted``.
 YAML uses the same colors as JSON. A dark editor Base switches to the
-lighter ``SYNTAX_DARK_*`` set from ``theme.py`` in the same hues.
+``*_DARK`` set from ``theme.py``.
 
 Highlighting works one line at a time with precompiled patterns. The only
 state carried between lines is a YAML block scalar (``|`` or ``>``), whose
@@ -23,13 +23,13 @@ from PySide6.QtGui import (
 
 from galley.app.theme import (
     ACCENT_INK,
+    ACCENT_INK_DARK,
     STRING,
-    SYNTAX_DARK_KEY,
-    SYNTAX_DARK_PUNCTUATION,
-    SYNTAX_DARK_STRING,
-    SYNTAX_DARK_VALUE,
+    STRING_DARK,
     TEXT_CODE_VALUE,
+    TEXT_CODE_VALUE_DARK,
     TEXT_MUTED,
+    TEXT_MUTED_DARK,
 )
 
 SyntaxMode = Literal["JSON", "YAML"]
@@ -45,9 +45,11 @@ class SyntaxColors(NamedTuple):
 
 LIGHT_SYNTAX: Final = SyntaxColors(ACCENT_INK, STRING, TEXT_CODE_VALUE, TEXT_MUTED)
 DARK_SYNTAX: Final = SyntaxColors(
-    SYNTAX_DARK_KEY, SYNTAX_DARK_STRING, SYNTAX_DARK_VALUE, SYNTAX_DARK_PUNCTUATION
+    ACCENT_INK_DARK, STRING_DARK, TEXT_CODE_VALUE_DARK, TEXT_MUTED_DARK
 )
-# Same cut as theme.install_light_palette: below this Base is dark.
+# Same cut as theme.install_light_palette: below this Base is dark. Base,
+# not the color scheme, decides, so the colors match the page actually
+# drawn even when an app palette stays light under a dark scheme.
 _DARK_LIGHTNESS: Final = 128
 
 # Block states. A YAML block scalar stores its parent column + 2, so a

@@ -45,14 +45,16 @@ GUIDE_DEPTH_PINK: Final = "#FF90B1"
 # not list it as its own role.
 TEXT_ON_ACCENT: Final = "#FFFFFF"
 
-# Syntax colors for a dark editor Base, in the hues of the light set
-# (accent.ink, string, text.code.value, text.muted). Each clears 4.5:1 on
-# the macOS dark Base #171717 and on its current-line band #343434. The
-# spec has no dark table, so these are not in COLORS.
-SYNTAX_DARK_KEY: Final = "#6CCDEE"
-SYNTAX_DARK_STRING: Final = "#FF85BA"
-SYNTAX_DARK_VALUE: Final = "#ECE9E9"
-SYNTAX_DARK_PUNCTUATION: Final = "#A8A4A4"
+# Syntax colors on a dark editor Base, named after the light role each
+# replaces. Keys, strings, and numbers/literals are the approved dark-mode
+# values from issue #54. #54 lists no punctuation color, so
+# TEXT_MUTED_DARK is a muted grey that clears 4.5:1 on the macOS dark Base
+# #171717 and its current-line band #343434. COLORS mirrors the light
+# spec table, so these are not in it.
+ACCENT_INK_DARK: Final = "#7CC7E8"
+STRING_DARK: Final = "#E6C07B"
+TEXT_CODE_VALUE_DARK: Final = "#C3A6FF"
+TEXT_MUTED_DARK: Final = "#A8A4A4"
 
 # Role names match the spec table. Guide depth lists the two sampled hues.
 COLORS: Final[dict[str, str]] = {
