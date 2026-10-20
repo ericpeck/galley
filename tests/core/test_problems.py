@@ -46,11 +46,81 @@ def test_mapped_json_errors_keep_a_single_line() -> None:
     assert _json_problem("[1]]") == Problem("unexpected_close", 1, "]")
     assert _json_problem("{]") == Problem("unexpected_close", 1, "]")
     assert _json_problem("[}") == Problem("unexpected_close", 1, "}")
-    assert _json_problem('{"a": 1') == Problem("incomplete", 1)
-    assert _json_problem("{") == Problem("incomplete", 1)
-    assert _json_problem('{"a":') == Problem("incomplete", 1)
-    assert _json_problem("[1, 2") == Problem("incomplete", 1)
     assert _json_problem("abc") == Problem("json_other", 1)
+
+
+def test_unquoted_key_points_at_the_key_line() -> None:
+    assert _json_problem("{name: 1}") == Problem("unquoted_key", 1)
+    text = '{\n  "a": 1,\n  b: 2\n}\n'
+    assert _json_problem(text) == Problem("unquoted_key", 3)
+
+
+def test_single_quotes_point_at_the_quote_line() -> None:
+    assert _json_problem("{'a': 1}") == Problem("single_quotes", 1)
+    assert _json_problem("['a', 'b']") == Problem("single_quotes", 1)
+    text = '{\n  "a": 1,\n  "b": \'x\'\n}\n'
+    assert _json_problem(text) == Problem("single_quotes", 3)
+
+
+def test_missing_bracket_names_the_open_square_bracket() -> None:
+    text = '{\n  "tags": [1, 2\n}\n'
+    assert _json_problem(text) == Problem("missing_close", 2, "[")
+    assert _json_problem("[1, 2") == Problem("missing_close", 1, "[")
+    ended = '{\n  "a": [\n    1,\n    2\n'
+    assert _json_problem(ended) == Problem("missing_close", 2, "[")
+
+
+def test_missing_bracket_names_the_open_curly_bracket() -> None:
+    text = '[\n  {"a": 1\n]\n'
+    assert _json_problem(text) == Problem("missing_close", 2, "{")
+    assert _json_problem('{"a": 1') == Problem("missing_close", 1, "{")
+    assert _json_problem("{") == Problem("missing_close", 1, "{")
+    assert _json_problem('{"a":') == Problem("missing_close", 1, "{")
+    nested = '{\n  "a": {\n    "b": 1\n  }\n'
+    assert _json_problem(nested) == Problem("missing_close", 1, "{")
+
+
+def test_brackets_inside_strings_are_not_counted() -> None:
+    text = '{\n  "note": "[{ \\" ]",\n  "a": [1\n}\n'
+    assert _json_problem(text) == Problem("missing_close", 3, "[")
+
+
+def test_missing_comma_between_objects_in_an_array() -> None:
+    text = '[\n  {"a": 1}\n  {"b": 2}\n]\n'
+    assert _json_problem(text) == Problem("missing_comma", 2)
+    assert _json_problem('[{"a": 1} {"b": 2}]') == Problem("missing_comma", 1)
+
+
+def test_trailing_comma_before_either_closing_bracket() -> None:
+    assert _json_problem('{\n  "a": 1,\n}\n') == Problem("trailing_comma", 2)
+    assert _json_problem('[\n  {"a": 1},\n]\n') == Problem("trailing_comma", 2)
+
+
+def test_unclosed_quote_wins_over_the_brackets_it_leaves_open() -> None:
+    assert _json_problem('{\n  "a": ["hi\n') == Problem("unclosed_quote", 2)
+
+
+def test_the_most_specific_problem_wins_with_its_own_line() -> None:
+    # A comma before an unquoted key is not a trailing comma, and a closing
+    # brace where an array is still open is not a missing comma.
+    text = (
+        "{\n"
+        '  "name": "Galley",\n'
+        "  version: 2,\n"
+        "  'kind': \"app\",\n"
+        '  "tags": ["json", "yaml"\n'
+        "}\n"
+    )
+    assert _json_problem(text) == Problem("unquoted_key", 3)
+    text = text.replace("version", '"version"')
+    assert _json_problem(text) == Problem("single_quotes", 4)
+    text = text.replace("'kind'", '"kind"')
+    assert _json_problem(text) == Problem("missing_close", 5, "[")
+
+
+def test_end_of_text_message_stays_when_no_bracket_is_open() -> None:
+    assert _json_problem("") == Problem("incomplete", 1)
+    assert _json_problem("   ") == Problem("incomplete", 1)
 
 
 def test_a_second_json_error_is_not_reported_yet() -> None:
