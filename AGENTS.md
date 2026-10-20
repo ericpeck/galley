@@ -21,23 +21,23 @@ Import Qt only from `galley.app`. `galley.core` stays free of Qt. Ruff `TID251` 
 
 ## Merge
 
-Squash-merge a pull request only when all of the following are true for the exact head commit:
+Squash-merge only when the exact head commit has the approvals below, every check that ran on that commit passed, the branch is 0 commits behind `main`, and the pull request is not a draft. Approvals cover one commit: any new push needs a fresh approval.
 
-- The staff engineer reviewer has approved that commit.
-- UI or wording changes also have the UI/UX reviewer's approval.
-- All four CI checks are green: Lint, Test (macOS arm64), Test (Windows), and Secret scan (`.github/workflows/ci.yml`).
-- The branch is 0 commits behind `main`.
-- The pull request is not a draft.
+- Staff engineer reviewer.
+- UI or wording changes: also the UI/UX reviewer.
+- `AGENTS.md` and other project-rule changes: also the project owner.
 
-Bring `main` into a branch with a merge commit. Never force-push or rebase pushed commits.
+Lint, Secret scan, Test (macOS arm64), and Test (Windows) run on every pull request. YAML parser comparison and Disk image (macOS arm64) run only when a pull request changes files they cover. GitHub Release is skipped on pull requests; a skipped check is not a failure.
+
+Bring `main` into a branch with a merge commit. Never rebase or force-push a branch under review; that discards the approved commit.
 
 ## Ownership
 
 One owner per job. Claim the issue before starting.
 
-## Secrets
+## Public repository
 
-Never commit secrets, tokens, credentials, personal file paths, or personal notes or vault files.
+Never commit secrets, tokens, credentials, or personal notes. Never commit the gitignored `Project Vault/` folder (it holds UI files) or anything from it. Never commit personal paths of any kind (home directories, usernames in paths).
 
 ## Safety
 
@@ -47,6 +47,18 @@ Ruff `S102` and `S307` ban `exec` and `eval`. Convert from Python parses with `a
 
 Push a `v*` release tag only after the project owner has tested that build and approved it. Do not release while any menu or toolbar action still shows Coming soon or Not yet. The release check fails a tag build while Coming soon actions remain.
 
-## Color
+## Cross-platform
 
-Colors come from `QPalette` roles, not hard-coded values. Syntax colors are the exception.
+Use `Qt.ControlModifier` and `QKeySequence` standard keys for shortcuts. Never hard-code ⌘. Avoid macOS-only APIs. Windows support is planned.
+
+## UI
+
+Use the native style and `QPalette` roles for UI colors. No hard-coded hex values. Syntax colors are the only exception.
+
+Text contrast is at least 4.5:1. Control edges are at least 3:1. Test both light and dark mode, and have the test set the color scheme itself. CI offscreen ignores OS dark mode.
+
+Color is never the only cue. Pair it with an icon or label.
+
+Use US spelling. Use specific labels and buttons.
+
+UI specs live in their GitHub issues. Build to the spec. Ask before adding UI the spec does not cover.
