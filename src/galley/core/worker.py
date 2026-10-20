@@ -13,6 +13,7 @@ from multiprocessing.queues import Queue
 from typing import BinaryIO
 
 from galley.core.errors import InputError
+from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.problems import Problem, collect_problems
 
@@ -55,11 +56,15 @@ class ProgressEvent:
 
 @dataclass(frozen=True)
 class SuccessEvent:
-    """Formatting finished. ``temp_path`` is closed and not yet committed."""
+    """Formatting finished. ``temp_path`` is closed and not yet committed.
+
+    ``folds`` is the text's fold ranges from :func:`pack_ranges`.
+    """
 
     job_id: int
     text: str
     temp_path: str | None = None
+    folds: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -133,9 +138,10 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     except Exception as exc:
         event_queue.put(_failure_event(job, exc, None))
         return
+    folds = _scan_folds(text, job.target)
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
-        event_queue.put(SuccessEvent(job.job_id, text, None))
+        event_queue.put(SuccessEvent(job.job_id, text, None, folds))
         return
     temp_path: str | None = None
     try:
@@ -146,7 +152,13 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     if job.fault == FAULT_AFTER_TEMP:
         event_queue.put(FailureEvent(job.job_id, "forced failure", temp_path))
         return
-    event_queue.put(SuccessEvent(job.job_id, text, temp_path))
+    event_queue.put(SuccessEvent(job.job_id, text, temp_path, folds))
+
+
+def _scan_folds(text: str, target: str) -> bytes:
+    """Fold ranges for the Output, found here so the UI thread does not scan."""
+    fmt = "YAML" if target.strip().lower() == "yaml" else "JSON"
+    return pack_ranges(fold_ranges(text, fmt), line_count(text))
 
 
 def _write_output(job: FormatJob, payload: bytes, event_queue: Queue) -> str:

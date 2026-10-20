@@ -351,7 +351,7 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     assert all(
         host is not None and host.property("comingSoonHost") is True for host in hosts
     )
-    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Expand", "Validate"}
+    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Validate"}
 
 
 def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
@@ -422,18 +422,9 @@ def test_every_stub_action_is_covered_by_an_unbuilt_entry(qtbot) -> None:
     for action in actions._stub_actions():
         assert action.property("unbuiltName") == covered[id(action)]
         assert action.property("unbuiltName") in UNBUILT_ACTIONS
-    collapse = actions.collapse_all
-    assert covered[id(collapse)] == "Expand"
-    assert collapse.property("unbuiltName") == "Expand"
-    assert collapse.toolTip() == COMING_SOON
-    assert not collapse.isEnabled()
-    assert collapse.isVisible()
-    assert "Collapse" not in UNBUILT_ACTIONS
     message = release_failure()
     assert message == _release_text(", ".join(UNBUILT_ACTIONS))
     assert message is not None
-    assert message.count("Expand") == 1
-    assert "Collapse" not in message
     not_yet = {id(action) for action in actions._not_yet_actions()}
     assert not_yet
     assert not_yet.isdisjoint(covered)
@@ -450,3 +441,20 @@ def test_deleting_a_name_from_the_list_turns_that_action_on(monkeypatch, qtbot) 
     assert find.isEnabled()
     assert find.toolTip() != COMING_SOON
     assert not is_unbuilt(find)
+
+
+def test_expand_and_collapse_all_shipped(qtbot) -> None:
+    """#64 built Expand all and Collapse all, so the release check drops them."""
+    window = _show(qtbot)
+    actions = window._actions
+    assert "Expand" not in UNBUILT_ACTIONS
+    stubs = {id(action) for action in actions._stub_actions()}
+    for action in (actions.expand_all, actions.collapse_all):
+        assert not is_unbuilt(action)
+        assert id(action) not in stubs
+        assert action.toolTip() != COMING_SOON
+    message = release_failure()
+    assert message is not None
+    assert "Expand" not in message
+    assert "Collapse" not in message
+    assert "Minify" in message

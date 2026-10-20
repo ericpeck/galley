@@ -1,24 +1,41 @@
 """Code editor with a line-number gutter and syntax colors."""
 
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QFontMetrics,
     QHelpEvent,
     QMouseEvent,
     QPainter,
     QPaintEvent,
     QPalette,
     QPen,
+    QPolygonF,
     QResizeEvent,
+    QTextBlock,
     QTextCursor,
+    QTextDocument,
     QTextFormat,
+    QTextLayout,
 )
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QPlainTextDocumentLayout,
     QPlainTextEdit,
     QTextEdit,
     QToolTip,
@@ -30,6 +47,7 @@ from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.theme import error_color, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
+from galley.core.folds import FoldKind, FoldRange, fold_ranges, line_count
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -40,6 +58,12 @@ _ERROR_MARKER_PEN = 1.6
 # How far the × arms start inside the ring's pixel centers. The arms stop
 # short of the ring, as the glyph's do.
 _ERROR_MARKER_INSET = 4
+# The fold arrows, ▾ and ▸, are drawn as triangles in a box this size in
+# the middle of the fold lane, so they do not depend on the code font.
+_FOLD_ARROW_BOX = 10
+# Quiet time after an edit in a folding editor before its ranges are found
+# again. Folds open on the edit itself.
+_FOLD_RESCAN_MS = 300
 
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
@@ -71,7 +95,7 @@ class GutterLane:
 GUTTER_LANES: tuple[GutterLane, ...] = (
     GutterLane("markers", (PROBLEM_MARKERS, CHANGE_MARKERS), reserve=True),
     GutterLane("numbers"),
-    # Reserved for the collapse arrows in #64.
+    # The fold arrows. Only an editor with folding on sets them.
     GutterLane("fold", (FOLD_MARKERS,)),
 )
 MARKER_KINDS: tuple[str, ...] = tuple(
@@ -142,6 +166,41 @@ PROBLEM_MARKER = ProblemMarker()
 
 
 @dataclass(frozen=True)
+class FoldMarker(LineMarker):
+    """Fold arrow: ▾ while the block is open, ▸ while it is folded.
+
+    It uses the line-number color, and Text while the pointer is on it. It
+    never changes the number color or tints the line.
+    """
+
+    kind: FoldKind = FoldKind.OBJECT
+    folded: bool = False
+    hovered: bool = False
+
+    def paint(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
+        role_color = (
+            palette.color(QPalette.ColorRole.Text)
+            if self.hovered
+            else theme_line_number_color(palette)
+        )
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(role_color)
+        box = _FOLD_ARROW_BOX
+        left = rect.left() + (rect.width() - box) / 2
+        top = rect.top() + max(0, rect.height() - box) / 2
+        if self.folded:
+            points = ((3, 1), (3, 9), (8, 5))
+        else:
+            points = ((1, 3), (9, 3), (5, 8))
+        painter.drawPolygon(QPolygonF([QPointF(left + x, top + y) for x, y in points]))
+
+    def description(self) -> str:
+        verb = "Unfold" if self.folded else "Fold"
+        return f"{verb} {_kind_noun(self.kind)}"
+
+
+@dataclass(frozen=True)
 class MarkerHit:
     """A marker under a gutter point: its kind, 1-based line, and lane rect."""
 
@@ -170,6 +229,7 @@ class LineNumberArea(QWidget):
         super().__init__(editor)
         self._editor = editor
         self.setAccessibleName("Line numbers")
+        self.setMouseTracking(True)
 
     def sizeHint(self) -> QSize:
         return QSize(self._editor.line_number_area_width(), 0)
@@ -193,10 +253,46 @@ class LineNumberArea(QWidget):
                 self._editor.problem_marker_clicked.emit(hit.lineno)
                 event.accept()
                 return
+            if hit is not None and hit.kind == FOLD_MARKERS:
+                # Alt-click (Option on macOS) toggles the nested blocks too.
+                nested = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+                self._editor.toggle_fold(hit.lineno, nested=nested)
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        hit = self._editor.marker_at(event.position().toPoint())
+        lineno = hit.lineno if hit is not None and hit.kind == FOLD_MARKERS else 0
+        self._editor.set_fold_hover(lineno)
+        if lineno:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self._editor.set_fold_hover(0)
+        self.unsetCursor()
+        super().leaveEvent(event)
 
     def paintEvent(self, event: QPaintEvent) -> None:
         self._editor.paint_line_numbers(event)
+
+
+class _FoldAwareLayout(QPlainTextDocumentLayout):
+    """Plain-text layout that gives a hidden block no size without laying it out.
+
+    QPlainTextDocumentLayout lays a block out before it asks whether the
+    block is shown, about 8 µs a line. Qt walks hidden lines when it maps a
+    click to text, so a folded 2 MB document would lay out every line it
+    hides.
+    """
+
+    def blockBoundingRect(self, block: QTextBlock) -> QRectF:
+        if not block.isVisible():
+            return QRectF()
+        return super().blockBoundingRect(block)
 
 
 class CodeEditor(QPlainTextEdit):
@@ -204,12 +300,29 @@ class CodeEditor(QPlainTextEdit):
 
     # 1-based line of an error marker the user clicked.
     problem_marker_clicked = Signal(int)
+    # The fold ranges or the folded blocks changed.
+    folds_changed = Signal()
+    # A block was folded (True) or unfolded (False) from the gutter or the
+    # summary: the range and the new state.
+    fold_toggled = Signal(object, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        document = QTextDocument(self)
+        document.setDocumentLayout(_FoldAwareLayout(document))
+        self.setDocument(document)
         self._adopting_palette = False
         self._markers: dict[str, dict[int, LineMarker]] = {}
         self._overlay: QWidget | None = None
+        # Folding state. Lines here are 0-based, as in FoldRange.
+        self._folding = False
+        self._folds: dict[int, FoldRange] = {}
+        self._folded: set[int] = set()
+        self._fold_hover = 0
+        self._fold_summaries: list[tuple[QRect, int]] = []
+        self._fold_rescan = QTimer(self)
+        self._fold_rescan.setSingleShot(True)
+        self._fold_rescan.timeout.connect(self.rescan_folds)
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -225,6 +338,8 @@ class CodeEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_line_number_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.cursorPositionChanged.connect(self._reveal_cursor_line)
+        self.document().contentsChange.connect(self._drop_folds_on_edit)
         self._update_line_number_width(0)
         self._highlight_current_line()
         # setDocumentMargin records an edit. Drop it so Undo starts disabled.
@@ -405,7 +520,11 @@ class CodeEditor(QPlainTextEdit):
         self._highlighter.set_enabled(enabled)
 
     def reveal_line(self, lineno: int) -> None:
-        """Move the cursor to ``lineno``, scroll it into view, and focus."""
+        """Move the cursor to ``lineno``, scroll it into view, and focus.
+
+        Folded blocks that hide the line open first.
+        """
+        self.ensure_line_visible(lineno)
         block = self.document().findBlockByNumber(max(lineno, 1) - 1)
         if not block.isValid():
             block = self.document().lastBlock()
@@ -414,6 +533,167 @@ class CodeEditor(QPlainTextEdit):
         self.setTextCursor(cursor)
         self.centerCursor()
         self.setFocus()
+
+    def folding_enabled(self) -> bool:
+        return self._folding
+
+    def set_folding_enabled(self, enabled: bool) -> None:
+        """Let objects and arrays fold. Off by default; only Output folds."""
+        if enabled == self._folding:
+            return
+        self._folding = enabled
+        if enabled:
+            self.rescan_folds()
+        else:
+            self._fold_rescan.stop()
+            self._replace_folds([])
+
+    def has_fold_ranges(self) -> bool:
+        return bool(self._folds)
+
+    def fold_ranges(self) -> list[FoldRange]:
+        """Foldable blocks, sorted by start line. Lines are 0-based."""
+        return list(self._folds.values())
+
+    def folded_lines(self) -> set[int]:
+        """1-based first lines of the folded blocks."""
+        return {start + 1 for start in self._folded}
+
+    def set_fold_ranges(self, ranges: Sequence[FoldRange], lines: int) -> None:
+        """Use ``ranges``, found for this text, with every block open.
+
+        ``lines`` is the line count of the text they were found in. Qt also
+        starts a line at U+2029, so when the count is not the document's,
+        the ranges are dropped rather than put on the wrong lines.
+        """
+        self._fold_rescan.stop()
+        if not self._folding:
+            return
+        if lines != self.document().blockCount():
+            ranges = []
+        self._replace_folds(ranges)
+
+    def rescan_folds(self) -> None:
+        """Find the fold ranges of the current text now."""
+        self._fold_rescan.stop()
+        if not self._folding:
+            return
+        text = self.toPlainText()
+        self.set_fold_ranges(fold_ranges(text, self.syntax_mode()), line_count(text))
+
+    def fold_line(self, lineno: int, *, nested: bool = False) -> FoldRange | None:
+        """Fold the block that starts on 1-based ``lineno``.
+
+        ``nested`` folds the blocks inside it too. Returns the block, or
+        None when no block starts there.
+        """
+        return self._toggle(lineno, fold=True, nested=nested)
+
+    def unfold_line(self, lineno: int, *, nested: bool = False) -> FoldRange | None:
+        """Unfold the block that starts on 1-based ``lineno``."""
+        return self._toggle(lineno, fold=False, nested=nested)
+
+    def toggle_fold(self, lineno: int, *, nested: bool = False) -> FoldRange | None:
+        """Fold an open block, or unfold a folded one, at 1-based ``lineno``."""
+        self._flush_fold_rescan()
+        fold = (lineno - 1) not in self._folded
+        return self._toggle(lineno, fold=fold, nested=nested)
+
+    def fold_at_cursor(self) -> FoldRange | None:
+        """Fold the block on the caret line, or the innermost open one around it."""
+        self._flush_fold_rescan()
+        line = self.textCursor().blockNumber()
+        target = self._folds.get(line)
+        if target is None or line in self._folded:
+            target = self._innermost(line, folded=False)
+        if target is None:
+            return None
+        return self.fold_line(target.start_line + 1)
+
+    def unfold_at_cursor(self) -> FoldRange | None:
+        """Unfold the folded block on the caret line, or the one around it."""
+        self._flush_fold_rescan()
+        line = self.textCursor().blockNumber()
+        if line in self._folded:
+            return self.unfold_line(line + 1)
+        target = self._innermost(line, folded=True)
+        if target is None:
+            return None
+        return self.unfold_line(target.start_line + 1)
+
+    def collapse_all(self) -> int:
+        """Fold every block but the root, which stays open. Returns the count.
+
+        Bill's #64 answer: the root's children fold, so the root reads as
+        an outline. The blocks inside them fold too, so each opens one level
+        at a time.
+        """
+        self._flush_fold_rescan()
+        if not self._folds:
+            return 0
+        self._folded = {start for start, item in self._folds.items() if item.depth}
+        self._park_cursor()
+        self._apply_visibility(0, self.document().blockCount() - 1)
+        self._sync_fold_markers()
+        self.folds_changed.emit()
+        return len(self._folded)
+
+    def expand_all(self) -> int:
+        """Unfold every folded block. Returns how many were folded."""
+        self._flush_fold_rescan()
+        count = len(self._folded)
+        if not count:
+            return 0
+        self._folded.clear()
+        self._apply_visibility(0, self.document().blockCount() - 1)
+        self._sync_fold_markers()
+        self.folds_changed.emit()
+        return count
+
+    def ensure_line_visible(self, lineno: int) -> bool:
+        """Unfold the blocks that hide 1-based ``lineno``. True if any did."""
+        line = lineno - 1
+        opened = [
+            start
+            for start in self._folded
+            if start < line <= self._folds[start].end_line
+        ]
+        if not opened:
+            return False
+        self._folded.difference_update(opened)
+        last = max(self._folds[start].end_line for start in opened)
+        self._apply_visibility(min(opened) + 1, last)
+        self._sync_fold_markers()
+        self.folds_changed.emit()
+        return True
+
+    def set_fold_hover(self, lineno: int) -> None:
+        """Draw the fold arrow on 1-based ``lineno`` in the hover ink. 0 is none."""
+        if lineno == self._fold_hover:
+            return
+        markers = self._markers.get(FOLD_MARKERS, {})
+        for line, hovered in ((self._fold_hover, False), (lineno, True)):
+            marker = markers.get(line)
+            if isinstance(marker, FoldMarker):
+                markers[line] = replace(marker, hovered=hovered)
+        self._fold_hover = lineno
+        self._line_numbers.update()
+
+    def fold_summary(self, lineno: int) -> tuple[str, str] | None:
+        """What a folded block on 1-based ``lineno`` shows after its text.
+
+        The first part is the ``…`` and, for JSON, the closing bracket
+        line. The second is the italic, muted count. None if no block
+        starts there.
+        """
+        item = self._folds.get(lineno - 1)
+        if item is None:
+            return None
+        tail = " …"
+        if self.syntax_mode() == "JSON":
+            end = self.document().findBlockByNumber(item.end_line)
+            tail = f" … {end.text().strip()}"
+        return tail, fold_count_text(item)
 
     def attach_overlay(self, overlay: QWidget) -> None:
         """Center ``overlay`` in the text viewport."""
@@ -438,6 +718,24 @@ class CodeEditor(QPlainTextEdit):
         """Recompute gutter width after the code font changes."""
         self._update_line_number_width(0)
         self._line_numbers.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        self._fold_summaries = []
+        if not self._folded:
+            super().paintEvent(event)
+            return
+        self._paint_shown_blocks(event.rect())
+        self._paint_fold_summaries(event.rect())
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            point = event.position().toPoint()
+            for rect, start in self._fold_summaries:
+                if rect.contains(point):
+                    self.unfold_line(start + 1)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -505,9 +803,255 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid() and top <= rect.bottom():
             if block.isVisible() and bottom >= rect.top():
                 yield block.blockNumber() + 1, top
-            block = block.next()
+            block = self._next_shown_block(block)
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
+
+    def _next_shown_block(self, block: QTextBlock) -> QTextBlock:
+        """The block after ``block``, past the lines a fold on it hides."""
+        item = self._folds.get(block.blockNumber())
+        if item is not None and item.start_line in self._folded:
+            return self.document().findBlockByNumber(item.end_line + 1)
+        return block.next()
+
+    def _paint_shown_blocks(self, area: QRect) -> None:
+        """QPlainTextEdit's paint, jumping over the lines each fold hides.
+
+        Qt's own paint steps through every hidden line until the viewport
+        is full, which after Collapse all is the whole document. This is
+        the same drawing for the lines that are shown: the block
+        background, the selections and line bands, the text, and the caret.
+        """
+        painter = QPainter(self.viewport())
+        document = self.document()
+        offset = QPointF(self.contentOffset())
+        viewport_height = self.viewport().rect().height()
+        widest = document.documentLayout().documentSize().width()
+        right = int(
+            offset.x()
+            + max(self.viewport().rect().width(), widest)
+            - document.documentMargin()
+            + self.cursorWidth()
+        )
+        clip = QRect(area)
+        clip.setRight(min(clip.right(), right))
+        painter.setBrushOrigin(offset)
+        painter.setClipRect(clip)
+        context = self.getPaintContext()
+        painter.setPen(context.palette.text().color())
+        caret = context.cursorPosition
+        keyboard = Qt.TextInteractionFlag.TextSelectableByKeyboard
+        show_caret = not self.isReadOnly() or bool(
+            self.textInteractionFlags() & keyboard
+        )
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            bounds = self.blockBoundingRect(block).translated(offset)
+            if block.isVisible() and bounds.bottom() >= clip.top():
+                if bounds.top() > clip.bottom():
+                    break
+                layout = block.layout()
+                background = block.blockFormat().background()
+                if background.style() != Qt.BrushStyle.NoBrush:
+                    painter.fillRect(bounds.toAlignedRect(), background)
+                start = block.position()
+                length = block.length()
+                ranges = _selection_ranges(context.selections, block, layout)
+                layout.draw(painter, offset, ranges, QRectF(clip))
+                if show_caret and start <= caret < start + length:
+                    width = self.cursorWidth()
+                    layout.drawCursor(painter, offset, caret - start, width)
+            offset.setY(offset.y() + bounds.height())
+            if offset.y() > viewport_height:
+                break
+            block = self._next_shown_block(block)
+        painter.end()
+
+    def _paint_fold_summaries(self, area: QRect) -> None:
+        """Paint ``… }`` and the italic count after each shown folded block.
+
+        The summary is painted, never inserted, so Copy and Save see the
+        real text.
+        """
+        painter = QPainter(self.viewport())
+        text_ink = self.palette().color(QPalette.ColorRole.Text)
+        muted_ink = self.line_number_color()
+        font = self.font()
+        italic = QFont(font)
+        italic.setItalic(True)
+        metrics = self.fontMetrics()
+        italic_metrics = QFontMetrics(italic)
+        offset = self.contentOffset()
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            geometry = self.blockBoundingGeometry(block).translated(offset)
+            if geometry.top() > area.bottom():
+                break
+            start = block.blockNumber()
+            if block.isVisible() and start in self._folded:
+                summary = self.fold_summary(start + 1)
+                layout = block.layout()
+                if summary is not None and layout.lineCount():
+                    last = layout.lineAt(layout.lineCount() - 1)
+                    x = int(offset.x() + last.x() + last.naturalTextWidth())
+                    top = int(geometry.top() + last.y())
+                    baseline = int(geometry.top() + last.y() + last.ascent())
+                    tail, count = summary
+                    painter.setFont(font)
+                    painter.setPen(text_ink)
+                    painter.drawText(x, baseline, tail)
+                    count_x = x + metrics.horizontalAdvance(tail + " ")
+                    painter.setFont(italic)
+                    painter.setPen(muted_ink)
+                    painter.drawText(count_x, baseline, count)
+                    right = count_x + italic_metrics.horizontalAdvance(count)
+                    height = int(last.height())
+                    self._fold_summaries.append(
+                        (QRect(x, top, right - x, height), start)
+                    )
+            block = self._next_shown_block(block)
+        painter.end()
+
+    def _replace_folds(self, ranges: Sequence[FoldRange]) -> None:
+        if self._folded:
+            self._folded.clear()
+            self._apply_visibility(0, self.document().blockCount() - 1)
+        self._folds = {item.start_line: item for item in ranges}
+        self._sync_fold_markers()
+        self.folds_changed.emit()
+
+    def _drop_folds_on_edit(self, position: int, _removed: int, added: int) -> None:
+        """An edit opens every fold, and the ranges are found again."""
+        if not self._folding:
+            return
+        whole = position == 0 and added >= self.document().characterCount() - 1
+        if self._folded:
+            if whole:
+                # New blocks start shown.
+                self._folded.clear()
+            else:
+                self._folded.clear()
+                self._apply_visibility(0, self.document().blockCount() - 1)
+            self._sync_fold_markers()
+            self.folds_changed.emit()
+        self._fold_rescan.start(0 if whole else _FOLD_RESCAN_MS)
+
+    def _flush_fold_rescan(self) -> None:
+        """Find the ranges now if an edit is still waiting for them."""
+        if self._fold_rescan.isActive():
+            self.rescan_folds()
+
+    def _toggle(self, lineno: int, *, fold: bool, nested: bool) -> FoldRange | None:
+        self._flush_fold_rescan()
+        item = self._folds.get(lineno - 1)
+        if item is None:
+            return None
+        starts = [item.start_line]
+        if nested:
+            starts.extend(
+                start
+                for start in self._folds
+                if item.start_line < start <= item.end_line
+            )
+        before = set(self._folded)
+        if fold:
+            self._folded.update(starts)
+            self._park_cursor()
+        else:
+            self._folded.difference_update(starts)
+        if self._folded == before:
+            return item
+        self._apply_visibility(item.start_line + 1, item.end_line)
+        self._sync_fold_markers()
+        self.folds_changed.emit()
+        self.fold_toggled.emit(item, fold)
+        return item
+
+    def _innermost(self, line: int, *, folded: bool) -> FoldRange | None:
+        """The innermost block around 0-based ``line`` in the given state."""
+        found: FoldRange | None = None
+        for start, item in self._folds.items():
+            if start > line:
+                break
+            if item.end_line >= line and (start in self._folded) == folded:
+                found = item
+        return found
+
+    def _park_cursor(self) -> None:
+        """Move the caret out of the lines about to be hidden.
+
+        It goes to the end of the first line of the outermost fold that
+        hides it.
+        """
+        line = self.textCursor().blockNumber()
+        owners = [
+            start
+            for start in self._folded
+            if start < line <= self._folds[start].end_line
+        ]
+        if not owners:
+            return
+        block = self.document().findBlockByNumber(min(owners))
+        cursor = self.textCursor()
+        cursor.setPosition(block.position() + block.length() - 1)
+        self.setTextCursor(cursor)
+
+    def _reveal_cursor_line(self) -> None:
+        """A caret that lands in hidden lines unfolds what hides them."""
+        if not self._folded or self.textCursor().block().isVisible():
+            return
+        self.ensure_line_visible(self.textCursor().blockNumber() + 1)
+
+    def _apply_visibility(self, first: int, last: int) -> None:
+        """Show or hide 0-based lines ``first`` to ``last`` to match the folds.
+
+        A line is hidden when it is inside a folded block below its first
+        line. The layout is told once, for the whole span.
+        """
+        document = self.document()
+        last = min(last, document.blockCount() - 1)
+        if first > last:
+            return
+        folds = self._folds
+        folded = self._folded
+        hidden_until = -1
+        for start in folded:
+            end = folds[start].end_line
+            if start < first <= end and end > hidden_until:
+                hidden_until = end
+        first_block = document.findBlockByNumber(first)
+        block = first_block
+        line = first
+        changed = False
+        while line <= last and block.isValid():
+            visible = line > hidden_until
+            if block.isVisible() != visible:
+                block.setVisible(visible)
+                changed = True
+            if line in folded:
+                end = folds[line].end_line
+                if end > hidden_until:
+                    hidden_until = end
+            block = block.next()
+            line += 1
+        if not changed:
+            return
+        end_block = document.findBlockByNumber(last)
+        span = end_block.position() + end_block.length() - first_block.position()
+        document.markContentsDirty(first_block.position(), span)
+        self.viewport().update()
+        self._line_numbers.update()
+
+    def _sync_fold_markers(self) -> None:
+        folded = self._folded
+        self._fold_hover = 0
+        self.set_line_markers(
+            FOLD_MARKERS,
+            {
+                start + 1: _FOLD_MARKERS[item.kind, start in folded]
+                for start, item in self._folds.items()
+            },
+        )
 
     def _detect_syntax(self, position: int, _removed: int, added: int) -> None:
         if self._syntax_mode_set:
@@ -560,6 +1104,9 @@ class CodeEditor(QPlainTextEdit):
         palette = self.palette()
         tints: dict[int, QColor] = {}
         for kind in MARKER_KINDS:
+            if kind == FOLD_MARKERS:
+                # Fold arrows never tint a line, and there can be thousands.
+                continue
             for lineno, marker in self._markers.get(kind, {}).items():
                 if lineno in tints:
                     continue
@@ -587,6 +1134,62 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor = cursor
         selection.cursor.clearSelection()
         return selection
+
+
+_FOLD_MARKERS: dict[tuple[FoldKind, bool], FoldMarker] = {
+    (kind, folded): FoldMarker(kind, folded)
+    for kind in FoldKind
+    for folded in (False, True)
+}
+
+
+def _selection_ranges(
+    selections: Sequence[object], block: QTextBlock, layout: QTextLayout
+) -> list[QTextLayout.FormatRange]:
+    """The paint context's selections and line bands that fall in ``block``."""
+    start = block.position()
+    length = block.length()
+    ranges: list[QTextLayout.FormatRange] = []
+    for selection in selections:
+        cursor = selection.cursor
+        first = cursor.selectionStart() - start
+        last = cursor.selectionEnd() - start
+        item = QTextLayout.FormatRange()
+        item.format = selection.format
+        if first < length and last > 0 and last > first:
+            item.start = first
+            item.length = last - first
+        elif (
+            not cursor.hasSelection()
+            and selection.format.hasProperty(QTextFormat.Property.FullWidthSelection)
+            and block.contains(cursor.position())
+        ):
+            line = layout.lineForTextPosition(cursor.position() - start)
+            item.start = line.textStart()
+            item.length = line.textLength()
+            if item.start + item.length == length - 1:
+                item.length += 1
+        else:
+            continue
+        ranges.append(item)
+    return ranges
+
+
+def fold_count_text(item: FoldRange) -> str:
+    """``1 key``, ``12 keys``, ``1 item`` or ``3 items``."""
+    noun = "key" if item.kind is FoldKind.OBJECT else "item"
+    return f"{item.count} {noun}" + ("" if item.count == 1 else "s")
+
+
+def fold_status_text(item: FoldRange, folded: bool) -> str:
+    """Status-bar text for one fold: ``Folded object at line 8, 12 keys``."""
+    verb = "Folded" if folded else "Unfolded"
+    noun = _kind_noun(item.kind)
+    return f"{verb} {noun} at line {item.start_line + 1}, {fold_count_text(item)}"
+
+
+def _kind_noun(kind: FoldKind) -> str:
+    return "object" if kind is FoldKind.OBJECT else "array"
 
 
 def _first_marker(
