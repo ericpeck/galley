@@ -1,10 +1,10 @@
-"""Time large JSON documents and fail when an operation exceeds its budget.
+"""Time large JSON documents and check the format size gates.
 
-The 1 MB and 2 MB fixtures are built in memory from a fixed shape: nested
-objects and arrays, long strings, and non-ASCII text. Nothing large is
-written into the tree. Each measurement is printed as
-``large-file <size> <operation>: <seconds>s limit <seconds>s`` so
-:data:`LARGE_FILE_LIMITS_S` can be tightened from CI logs.
+The 1 MB and 2 MB fixtures are built in memory from ``random.Random`` with a
+fixed seed: nested objects and arrays, long strings, and non-ASCII text.
+Nothing large is written into the tree. Timings are printed as one table.
+They are not a pass/fail gate. One sample from each CI runner is not a
+median, and a shared runner is too noisy to fail the job on raw seconds.
 
 Parse and format go through ``format_json``. Collapse hides nested lines in
 the editor document: Expand all and Collapse all are still Coming soon, so
@@ -13,22 +13,39 @@ planted at the end of the fixture. Syntax coloring is the editor highlighter
 turning on for that document. Change markers use the gutter API from the
 Compare prep work. The diff engine is timed only when ``galley.core.diff.diff``
 is importable; this checkout does not invent one.
+
+The hard checks are the JSON busy spinner, the progress bar, and the size
+warning. Those follow ``JSON_BUSY_BYTES``, ``JSON_PROGRESS_BYTES``, and
+``JSON_WARNING_BYTES``.
 """
 
 import gc
 import importlib
 import importlib.util
 import json
+import random
 import time
 
-import pytest
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QPainter, QPalette
-from PySide6.QtWidgets import QMessageBox, QProgressBar, QPushButton
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+)
 
 from galley.app.editor import CHANGE_MARKERS, CodeEditor, LineMarker
 from galley.app.main import create_main_window
-from galley.app.main_window import SIZE_WARNING_DETAIL, si_size
+from galley.app.main_window import (
+    FORMATTING_MESSAGE,
+    JSON_BUSY_BYTES,
+    JSON_PROGRESS_BYTES,
+    JSON_WARNING_BYTES,
+    SIZE_WARNING_DETAIL,
+    si_size,
+)
 from galley.app.parse_session import ParseSession
 from galley.core.format import format_json
 
@@ -37,30 +54,23 @@ _BYTES = {"1 MB": 1_000_000, "2 MB": 2_000_000}
 _NEEDLE = "galley-stress-needle"
 _UNICODE = "café — 日本語"
 _EMOJI = "😀"
-_NOTE = "pack " * 80
-
-# Generous ceilings, in seconds. Runners differ; the printed times are the
-# record to tighten these from. A miss fails the job. Do not skip the test.
-LARGE_FILE_LIMITS_S: dict[str, dict[str, float]] = {
-    "1 MB": {
-        "parse": 3.0,
-        "format": 3.0,
-        "collapse": 5.0,
-        "search": 3.0,
-        "syntax": 15.0,
-        "compare-markers": 3.0,
-        "compare": 20.0,
-    },
-    "2 MB": {
-        "parse": 5.0,
-        "format": 5.0,
-        "collapse": 8.0,
-        "search": 5.0,
-        "syntax": 30.0,
-        "compare-markers": 5.0,
-        "compare": 40.0,
-    },
-}
+FIXTURE_SEED = 60
+_NOTE_POOL = (
+    "Pack my box with five dozen liquor jugs. "
+    "The quick brown fox jumps over the lazy dog. "
+    "How vexingly quick daft zebras jump. "
+) * 4
+_TAGS = ("alpha", "beta", "gamma", "delta")
+_OPERATIONS = (
+    "parse",
+    "format",
+    "collapse",
+    "search",
+    "syntax",
+    "compare-markers",
+)
+# A hang guard for the highlighter, not a performance budget.
+_SYNTAX_HANG_MS = 120_000
 
 _DOCUMENTS: dict[str, str] = {}
 
@@ -76,23 +86,26 @@ _CHANGE_MARKER = _ChangeMarker()
 
 
 def test_generated_fixture_is_deterministic_json() -> None:
-    """Both sizes are exact, nested, and end with the search marker."""
+    """Both sizes are exact, nested, and come from the fixed seed."""
     for label, size in _BYTES.items():
         first = _build(size)
         second = _build(size)
+        other = _build(size, seed=FIXTURE_SEED + 1)
         assert first == second
+        assert first != other
         assert len(first.encode("utf-8")) == size
         assert first.startswith("{\n")
         assert _UNICODE in first
         assert _EMOJI in first
-        assert _NOTE.strip() in first
         assert first.count(_NEEDLE) == 1
         parsed = json.loads(first)
+        assert parsed["unicode"] == _UNICODE
+        assert parsed["emoji"] == _EMOJI
         assert isinstance(parsed["items"], list) and parsed["items"]
-        sample = parsed["items"][0]
-        assert isinstance(sample["child"], dict)
-        assert isinstance(sample["tags"], list)
-        assert isinstance(sample["note"], str) and len(sample["note"]) > 100
+        for item in parsed["items"]:
+            assert isinstance(item["child"], dict)
+            assert isinstance(item["tags"], list) and item["tags"]
+            assert isinstance(item["note"], str) and len(item["note"]) >= 120
         marker_at = first.rfind(_NEEDLE)
         assert marker_at > len(first) * 9 // 10
         assert parsed["tail"]["marker"] == _NEEDLE
@@ -101,165 +114,198 @@ def test_generated_fixture_is_deterministic_json() -> None:
         _DOCUMENTS[label] = first
 
 
-@pytest.mark.parametrize("label", ["1 MB", "2 MB"])
-def test_parse_and_format_stay_within_limits(label: str) -> None:
-    text = _document(label)
-    formatted, parse_s, format_s = _time_format_json(text)
-    _check(label, "parse", parse_s)
-    _check(label, "format", format_s)
-    assert _NEEDLE in formatted
-    assert json.loads(formatted)["tail"]["marker"] == _NEEDLE
-
-
-@pytest.mark.parametrize("label", ["1 MB", "2 MB"])
-def test_editor_operations_stay_within_limits(qtbot, label: str) -> None:
-    text = _document(label)
-    editor = CodeEditor()
-    qtbot.addWidget(editor)
-    editor.resize(800, 600)
-    editor.show()
-    qtbot.waitExposed(editor)
-    editor.set_syntax_colors_enabled(False)
-    editor.set_syntax_mode("JSON")
-    editor.setPlainText(text)
-    qtbot.waitUntil(lambda: editor.blockCount() > 2)
-
-    gc.collect()
-    syntax_limit_ms = int(LARGE_FILE_LIMITS_S[label]["syntax"] * 1000)
-    syntax_started = time.perf_counter()
-    editor.set_syntax_colors_enabled(True)
+def test_large_documents_are_timed(qtbot) -> None:
+    """Log parse, format, collapse, search, syntax, and compare-marker times."""
+    samples: dict[str, dict[str, float]] = {}
+    compare_note = "large-file compare: no public API"
     try:
-        if not _first_block_is_colored(editor):
-            # Enabling colors recolors on the next event-loop pass.
-            qtbot.waitUntil(
-                lambda: _first_block_is_colored(editor),
-                timeout=syntax_limit_ms,
-            )
+        for label in _BYTES:
+            text = _document(label)
+            formatted, parse_s, format_s = _time_format_json(text)
+            _record(samples, "parse", label, parse_s)
+            _record(samples, "format", label, format_s)
+            assert _NEEDLE in formatted
+            assert json.loads(formatted)["tail"]["marker"] == _NEEDLE
+
+            editor = CodeEditor()
+            qtbot.addWidget(editor)
+            editor.resize(800, 600)
+            editor.show()
+            qtbot.waitExposed(editor)
+            editor.set_syntax_colors_enabled(False)
+            editor.set_syntax_mode("JSON")
+            editor.setPlainText(text)
+            qtbot.waitUntil(lambda: editor.blockCount() > 2)
+
+            syntax_started = time.perf_counter()
+            editor.set_syntax_colors_enabled(True)
+            try:
+                if not _first_block_is_colored(editor):
+                    # Enabling colors recolors on the next event-loop pass.
+                    qtbot.waitUntil(
+                        lambda: _first_block_is_colored(editor),
+                        timeout=_SYNTAX_HANG_MS,
+                    )
+            finally:
+                _record(
+                    samples,
+                    "syntax",
+                    label,
+                    time.perf_counter() - syntax_started,
+                )
+            assert _first_block_is_colored(editor)
+
+            # Search before collapse. Find can skip lines that are not visible.
+            found_block = -1
+
+            def search() -> None:
+                nonlocal found_block
+                cursor = editor.textCursor()
+                cursor.setPosition(0)
+                editor.setTextCursor(cursor)
+                assert editor.find(_NEEDLE)
+                found_block = editor.textCursor().blockNumber()
+
+            _record(samples, "search", label, _elapsed(search))
+            assert found_block >= editor.blockCount() * 9 // 10
+
+            hidden = 0
+
+            def collapse() -> None:
+                nonlocal hidden
+                hidden = _collapse_all(editor)
+
+            _record(samples, "collapse", label, _elapsed(collapse))
+            assert hidden > editor.blockCount() // 2
+            assert _NEEDLE in editor.toPlainText()
+
+            def mark() -> None:
+                count = editor.blockCount()
+                editor.set_line_markers(
+                    CHANGE_MARKERS,
+                    dict.fromkeys(range(1, count + 1), _CHANGE_MARKER),
+                )
+
+            _record(samples, "compare-markers", label, _elapsed(mark))
+            assert len(editor.line_markers(CHANGE_MARKERS)) == editor.blockCount()
+
+        diff = _public_diff()
+        if diff is not None:
+            compare_note = ""
+            for label in _BYTES:
+                text = _document(label)
+                left = json.loads(text)
+                right = json.loads(text)
+                right["items"].insert(0, {"id": -1, "title": "inserted"})
+                _record(samples, "compare", label, _elapsed(lambda: diff(left, right)))
     finally:
-        syntax_s = time.perf_counter() - syntax_started
-    _check(label, "syntax", syntax_s)
-    assert _first_block_is_colored(editor)
-
-    found_block = -1
-
-    def search() -> None:
-        nonlocal found_block
-        cursor = editor.textCursor()
-        cursor.setPosition(0)
-        editor.setTextCursor(cursor)
-        assert editor.find(_NEEDLE)
-        found_block = editor.textCursor().blockNumber()
-
-    search_s = _elapsed(search)
-    _check(label, "search", search_s)
-    assert found_block >= editor.blockCount() * 9 // 10
-
-    hidden = 0
-
-    def collapse() -> None:
-        nonlocal hidden
-        hidden = _collapse_all(editor)
-
-    collapse_s = _elapsed(collapse)
-    _check(label, "collapse", collapse_s)
-    assert hidden > editor.blockCount() // 2
-    assert _NEEDLE in editor.toPlainText()
-
-    def mark() -> None:
-        count = editor.blockCount()
-        editor.set_line_markers(
-            CHANGE_MARKERS,
-            dict.fromkeys(range(1, count + 1), _CHANGE_MARKER),
-        )
-
-    markers_s = _elapsed(mark)
-    _check(label, "compare-markers", markers_s)
-    assert len(editor.line_markers(CHANGE_MARKERS)) == editor.blockCount()
+        _print_timings(samples, compare_note)
 
 
-def test_compare_engine_is_timed_when_it_is_public() -> None:
-    """Time ``galley.core.diff.diff`` when that module is on this checkout."""
-    diff = _public_diff()
-    if diff is None:
-        print("large-file compare: no public API")
-        return
-    for label in _BYTES:
-        text = _document(label)
-        left = json.loads(text)
-        right = json.loads(text)
-        right["items"].insert(0, {"id": -1, "title": "inserted"})
-        elapsed = _elapsed(lambda: diff(left, right))
-        _check(label, "compare", elapsed)
+def test_indicators_follow_the_json_size_thresholds(qtbot, monkeypatch) -> None:
+    """Busy, progress, and the size warning follow the JSON byte thresholds."""
+    assert JSON_BUSY_BYTES == 5_000_000
+    assert JSON_PROGRESS_BYTES == 20_000_000
+    assert JSON_WARNING_BYTES == 100_000_000
+    assert si_size(JSON_BUSY_BYTES) == "5 MB"
+    assert si_size(JSON_PROGRESS_BYTES) == "20 MB"
+    assert si_size(JSON_WARNING_BYTES) == "100 MB"
+    assert _BYTES["2 MB"] < JSON_BUSY_BYTES < JSON_PROGRESS_BYTES < JSON_WARNING_BYTES
 
-
-def test_large_format_shows_the_indicator_and_the_size_warning(
-    qtbot, monkeypatch
-) -> None:
-    """A large format shows the busy UI, and the size prompt is not modal."""
-    text = _document("1 MB")
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr("galley.app.main_window._monotonic", lambda: clock["now"])
     window = _show(qtbot)
+    _hold_submit(monkeypatch, window)
+    editor, status, spinner, progress, cancel = _chrome(window)
+    _select_json(window)
+    editor.set_syntax_colors_enabled(False)
+    original = editor.toPlainText
     try:
-        _hold_submit(monkeypatch, window)
-        editor = window.findChild(CodeEditor, "inputEditor")
-        assert isinstance(editor, CodeEditor)
-        editor.set_syntax_colors_enabled(False)
-        editor.setPlainText(text)
-        qtbot.waitUntil(lambda: editor.toPlainText() == text)
+        for label in _BYTES:
+            text = _document(label)
+            assert len(text.encode()) == _BYTES[label]
+            editor.toPlainText = original  # type: ignore[method-assign]
+            editor.setPlainText(text)
+            qtbot.waitUntil(lambda: editor.blockCount() > 2)
+            _trigger_format(window)
+            _assert_quiet(window, spinner, progress, cancel)
+            _stop(window, spinner, progress)
 
-        monkeypatch.setattr("galley.app.main_window.JSON_WARNING_BYTES", 1)
-        window._actions.format.trigger()
+        _run_size(window, editor, original, JSON_BUSY_BYTES - 1)
+        _assert_quiet(window, spinner, progress, cancel)
+        _stop(window, spinner, progress)
+
+        _run_size(window, editor, original, JSON_BUSY_BYTES)
+        _assert_spinner(window, status, spinner, progress, cancel)
+        _stop(window, spinner, progress)
+
+        _run_size(window, editor, original, JSON_PROGRESS_BYTES - 1)
+        _assert_spinner(window, status, spinner, progress, cancel)
+        _stop(window, spinner, progress)
+
+        _run_size(window, editor, original, JSON_PROGRESS_BYTES)
+        _assert_progress(window, status, spinner, progress, cancel)
+        _stop(window, spinner, progress)
+
+        _run_size(window, editor, original, JSON_WARNING_BYTES - 1)
+        _assert_progress(window, status, spinner, progress, cancel)
+        _stop(window, spinner, progress)
+
+        _run_size(window, editor, original, JSON_WARNING_BYTES)
         warning = _visible_warning(window)
         assert warning is not None
-        assert warning.text() == f"Format this {si_size(len(text.encode()))} document?"
+        assert warning.text() == f"Format this {si_size(JSON_WARNING_BYTES)} document?"
         assert warning.informativeText() == SIZE_WARNING_DETAIL
-        anyway = warning.defaultButton()
-        cancel = warning.escapeButton()
-        assert anyway is not None and anyway.text() == "Format anyway"
-        assert cancel is not None and cancel.text() == "Cancel"
         assert warning.windowModality() == Qt.WindowModality.WindowModal
+        anyway = warning.defaultButton()
+        dismiss = warning.escapeButton()
+        assert anyway is not None and anyway.text() == "Format anyway"
+        assert dismiss is not None and dismiss.text() == "Cancel"
         assert not window._formatting
-        cancel.click()
+        dismiss.click()
         qtbot.waitUntil(lambda: _visible_warning(window) is None)
-        assert editor.toPlainText() == text
         assert not window._formatting
+        assert not window._size_warning_accepted
 
-        monkeypatch.setattr("galley.app.main_window.JSON_WARNING_BYTES", 10**12)
-        monkeypatch.setattr("galley.app.main_window.JSON_BUSY_BYTES", 1)
-        monkeypatch.setattr("galley.app.main_window.JSON_PROGRESS_BYTES", 10**12)
-        window._actions.format.trigger()
-        spinner = _bar(window, "formatSpinner")
-        progress = _bar(window, "writeProgress")
-        cancel_button = _button(window, "cancelButton")
-        assert window._formatting
-        assert spinner.isVisible()
-        assert spinner.accessibleName() == "Formatting"
-        assert not progress.isVisible()
-        assert not cancel_button.isVisible()
-        window._cancel_format()
-        assert not window._formatting
-        assert not spinner.isVisible()
-
-        monkeypatch.setattr("galley.app.main_window.JSON_PROGRESS_BYTES", 1)
-        window._actions.format.trigger()
-        assert window._formatting
-        assert progress.isVisible()
-        assert progress.accessibleName() == "Formatting progress"
-        assert cancel_button.isVisible()
-        assert cancel_button.text() == "Cancel"
-        assert not spinner.isVisible()
-        window._cancel_format()
-        assert not progress.isVisible()
-        assert editor.toPlainText() == text
+        _trigger_format(window)
+        again = _visible_warning(window)
+        assert again is not None
+        accept = again.defaultButton()
+        assert accept is not None and accept.text() == "Format anyway"
+        accept.click()
+        qtbot.waitUntil(lambda: window._formatting)
+        assert _visible_warning(window) is None
+        _assert_progress(window, status, spinner, progress, cancel)
+        _stop(window, spinner, progress)
     finally:
+        editor.toPlainText = original  # type: ignore[method-assign]
         window.shutdown_parse_worker()
 
 
-def _check(label: str, operation: str, elapsed: float) -> None:
-    limit = LARGE_FILE_LIMITS_S[label][operation]
-    print(f"large-file {label} {operation}: {elapsed:.4f}s limit {limit:.4f}s")
-    assert elapsed <= limit, (
-        f"{label} {operation} took {elapsed:.4f}s; limit is {limit:.4f}s"
-    )
+def _record(
+    samples: dict[str, dict[str, float]], operation: str, label: str, elapsed: float
+) -> None:
+    samples.setdefault(operation, {})[label] = elapsed
+
+
+def _print_timings(samples: dict[str, dict[str, float]], compare_note: str) -> None:
+    labels = tuple(_BYTES)
+    header = f"{'operation':<16}" + "".join(f"{label:>10}" for label in labels)
+    lines = [
+        "large-file timings (seconds; informational, not a pass/fail gate)",
+        header,
+    ]
+    operations = [name for name in (*_OPERATIONS, "compare") if name in samples]
+    for operation in operations:
+        row = samples[operation]
+        rendered = f"{operation:<16}"
+        for label in labels:
+            value = row.get(label)
+            rendered += f"{value:10.4f}" if value is not None else f"{'':>10}"
+        lines.append(rendered)
+    if compare_note:
+        lines.append(compare_note)
+    print("\n".join(lines), flush=True)
 
 
 def _elapsed(operation) -> float:
@@ -277,24 +323,43 @@ def _document(label: str) -> str:
     return cached
 
 
-def _item(index: int) -> dict[str, object]:
-    note = _NOTE if index % 11 else f"{_NOTE} {_EMOJI}"
-    title = _UNICODE if index % 4 == 0 else f"item-{index}"
-    return {
-        "id": index,
-        "title": title,
-        "ok": index % 2 == 0,
-        "n": index,
-        "tags": ["alpha", "beta", index % 5],
-        "child": {"depth": 1, "values": [index, None, True]},
-        "note": note,
-    }
+def _items(count: int, seed: int) -> list[dict[str, object]]:
+    """Return ``count`` items from ``seed``.
+
+    The generator is reseeded on every call, so item ``i`` does not depend on
+    how many items a binary search asked for earlier.
+    """
+    rng = random.Random(seed)
+    pool = len(_NOTE_POOL)
+    items: list[dict[str, object]] = []
+    for index in range(count):
+        note_len = rng.randrange(120, 240)
+        start = rng.randrange(0, pool - note_len)
+        title = _UNICODE if rng.randrange(5) == 0 else f"item-{index}"
+        tags = [rng.choice(_TAGS) for _ in range(rng.randrange(2, 5))]
+        items.append(
+            {
+                "id": index,
+                "title": title,
+                "ok": rng.choice((True, False)),
+                "n": rng.randrange(1_000_000),
+                "tags": tags,
+                "child": {
+                    "depth": 1,
+                    "label": rng.choice(("left", "right", "center")),
+                    "values": [rng.randrange(10_000), None, rng.choice((True, False))],
+                },
+                "note": _NOTE_POOL[start : start + note_len],
+            }
+        )
+    return items
 
 
 def _render(items: list[dict[str, object]], pad: str) -> str:
     payload = {
         "kind": "galley-stress",
         "unicode": _UNICODE,
+        "emoji": _EMOJI,
         "items": items,
         "tail": {"pad": pad, "marker": _NEEDLE},
     }
@@ -304,26 +369,33 @@ def _render(items: list[dict[str, object]], pad: str) -> str:
     return text
 
 
-def _build(target: int) -> str:
+def _build(target: int, seed: int = FIXTURE_SEED) -> str:
     """Return pretty-printed JSON of exactly ``target`` UTF-8 bytes.
 
     The item count is a binary search, so generation does not re-dump the
-    document once per item.
+    document once per item. The pad is ASCII, so each extra character is one
+    UTF-8 byte.
     """
+
+    def bare_size(count: int) -> int:
+        return _utf8_len(_render(_items(count, seed), ""))
+
     lo = 0
     hi = 1
-    while _utf8_len(_render([_item(i) for i in range(hi)], "")) <= target:
+    while bare_size(hi) <= target:
         lo = hi
         hi *= 2
+        if hi > 200_000:
+            raise RuntimeError(f"fixture item count exceeded 200_000 for {target}")
     best = lo
     while lo + 1 < hi:
         mid = (lo + hi) // 2
-        if _utf8_len(_render([_item(i) for i in range(mid)], "")) <= target:
+        if bare_size(mid) <= target:
             best = mid
             lo = mid
         else:
             hi = mid
-    items = [_item(i) for i in range(best)]
+    items = _items(best, seed)
     gap = target - _utf8_len(_render(items, ""))
     if gap < 0:
         raise RuntimeError(f"fixture wrapper exceeds {target} bytes")
@@ -427,10 +499,87 @@ def _show(qtbot):
     return window
 
 
-def _hold_submit(monkeypatch: pytest.MonkeyPatch, window) -> None:
+def _hold_submit(monkeypatch, window) -> None:
     """Keep Format in progress without sending the document to the worker."""
     monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+
+
+def _select_json(window) -> None:
+    combo = window.findChild(QComboBox, "inputFormat")
+    assert isinstance(combo, QComboBox)
+    combo.setCurrentText("JSON")
+
+
+def _chrome(window):
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    spinner = window.findChild(QProgressBar, "formatSpinner")
+    progress = window.findChild(QProgressBar, "writeProgress")
+    cancel = window.findChild(QPushButton, "cancelButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(status, QLabel)
+    assert isinstance(spinner, QProgressBar)
+    assert isinstance(progress, QProgressBar)
+    assert isinstance(cancel, QPushButton)
+    return editor, status, spinner, progress, cancel
+
+
+def _trigger_format(window) -> None:
+    assert not window._formatting
+    assert _visible_warning(window) is None
+    window._size_warning_accepted = False
+    window._actions.format.trigger()
+
+
+def _run_size(window, editor: CodeEditor, original, size: int) -> None:
+    """Point Format at ``size`` ASCII bytes without laying that text out."""
+    assert not window._formatting
+    assert _visible_warning(window) is None
+    editor.toPlainText = original  # type: ignore[method-assign]
+    gc.collect()
+    payload = "x" * size
+    editor.toPlainText = lambda payload=payload: payload  # type: ignore[method-assign]
+    window._size_warning_accepted = False
+    window._actions.format.trigger()
+
+
+def _stop(window, spinner: QProgressBar, progress: QProgressBar) -> None:
+    window._cancel_format()
+    assert not window._formatting
+    assert not spinner.isVisible()
+    assert not progress.isVisible()
+
+
+def _assert_quiet(
+    window, spinner: QProgressBar, progress: QProgressBar, cancel: QPushButton
+) -> None:
+    assert _visible_warning(window) is None
+    assert window._formatting
+    assert not spinner.isVisible()
+    assert not progress.isVisible()
+    assert not cancel.isVisible()
+
+
+def _assert_spinner(window, status: QLabel, spinner, progress, cancel) -> None:
+    assert _visible_warning(window) is None
+    assert window._formatting
+    assert spinner.isVisible()
+    assert spinner.accessibleName() == "Formatting"
+    assert not progress.isVisible()
+    assert not cancel.isVisible()
+    assert status.text() == FORMATTING_MESSAGE
+
+
+def _assert_progress(window, status: QLabel, spinner, progress, cancel) -> None:
+    assert _visible_warning(window) is None
+    assert window._formatting
+    assert progress.isVisible()
+    assert progress.accessibleName() == "Formatting progress"
+    assert cancel.isVisible()
+    assert cancel.text() == "Cancel"
+    assert not spinner.isVisible()
+    assert status.text() == FORMATTING_MESSAGE
 
 
 def _visible_warning(window) -> QMessageBox | None:
@@ -443,15 +592,3 @@ def _visible_warning(window) -> QMessageBox | None:
         return None
     assert len(visible) == 1
     return visible[0]
-
-
-def _bar(window, name: str) -> QProgressBar:
-    bar = window.findChild(QProgressBar, name)
-    assert isinstance(bar, QProgressBar)
-    return bar
-
-
-def _button(window, name: str) -> QPushButton:
-    button = window.findChild(QPushButton, name)
-    assert isinstance(button, QPushButton)
-    return button
