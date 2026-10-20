@@ -476,7 +476,8 @@ def test_second_cancel_after_deadline_keeps_each_child_temp(
     try:
         rig.window._formatting = True
         rig.window._sync_format_button()
-        assert not rig.button.isEnabled()
+        assert rig.button.isEnabled()
+        assert not rig.window._actions.format.isEnabled()
         rig.output.setPlainText("partial result\n")
         session.submit(
             '{"b": 2}',
@@ -708,7 +709,9 @@ def test_format_after_a_crash_uses_a_fresh_worker(qtbot, tmp_path: Path) -> None
         replacement = session.process
         assert replacement is not None
         fresh_pid = replacement.pid
-        qtbot.waitUntil(lambda: button.isEnabled(), timeout=5000)
+        qtbot.waitUntil(
+            lambda: not window._formatting and button.isEnabled(), timeout=5000
+        )
         editor.setPlainText('{"b": 2}')
         button.click()
         qtbot.waitUntil(
