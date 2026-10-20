@@ -6,7 +6,7 @@ platform's icon gap lands near 8 px. No stylesheet sets the color.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
 
 _ICON = 16
@@ -14,18 +14,25 @@ _GAP = 4
 
 
 def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
-    """Return a toolbar icon for ``name``, or an empty icon when unknown."""
-    pixmap = _draw(name)
-    if pixmap is None:
-        return QIcon()
-    if not pad:
-        return QIcon(pixmap)
-    wider = QPixmap(pixmap.width() + _GAP, pixmap.height())
-    wider.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(wider)
-    painter.drawPixmap(0, 0, pixmap)
-    painter.end()
-    return QIcon(wider)
+    """Return a toolbar icon for ``name``, or an empty icon when unknown.
+
+    The normal pixmap uses the active color group. The disabled pixmap
+    uses the disabled group, so a disabled menu row is not redrawn
+    brighter than an enabled one.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    role = _ink(name)
+    icon = QIcon()
+    for mode, group in (
+        (QIcon.Mode.Normal, QPalette.ColorGroup.Active),
+        (QIcon.Mode.Disabled, QPalette.ColorGroup.Disabled),
+    ):
+        pixmap = _draw(name, palette.color(group, role))
+        if pixmap is None:
+            return QIcon()
+        icon.addPixmap(_with_gap(pixmap) if pad else pixmap, mode)
+    return icon
 
 
 def _ink(name: str) -> QPalette.ColorRole:
@@ -34,10 +41,16 @@ def _ink(name: str) -> QPalette.ColorRole:
     return QPalette.ColorRole.PlaceholderText
 
 
-def _draw(name: str) -> QPixmap | None:
-    app = QApplication.instance()
-    palette = app.palette() if isinstance(app, QApplication) else QPalette()
-    color = palette.color(_ink(name))
+def _with_gap(pixmap: QPixmap) -> QPixmap:
+    wider = QPixmap(pixmap.width() + _GAP, pixmap.height())
+    wider.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(wider)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return wider
+
+
+def _draw(name: str, color: QColor) -> QPixmap | None:
     pixmap = QPixmap(_ICON, _ICON)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
