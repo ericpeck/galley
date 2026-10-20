@@ -7,7 +7,6 @@ from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
-    QColor,
     QKeyEvent,
     QKeySequence,
     QPainter,
@@ -66,14 +65,6 @@ from galley.app.style import (
     status_bar_style,
 )
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import (
-    EDITOR_BG,
-    GUTTER_BG,
-    SELECTION,
-    TEXT,
-    TEXT_ON_ACCENT,
-    WINDOW_BG,
-)
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.format import _has_tab
 
@@ -128,6 +119,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._initial_show_done = False
         self._split_settled = False
+        self._following_palette = False
         self._splitter: PaneSplitter | None = None
         self._formatting = False
         self._format_started_s = 0.0
@@ -152,7 +144,7 @@ class MainWindow(QMainWindow):
         self.setFont(ui_font())
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
-        self._apply_palette()
+        self.setAutoFillBackground(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -176,6 +168,7 @@ class MainWindow(QMainWindow):
         self._splitter.apply_even_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -210,6 +203,8 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._follow_editor_palette()
         if event.type() != QEvent.Type.WindowStateChange:
             return
         fullscreen = self.isFullScreen()
@@ -217,18 +212,16 @@ class MainWindow(QMainWindow):
         if action.isChecked() != fullscreen:
             action.setChecked(fullscreen)
 
-    def _apply_palette(self) -> None:
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(EDITOR_BG))
-        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+    def _follow_editor_palette(self) -> None:
+        """Keep each editor on the application Base after a scheme change."""
+        if self._following_palette or not hasattr(self, "_output_pane"):
+            return
+        self._following_palette = True
+        try:
+            for editor in self._editors():
+                editor.follow_application_palette()
+        finally:
+            self._following_palette = False
 
     def _build_menus(self) -> None:
         actions = self._actions
@@ -1163,13 +1156,13 @@ def _tool_button(action: QAction) -> QWidget:
         button.setIcon(icon)
     if icon_only:
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setAccessibleName(action.text())
         if not is_unbuilt(action):
             shortcut = action.shortcut().toString(
                 QKeySequence.SequenceFormat.NativeText
             )
             tip = action.text() if not shortcut else f"{action.text()} ({shortcut})"
             button.setToolTip(tip)
-            button.setAccessibleName(action.text())
     elif not icon.isNull():
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     else:
@@ -1190,7 +1183,7 @@ class _UndoRedoTray(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(GUTTER_BG))
+        painter.setBrush(self.palette().color(QPalette.ColorRole.AlternateBase))
         painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 4, 4)
         painter.end()
 

@@ -25,7 +25,6 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
-from galley.app.theme import TEXT, TEXT_MUTED
 
 
 class PaneRole(Enum):
@@ -104,7 +103,10 @@ class PaneWidget(QWidget):
     def _build_tab_strip(self, title: str, format_label: str) -> None:
         tab = QLabel(title)
         tab.setObjectName(f"{self.role.value}TabTitle")
-        tab.setStyleSheet(f"color: {TEXT}; font-weight: 700; padding: 4px 8px;")
+        tab.setStyleSheet("padding: 4px 8px;")
+        tab_font = ui_font()
+        tab_font.setBold(True)
+        tab.setFont(tab_font)
 
         self.close_tab_button = QPushButton("×")
         self.close_tab_button.setAccessibleName("Close")
@@ -170,7 +172,7 @@ class PaneWidget(QWidget):
         hint = QLabel("⌨ ⌘V to paste · Ctrl+V on Windows")
         hint.setObjectName("inputEmptyHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet(f"color: {TEXT_MUTED};")
+        hint.setStyleSheet(muted_text_style())
 
         self.paste_button = QPushButton("Paste")
         self.paste_button.setObjectName("emptyPasteButton")
@@ -254,7 +256,6 @@ def _style_empty_heading(heading: QLabel) -> None:
     font = ui_font()
     font.setPixelSize(15)
     font.setWeight(QFont.Weight.DemiBold)
-    heading.setStyleSheet(f"color: {TEXT};")
     heading.setFont(font)
     heading.setMaximumWidth(360)
 

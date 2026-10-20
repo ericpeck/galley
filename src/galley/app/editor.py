@@ -1,6 +1,6 @@
 """Plain-text editor with a line-number gutter."""
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QPainter,
@@ -10,20 +10,10 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextFormat,
 )
-from PySide6.QtWidgets import QFrame, QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit, QTextEdit, QWidget
 
 from galley.app.fonts import code_font
-from galley.app.theme import (
-    EDITOR_BG,
-    ERROR,
-    ERROR_TINT,
-    GUTTER_BG,
-    LINE_CURRENT,
-    SELECTION,
-    TEXT,
-    TEXT_MUTED,
-    TEXT_ON_ACCENT,
-)
+from galley.app.theme import ERROR, ERROR_TINT, LINE_CURRENT, TEXT_ON_ACCENT
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -45,19 +35,17 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    """Editor surface: white page, current-line band, muted line numbers."""
+    """Editor surface: palette Base, current-line band, placeholder line numbers."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._line_number_color = QColor(TEXT_MUTED)
-        self._gutter_color = QColor(GUTTER_BG)
+        self._adopting_palette = False
         self._problem_lines: set[int] = set()
         self._overlay: QWidget | None = None
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.document().setDocumentMargin(10)
-        self._apply_palette()
         self._line_numbers = LineNumberArea(self)
         self._line_numbers.setObjectName("lineNumberArea")
         self.blockCountChanged.connect(self._update_line_number_width)
@@ -69,12 +57,47 @@ class CodeEditor(QPlainTextEdit):
         self.document().clearUndoRedoStacks()
 
     def line_number_color(self) -> QColor:
-        """Color used for gutter numerals. This is ``text.muted``."""
-        return self._line_number_color
+        """Gutter numerals. This is the palette's placeholder text."""
+        return self.palette().color(QPalette.ColorRole.PlaceholderText)
 
     def gutter_color(self) -> QColor:
-        """Fill used behind the line numbers. This is ``gutter.bg``."""
-        return self._gutter_color
+        """Fill behind the line numbers. This is ``AlternateBase``."""
+        return self.palette().color(QPalette.ColorRole.AlternateBase)
+
+    def follow_application_palette(self) -> None:
+        """Copy the application palette when an ancestor stylesheet froze Base.
+
+        A pane stylesheet stops the editor inheriting a later dark scheme,
+        which would leave the page white. Skip the copy when Base already
+        matches so this does not fight the native palette.
+        """
+        if self._adopting_palette:
+            return
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        palette = QPalette(app.palette())
+        current = self.palette().color(QPalette.ColorRole.Base).rgba()
+        if current == palette.color(QPalette.ColorRole.Base).rgba():
+            self._line_numbers.update()
+            return
+        self._adopting_palette = True
+        try:
+            self.setPalette(palette)
+        finally:
+            self._adopting_palette = False
+        self._line_numbers.update()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if not hasattr(self, "_line_numbers"):
+            return
+        if event.type() not in (
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+        ):
+            return
+        self.follow_application_palette()
 
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
@@ -143,8 +166,8 @@ class CodeEditor(QPlainTextEdit):
 
     def paint_line_numbers(self, event: QPaintEvent) -> None:
         painter = QPainter(self._line_numbers)
-        painter.fillRect(event.rect(), self._gutter_color)
-        painter.setPen(self._line_number_color)
+        painter.fillRect(event.rect(), self.gutter_color())
+        painter.setPen(self.line_number_color())
         painter.setFont(self.font())
         block = self.firstVisibleBlock()
         number = block.blockNumber()
@@ -160,7 +183,7 @@ class CodeEditor(QPlainTextEdit):
                     self._paint_error_marker(painter, top)
                     painter.setPen(QColor(ERROR))
                 else:
-                    painter.setPen(self._line_number_color)
+                    painter.setPen(self.line_number_color())
                 painter.drawText(
                     _MARKER_SLOT if self._problem_lines else 0,
                     top,
@@ -174,14 +197,6 @@ class CodeEditor(QPlainTextEdit):
             bottom = top + int(self.blockBoundingRect(block).height())
             number += 1
         painter.end()
-
-    def _apply_palette(self) -> None:
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Base, QColor(EDITOR_BG))
-        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT))
-        self.setPalette(palette)
 
     def _update_line_number_width(self, _block_count: int) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)

@@ -1,7 +1,14 @@
 """Readability: system font, undo availability, editor page, and the reset rail."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QFontDatabase, QPalette
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -12,11 +19,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.actions import COMING_SOON, is_unbuilt
 from galley.app.editor import CodeEditor
 from galley.app.fonts import ui_font
 from galley.app.main import create_main_window
 from galley.app.splitter import RESET_NAME
-from galley.app.theme import EDITOR_BG, GUTTER_BG
 
 _ICON_ONLY = ("Outdent", "Indent", "Expand all", "Collapse all")
 
@@ -66,9 +73,13 @@ def test_ui_font_is_the_system_font_and_editors_stay_mono(qtbot) -> None:
             editors.append(widget)
             assert widget.font().fixedPitch()
             assert widget.font().styleHint() == QFont.StyleHint.Monospace
-            base = widget.palette().color(QPalette.ColorRole.Base).name()
-            assert base == EDITOR_BG.lower()
-            assert widget.gutter_color().name() == GUTTER_BG.lower()
+            base = widget.palette().color(QPalette.ColorRole.Base)
+            app_base = QApplication.palette().color(QPalette.ColorRole.Base)
+            assert base.name() == app_base.name()
+            assert (
+                widget.gutter_color().name()
+                == widget.palette().color(QPalette.ColorRole.AlternateBase).name()
+            )
         else:
             assert not _is_serif(widget.font())
     assert len(editors) == 2
@@ -163,6 +174,61 @@ def test_empty_heading_wraps_in_a_bounded_width(qtbot) -> None:
     assert not _is_serif(heading.font())
 
 
+def _is_white(color: QColor) -> bool:
+    return color.red() == 255 and color.green() == 255 and color.blue() == 255
+
+
+def _explicit_dark(palette: QPalette, light: QColor) -> QPalette:
+    """A dark application palette whose Base is not the light-mode Base."""
+    dark = QPalette(palette)
+    base = QColor(28, 28, 28)
+    if base.rgba() == light.rgba():
+        base = QColor(12, 12, 12)
+    for group in (
+        QPalette.ColorGroup.Active,
+        QPalette.ColorGroup.Inactive,
+        QPalette.ColorGroup.Disabled,
+    ):
+        dark.setColor(group, QPalette.ColorRole.Base, base)
+        dark.setColor(group, QPalette.ColorRole.AlternateBase, QColor(36, 36, 36))
+        dark.setColor(group, QPalette.ColorRole.Window, QColor(24, 24, 24))
+        dark.setColor(group, QPalette.ColorRole.Text, QColor(240, 240, 240))
+        dark.setColor(group, QPalette.ColorRole.WindowText, QColor(240, 240, 240))
+    return dark
+
+
+def test_editor_base_is_not_white_in_dark_mode(qtbot) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    assert isinstance(editor, CodeEditor)
+    light = QColor(editor.palette().color(QPalette.ColorRole.Base))
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    previous_palette = QPalette(app.palette())
+    hints = QGuiApplication.styleHints()
+    previous_scheme = hints.colorScheme()
+    try:
+        setter = getattr(hints, "setColorScheme", None)
+        if setter is not None:
+            setter(Qt.ColorScheme.Dark)
+            app.processEvents()
+        dark = editor.palette().color(QPalette.ColorRole.Base)
+        if dark.rgba() == light.rgba() or _is_white(dark):
+            app.setPalette(_explicit_dark(previous_palette, light))
+            app.processEvents()
+            dark = editor.palette().color(QPalette.ColorRole.Base)
+        assert dark.rgba() != light.rgba()
+        assert not _is_white(dark)
+        assert dark.rgba() == app.palette().color(QPalette.ColorRole.Base).rgba()
+    finally:
+        app.setPalette(previous_palette)
+        restore = getattr(hints, "setColorScheme", None)
+        if restore is not None:
+            restore(previous_scheme)
+            app.processEvents()
+            assert hints.colorScheme() == previous_scheme
+
+
 def test_icon_only_toolbar_buttons_have_tooltips(qtbot) -> None:
     window = _show(qtbot)
     for name in _ICON_ONLY:
@@ -175,8 +241,15 @@ def test_icon_only_toolbar_buttons_have_tooltips(qtbot) -> None:
         assert len(buttons) == 1, name
         button = buttons[0]
         assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-        assert button.toolTip()
+        assert button.accessibleName() == name
         assert not button.icon().isNull()
+        action = button.defaultAction()
+        assert isinstance(action, QAction)
+        if is_unbuilt(action):
+            assert button.toolTip() == COMING_SOON
+        else:
+            assert button.toolTip()
+            assert button.toolTip() != COMING_SOON
 
 
 def test_format_pickers_keep_their_items(qtbot) -> None:

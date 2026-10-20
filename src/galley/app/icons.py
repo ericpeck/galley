@@ -1,14 +1,13 @@
 """Small monochrome toolbar icons.
 
-Most glyphs use ``text.muted``. Format uses ``accent``. A few transparent
-pixels sit to the right of label icons so the platform's icon gap lands
-near 8 px. No stylesheet sets the color.
+Glyphs use the palette's placeholder text. Format uses the link role.
+A few transparent pixels sit to the right of label icons so the
+platform's icon gap lands near 8 px. No stylesheet sets the color.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-
-from galley.app.theme import ACCENT, TEXT_MUTED
+from PySide6.QtGui import QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtWidgets import QApplication
 
 _ICON = 16
 _GAP = 4
@@ -29,8 +28,16 @@ def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
     return QIcon(wider)
 
 
+def _ink(name: str) -> QPalette.ColorRole:
+    if name == "Format":
+        return QPalette.ColorRole.Link
+    return QPalette.ColorRole.PlaceholderText
+
+
 def _draw(name: str) -> QPixmap | None:
-    color = QColor(ACCENT if name == "Format" else TEXT_MUTED)
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    color = palette.color(_ink(name))
     pixmap = QPixmap(_ICON, _ICON)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)

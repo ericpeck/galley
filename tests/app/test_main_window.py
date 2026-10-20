@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QLabel,
     QMenu,
@@ -28,15 +29,7 @@ from galley.app.main_window import (
     SPINNER_WIDTH_PX,
 )
 from galley.app.parse_session import ParseSession
-from galley.app.theme import (
-    ACCENT,
-    ACCENT_DISABLED,
-    EDITOR_BG,
-    GUTTER_BG,
-    TEXT_MUTED,
-    TEXT_ON_ACCENT,
-    WINDOW_BG,
-)
+from galley.app.theme import ACCENT, ACCENT_DISABLED, TEXT_ON_ACCENT
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 
@@ -135,7 +128,9 @@ def test_main_window_opens(qtbot) -> None:
     assert window.isVisible()
     assert window.windowTitle() == "Galley"
     assert window.centralWidget() is not None
-    assert window.palette().color(QPalette.ColorRole.Window).name() == WINDOW_BG.lower()
+    window_color = window.palette().color(QPalette.ColorRole.Window)
+    app_color = QApplication.palette().color(QPalette.ColorRole.Window)
+    assert window_color.name() == app_color.name()
 
 
 def test_menu_bar_matches_spec(qtbot) -> None:
@@ -319,11 +314,18 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
     for name in ("inputEditor", "outputEditor"):
         editor = window.findChild(CodeEditor, name)
         assert isinstance(editor, CodeEditor)
-        assert editor.line_number_color().name() == TEXT_MUTED.lower()
-        assert editor.gutter_color().name() == GUTTER_BG.lower()
+        assert (
+            editor.line_number_color().name()
+            == editor.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        )
+        assert (
+            editor.gutter_color().name()
+            == editor.palette().color(QPalette.ColorRole.AlternateBase).name()
+        )
         assert editor.viewportMargins().left() >= 48
-        base = editor.palette().color(QPalette.ColorRole.Base).name()
-        assert base == EDITOR_BG.lower()
+        base = editor.palette().color(QPalette.ColorRole.Base)
+        app_base = QApplication.palette().color(QPalette.ColorRole.Base)
+        assert base.name() == app_base.name()
 
 
 def test_stub_action_reports_not_yet(qtbot) -> None:

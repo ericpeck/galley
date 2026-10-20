@@ -8,9 +8,6 @@ colors belong to platform chrome and are not roles here.
 from typing import Final
 
 WINDOW_BG: Final = "#F3F2F2"
-# White page. The gutter is one step darker so the two surfaces separate.
-EDITOR_BG: Final = "#FFFFFF"
-GUTTER_BG: Final = "#EAE7E7"
 PANE_EDGE: Final = "#7D7979"
 LINE_CURRENT: Final = "#DEDBDB"
 DIALOG_BG: Final = "#EAE9E9"
@@ -44,9 +41,11 @@ TEXT_ON_ACCENT: Final = "#FFFFFF"
 
 # Role names match the spec table. Guide depth lists the two sampled hues.
 COLORS: Final[dict[str, str]] = {
+    # Light-mode samples. The editor paints palette Base, the gutter
+    # AlternateBase; these hexes are not applied to those surfaces.
     "window.bg": WINDOW_BG,
-    "editor.bg": EDITOR_BG,
-    "gutter.bg": GUTTER_BG,
+    "editor.bg": "#FFFFFF",
+    "gutter.bg": "#EAE7E7",
     "pane.edge": PANE_EDGE,
     "line.current": LINE_CURRENT,
     "dialog.bg": DIALOG_BG,

@@ -4,10 +4,8 @@ from galley.app.theme import (
     ACCENT,
     ACCENT_DISABLED,
     ACCENT_STRONG,
-    GUTTER_BG,
     PANE_EDGE,
     TEXT,
-    TEXT_MUTED,
     TEXT_ON_ACCENT,
     WINDOW_BG,
 )
@@ -63,14 +61,14 @@ def link_button_style() -> str:
 
 
 def progress_style() -> str:
-    """Write-progress track on ``gutter.bg`` with an ``accent`` fill."""
+    """Write-progress track on the alternate base with an accent fill."""
     return f"""
         QProgressBar {{
-            background: {GUTTER_BG};
+            background: palette(alternate-base);
             border: none;
             border-radius: 2px;
             text-align: center;
-            color: {TEXT};
+            color: palette(text);
             min-height: 14px;
             max-height: 14px;
         }}
@@ -116,7 +114,7 @@ def pane_style(object_name: str) -> str:
 
 
 def status_bar_style() -> str:
-    """Status bar surface. Messages use the muted text color.
+    """Status bar surface. Messages use the placeholder text role.
 
     Left and right padding keep the message off the frame so the first
     glyph is not clipped.
@@ -124,7 +122,7 @@ def status_bar_style() -> str:
     return f"""
         QStatusBar {{
             background: {WINDOW_BG};
-            color: {TEXT_MUTED};
+            color: palette(placeholder-text);
             padding-left: 8px;
             padding-right: 8px;
         }}
@@ -136,4 +134,4 @@ def status_bar_style() -> str:
 
 def muted_text_style() -> str:
     """Captions, counts, and the resting status message."""
-    return f"color: {TEXT_MUTED};"
+    return "color: palette(placeholder-text);"

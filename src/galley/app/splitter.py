@@ -1,7 +1,7 @@
 """Input / Output splitter with a rail that reads the split ratio."""
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QMouseEvent, QPalette
+from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QBoxLayout,
     QLabel,
@@ -11,11 +11,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from galley.app.style import muted_text_style
-from galley.app.theme import TEXT_MUTED, WINDOW_BG
-
 RAIL_WIDTH = 32
-RESET_NAME = "Reset to 50 | 50"
+RESET_NAME = "Reset split"
 
 
 class SplitterRail(QSplitterHandle):
@@ -23,9 +20,6 @@ class SplitterRail(QSplitterHandle):
 
     def __init__(self, orientation: Qt.Orientation, splitter: QSplitter) -> None:
         super().__init__(orientation, splitter)
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
-        self.setPalette(palette)
         self.setAutoFillBackground(True)
 
         self.reset_button = _rail_button("↔", RESET_NAME, "resetSplitButton")
@@ -35,7 +29,7 @@ class SplitterRail(QSplitterHandle):
         self.ratio_label.setObjectName("splitRatio")
         self.ratio_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ratio_label.setAccessibleName("50 / 50")
-        self.ratio_label.setStyleSheet(muted_text_style())
+        _use_placeholder_text(self.ratio_label)
         ratio_font = self.ratio_label.font()
         ratio_font.setPixelSize(11)
         self.ratio_label.setFont(ratio_font)
@@ -141,10 +135,16 @@ def _rail_button(text: str, name: str, object_name: str) -> QToolButton:
     button.setObjectName(object_name)
     button.setAutoRaise(True)
     button.setFixedSize(24, 24)
-    palette = button.palette()
-    color = QColor(TEXT_MUTED)
-    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
-        palette.setColor(group, QPalette.ColorRole.ButtonText, color)
-        palette.setColor(group, QPalette.ColorRole.WindowText, color)
-    button.setPalette(palette)
+    _use_placeholder_text(button)
     return button
+
+
+def _use_placeholder_text(widget: QWidget) -> None:
+    """Muted ink from the placeholder role. Disabled stays the platform fade."""
+    palette = widget.palette()
+    muted = palette.color(QPalette.ColorRole.PlaceholderText)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.ButtonText, muted)
+        palette.setColor(group, QPalette.ColorRole.WindowText, muted)
+        palette.setColor(group, QPalette.ColorRole.Text, muted)
+    widget.setPalette(palette)

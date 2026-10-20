@@ -31,8 +31,8 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | Role | Hex | Where | Confidence |
 |---|---|---|---|
 | `window.bg` | `#F3F2F2` | window, toolbar, status bar, pane footers, menus, popovers, find bar | confirmed |
-| `editor.bg` | `#FFFFFF` | editor text area (white, so the page does not blend into the gutter) | confirmed |
-| `gutter.bg` | `#EAE7E7` | line-number gutter, one step darker than the white editor; also stale-output banner and `Stale` tag fill; progress-bar track | confirmed |
+| `editor.bg` | `#FFFFFF` | light-mode sample of the editor text area. The editor uses palette Base, not this hex | confirmed |
+| `gutter.bg` | `#EAE7E7` | light-mode sample of the line-number gutter (one step darker than the white page). The gutter uses palette AlternateBase; also the stale-output banner, `Stale` tag fill, and progress-bar track in the light samples | confirmed |
 | `pane.edge` | `#7D7979` | 1 px border around panes and under inactive tabs; ~3.9:1 vs window | confirmed |
 | `line.current` | `#DEDBDB` | current-line band in the editor | measured |
 | `dialog.bg` | `#EAE9E9` | modal dialog surface | measured |
@@ -165,7 +165,7 @@ Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; 
 Right: direction `JSON → JSON` etc.
 
 ### 5.8 Splitter and rail
-`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset to 50 | 50`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
+`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
 
 ### 5.9 Pane pop-out
 See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
@@ -384,7 +384,7 @@ Architecture:
 
 ## 11. Accessibility baseline
 
-- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, pop-out, reset, close tab, find toggles `.*` `Aa` `ab`).
+- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, pop-out, reset, close tab, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
 - Visible 2 px accent focus ring on panes, fields, and buttons; default button in dialogs has a ring.
 - Full keyboard operation for every screen (§6, §7). Dialogs trap focus; Esc cancels (except 6l Close).
 - Color never the only cue (§2).
@@ -432,7 +432,7 @@ Isolate behind a `platform` module for macOS and Windows:
 5. **White on accent**: Resolved. Button-face `accent` is `#0080A6` (same hue as measured `#0088B0`). White on `#0080A6` is 4.53:1 against `#FFFFFF` (was 4.08:1).
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#EAE7E7` is 5.47:1.
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
-8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset to 50 | 50`.
+8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset split`. The readout's accessible name stays `50 / 50`.
 9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows.
 10. File and Help menu contents. Window is resolved: `Pop out into window`, `Show window`, `Bring back` (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
