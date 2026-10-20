@@ -1,5 +1,7 @@
 """Unbuilt roadmap actions stay visible, disabled, and marked Coming soon."""
 
+from pathlib import Path
+
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPushButton, QToolButton, QToolTip, QWidget
@@ -17,6 +19,9 @@ from galley.app.main_window import NOT_YET_MESSAGE
 
 _RELEASE_FIX = (
     "Build them or remove them from UNBUILT_ACTIONS in actions.py before tagging."
+)
+_RELEASE_WORKFLOW = (
+    Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
 )
 
 
@@ -133,6 +138,24 @@ def test_release_check_fails_with_the_live_list_in_menu_order(qtbot, capsys) -> 
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == message + "\n"
+
+
+def test_tag_release_runs_the_unbuilt_action_check_after_copyright() -> None:
+    workflow = _RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    notice = workflow.find("- name: Check copyright notice")
+    unbuilt = workflow.find("- name: Check unbuilt actions")
+    build = workflow.find("- name: Build Galley.app")
+    assert notice != -1
+    assert notice < unbuilt < build
+    block = workflow[unbuilt:build]
+    assert block.startswith("- name: Check unbuilt actions\n")
+    assert "if: startsWith(github.ref, 'refs/tags/v')" in block
+    assert (
+        "uv run --frozen --no-dev --no-editable python -m galley.app.actions" in block
+    )
+    build_step = workflow[build : workflow.find("- name: Check release version")]
+    assert "\n        if:" not in build_step
+    assert "workflow_dispatch:" in workflow
 
 
 def test_unbuilt_actions_are_visible_disabled_and_marked(qtbot) -> None:
