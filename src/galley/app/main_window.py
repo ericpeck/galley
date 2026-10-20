@@ -501,6 +501,9 @@ class MainWindow(QMainWindow):
         self._problems_pane.minimize_requested.connect(self._minimize_problems)
         self._problems_pane.expand_requested.connect(self._expand_problems)
         self._problems_pane.replace_tabs_requested.connect(self._replace_tabs)
+        self._input_pane.editor.problem_marker_clicked.connect(
+            self._problems_pane.select_line
+        )
         self._order_focus()
 
         self._input_pane.editor.textChanged.connect(self._sync_input_state)
@@ -809,7 +812,12 @@ class MainWindow(QMainWindow):
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
         self._problems_pane.set_problems(rows)
-        self._input_pane.editor.set_problem_lines({row.lineno for row in rows})
+        messages: dict[int, list[str]] = {}
+        for row in rows:
+            messages.setdefault(row.lineno, []).append(row.message)
+        self._input_pane.editor.set_problem_messages(
+            {lineno: "\n".join(texts) for lineno, texts in messages.items()}
+        )
         self._layout_problems()
         self._status.set_problem_count(len(rows))
 
