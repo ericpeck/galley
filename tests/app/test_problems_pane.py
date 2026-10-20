@@ -1,6 +1,6 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import QComboBox, QListWidget, QPushButton, QSplitter
 
@@ -60,6 +60,25 @@ def _editor(window) -> CodeEditor:
     editor = window.findChild(CodeEditor, "inputEditor")
     assert isinstance(editor, CodeEditor)
     return editor
+
+
+def test_building_the_main_window_logs_no_stylesheet_parse_warning(qtbot) -> None:
+    warnings: list[str] = []
+
+    def handler(mode: QtMsgType, context: object, message: str) -> None:
+        del context
+        if mode == QtMsgType.QtWarningMsg and "Could not parse stylesheet" in message:
+            warnings.append(message)
+
+    previous = qInstallMessageHandler(handler)
+    try:
+        window = create_main_window()
+        qtbot.addWidget(window)
+        window.show()
+        qtbot.waitExposed(window)
+    finally:
+        qInstallMessageHandler(previous)
+    assert warnings == []
 
 
 def test_replace_leading_tabs_is_one_undo(qtbot) -> None:
