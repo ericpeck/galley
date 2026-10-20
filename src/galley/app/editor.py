@@ -16,6 +16,7 @@ from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.theme import contrast_ratio, error_color, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
+from galley.app.theme import line_number_color as theme_line_number_color
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -69,8 +70,8 @@ class CodeEditor(QPlainTextEdit):
         return brand_find_highlight()
 
     def line_number_color(self) -> QColor:
-        """Gutter numerals. This is the palette's placeholder text."""
-        return self.palette().color(QPalette.ColorRole.PlaceholderText)
+        """Gutter numerals: placeholder text, or the dark-mode number color."""
+        return theme_line_number_color(self.palette())
 
     def gutter_color(self) -> QColor:
         """Fill behind the line numbers. This is ``AlternateBase``."""

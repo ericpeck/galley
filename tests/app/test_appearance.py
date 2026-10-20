@@ -36,9 +36,11 @@ from galley.app.theme import (
     EDGE_MIN_CONTRAST,
     ERROR_DARK,
     ERROR_TINT,
+    LINE_NUMBER_DARK,
     TEXT_MIN_CONTRAST,
     contrast_ratio,
     error_color,
+    line_number_color,
     problem_line_tint,
 )
 
@@ -195,6 +197,8 @@ def test_light_to_dark_while_open_recolors_the_editor_gutter_and_tray(
     assert _is_dark(gutter), "the gutter stayed light on a dark editor"
     numbers = editor.line_number_color()
     assert numbers.rgba() != light_numbers.rgba()
+    assert numbers.name() == QColor(LINE_NUMBER_DARK).name()
+    assert _ratio(numbers, base) >= TEXT_MIN_CONTRAST
     assert _ratio(numbers, gutter) >= TEXT_MIN_CONTRAST
     assert _is_dark(tray.palette().color(_R.AlternateBase))
     tint = problem_line_tint(editor.palette())
@@ -314,7 +318,8 @@ def _assert_contrast(window) -> None:
         "button text": (palette.color(_R.ButtonText), palette.color(_R.Button)),
         "muted on window": (palette.color(_R.PlaceholderText), window_bg),
         "muted on base": (palette.color(_R.PlaceholderText), base),
-        "line numbers on gutter": (palette.color(_R.PlaceholderText), gutter),
+        "line numbers on gutter": (line_number_color(palette), gutter),
+        "line numbers on base": (line_number_color(palette), base),
         "link on window": (palette.color(_R.Link), window_bg),
         "menu selection": (base, palette.color(_R.Link)),
         "Format label": (palette.color(_R.HighlightedText), QColor(ACCENT)),
@@ -379,3 +384,20 @@ def test_format_fill_stays_brand_blue_in_dark(qtbot) -> None:
     assert isinstance(button, QPushButton)
     assert ACCENT in button.styleSheet()
     assert ACCENT_TEXT_DARK not in button.styleSheet()
+
+
+def test_stylesheet_palette_colors_follow_a_switch(qtbot) -> None:
+    """Stylesheets resolve palette(...) when set, so a switch re-applies them."""
+    window = _window(qtbot)
+    status = window.statusBar()
+    _pick(qtbot, window, "Light")
+    light = status.grab().toImage()
+    light_fill = QColor(light.pixel(light.width() // 2, 2))
+    assert not _is_dark(light_fill)
+
+    _pick(qtbot, window, "Dark")
+
+    dark = status.grab().toImage()
+    dark_fill = QColor(dark.pixel(dark.width() // 2, 2))
+    assert _is_dark(dark_fill), "the status bar kept its light stylesheet fill"
+    assert dark_fill.name() == _palette().color(_R.Window).name()

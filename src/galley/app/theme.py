@@ -61,6 +61,10 @@ ACCENT_INK_DARK: Final = "#7CC7E8"
 STRING_DARK: Final = "#E6C07B"
 TEXT_CODE_VALUE_DARK: Final = "#C3A6FF"
 TEXT_MUTED_DARK: Final = "#A8A4A4"
+# Dark gutter line numbers, Bill's #54 update (replaces #6E6A67, which was
+# 3.35:1). 5.38:1 on #171717 and 4.66:1 on the dark gutter #242424, and
+# dimmer than the dark punctuation TEXT_MUTED_DARK.
+LINE_NUMBER_DARK: Final = "#908C89"
 
 # Role names match the spec table. Guide depth lists the two sampled hues.
 COLORS: Final[dict[str, str]] = {
@@ -217,6 +221,13 @@ def is_dark(palette: QPalette) -> bool:
 def error_color(palette: QPalette) -> QColor:
     """Error ink for the scheme ``palette`` belongs to."""
     return QColor(ERROR_DARK if is_dark(palette) else ERROR)
+
+
+def line_number_color(palette: QPalette) -> QColor:
+    """Gutter numerals: muted text in light mode, LINE_NUMBER_DARK in dark."""
+    if is_dark(palette):
+        return QColor(LINE_NUMBER_DARK)
+    return palette.color(QPalette.ColorRole.PlaceholderText)
 
 
 def problem_line_tint(palette: QPalette) -> QColor:
