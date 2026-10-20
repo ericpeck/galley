@@ -1034,13 +1034,20 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format and Convert disabled for the whole job."""
+        """Block Format and Convert for the whole job.
+
+        The button keeps its full accent face while working and reads
+        ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        """
         has_input = self._input_pane.editor.toPlainText() != ""
         available = has_input and not self._formatting
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
-        self._format_button.setEnabled(available)
+        self._format_button.setEnabled(has_input or self._formatting)
+        self._format_button.setText(
+            FORMATTING_MESSAGE if self._formatting else self._format_idle_text
+        )
         self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:

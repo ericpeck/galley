@@ -430,8 +430,8 @@ def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
     assert not bar.isVisible()
     assert not spinner.isVisible()
     assert not cancel.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
 
     def _done() -> bool:
         assert not bar.isVisible()
@@ -478,14 +478,13 @@ def test_quick_format_hides_the_spinner_and_cancel(qtbot, monkeypatch) -> None:
     assert not spinner.isVisible()
     assert not cancel.isVisible()
     assert not bar.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
 
     def _done() -> bool:
         assert not spinner.isVisible()
         assert not cancel.isVisible()
         assert not bar.isVisible()
-        assert button.text() == idle_text
         assert status.text() != FORMATTING_MESSAGE
         assert not status.text().startswith(f"{FORMATTING_MESSAGE} ")
         return output.toPlainText() != ""
@@ -513,7 +512,6 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     assert isinstance(cancel, QPushButton)
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
-    idle_text = button.text()
     monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     started = 1_000.0
@@ -521,8 +519,8 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     _action(window, "Format").trigger()
     assert not spinner.isVisible()
     assert not cancel.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
     clock["now"] = started + (SPINNER_REVEAL_MS - 1) / 1000
     window._apply_deferred_reveal()
     assert not spinner.isVisible()
@@ -539,8 +537,8 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     assert spinner.maximum() == 0
     assert not spinner.isTextVisible()
     assert status.text() == FORMATTING_MESSAGE
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
     assert not _action(window, "Format").isEnabled()
     assert editor.isReadOnly()
 
@@ -569,7 +567,6 @@ def test_write_bar_appears_after_the_progress_delay(
     assert isinstance(cancel, QPushButton)
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
-    idle_text = button.text()
     assert _action(window, "Format").isEnabled()
     started = 2_000.0
     clock["now"] = started
@@ -616,8 +613,8 @@ def test_write_bar_appears_after_the_progress_delay(
         assert not bar.isTextVisible()
         assert status.text() == FORMATTING_MESSAGE
         assert "%" not in status.text()
-        assert button.text() == idle_text
-        assert not button.isEnabled()
+        assert button.text() == FORMATTING_MESSAGE
+        assert button.isEnabled()
     finally:
         window.shutdown_parse_worker()
 
@@ -698,3 +695,30 @@ def test_entry_point_uses_freeze_support_without_global_start_method() -> None:
     assert isinstance(first_statement, ast.Expr)
     assert isinstance(first_statement.value, ast.Call)
     assert _call_name(first_statement.value) == "configure_runtime"
+
+
+def test_format_click_while_working_does_not_start_another_job(
+    qtbot, monkeypatch
+) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(button, QPushButton)
+    submitted: list[str] = []
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = (  # type: ignore[method-assign]
+        lambda text, *_args, **_kwargs: submitted.append(text)
+    )
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    button.click()
+    assert submitted == ['{"a": 1}']
+    assert button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    button.click()
+    _action(window, "Format").trigger()
+    assert submitted == ['{"a": 1}']
+    window._cancel_format()
+    assert button.text() == idle_text
+    assert button.isEnabled()
