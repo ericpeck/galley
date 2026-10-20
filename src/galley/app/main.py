@@ -11,6 +11,7 @@ from galley.app.about import licenses_directory, licenses_self_check
 from galley.app.fonts import ui_font
 from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
+from galley.app.theme import install_light_palette
 
 # Hidden from the window. The disk-image job runs the built executable with it.
 _SELF_CHECK_FLAG = "--self-check"
@@ -20,6 +21,9 @@ _SELF_CHECK_YAML = "a: 1\n"
 
 def create_main_window() -> QMainWindow:
     """Return the Galley window in its empty state."""
+    application = QApplication.instance()
+    if isinstance(application, QApplication):
+        install_light_palette(application)
     return MainWindow()
 
 

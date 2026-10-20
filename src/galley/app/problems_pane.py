@@ -6,11 +6,19 @@ from PySide6.QtCore import (
     QEvent,
     QModelIndex,
     QPersistentModelIndex,
+    QRect,
     QSize,
     Qt,
     Signal,
 )
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QResizeEvent
+from PySide6.QtGui import (
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -26,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.problem_text import DisplayProblem
 from galley.app.style import muted_text_style
-from galley.app.theme import ACCENT, ACCENT_TINT, ERROR, TEXT, TEXT_ON_ACCENT
+from galley.app.theme import ERROR, selected_problem_palette
 
 # Off until Replace tabs with spaces is approved. The control stays hidden.
 SHOW_REPLACE_TABS_BUTTON = False
@@ -54,13 +62,13 @@ class ProblemsPane(QWidget):
 
         self._title = QLabel("Problems")
         self._title.setObjectName("problemsTitle")
-        self._title.setStyleSheet(f"color: {TEXT}; font-weight: 700;")
+        self._title.setStyleSheet("font-weight: 700;")
 
         self._badge = QLabel("0")
         self._badge.setObjectName("problemsBadge")
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._badge.setStyleSheet(
-            f"background: {ERROR}; color: {TEXT_ON_ACCENT}; "
+            f"background: {ERROR}; color: palette(highlighted-text); "
             "border-radius: 8px; padding: 0 6px; font-weight: 700;"
         )
 
@@ -125,8 +133,8 @@ class ProblemsPane(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._strip.setStyleSheet(
-            f"QPushButton {{ background: {ERROR}; color: {TEXT_ON_ACCENT}; "
-            "border: none; font-weight: 700; }"
+            f"QPushButton {{ background: {ERROR}; color: palette(highlighted-text); "
+            "border: none; font-weight: 700; }}"
         )
         self._strip.clicked.connect(self.expand_requested.emit)
         self._strip.hide()
@@ -299,8 +307,6 @@ class _ProblemRow(QWidget):
         super().__init__(parent)
         self._lineno = problem.lineno
         self.setObjectName("problemRow")
-        # A QWidget subclass skips stylesheet backgrounds unless this is set.
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAccessibleName(problem.accessible)
         self.setMinimumHeight(_ROW_HEIGHT)
 
@@ -309,11 +315,12 @@ class _ProblemRow(QWidget):
         marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
         marker.setFixedSize(16, 16)
         marker.setStyleSheet(
-            f"background: {ERROR}; color: {TEXT_ON_ACCENT}; border-radius: 8px;"
+            f"background: {ERROR}; color: palette(highlighted-text); "
+            "border-radius: 8px;"
         )
 
         line = QLabel(f"Line {problem.lineno}")
-        line.setStyleSheet(f"color: {TEXT}; font-weight: 700;")
+        line.setStyleSheet("font-weight: 700;")
 
         message = QLabel(problem.message)
         message.setWordWrap(True)
@@ -327,25 +334,39 @@ class _ProblemRow(QWidget):
         text_column.addStretch(1)
 
         row = QHBoxLayout(self)
-        # The 2 px border always takes space, so focus does not shift text.
-        row.setContentsMargins(8, 2, 6, 2)
+        # Room for the 3 px bar and 2 px outline, so focus does not shift text.
+        row.setContentsMargins(11, 4, 8, 4)
         row.setSpacing(8)
         row.addWidget(marker, 0, Qt.AlignmentFlag.AlignTop)
         row.addLayout(text_column, 1)
-        self.set_state(selected=False, focused=False)
+        self._selected = False
+        self._focused = False
 
     def set_state(self, *, selected: bool, focused: bool) -> None:
-        """Tint and bar when selected, plus a 2 px outline when focused.
+        """Tint and bar when selected, plus a 2 px outline when focused."""
+        self._selected = selected
+        self._focused = focused
+        self.update()
 
-        Scoped to the row so the bar and tint stay off the labels.
-        """
-        background = ACCENT_TINT if selected else "transparent"
-        bar = ACCENT if selected else "transparent"
-        outline = ACCENT if focused else "transparent"
-        self.setStyleSheet(
-            f"QWidget#problemRow {{ background: {background}; "
-            f"border: 2px solid {outline}; border-left: 3px solid {bar}; }}"
-        )
+    def paintEvent(self, event: QPaintEvent) -> None:
+        # Painted here, not by a stylesheet: stylesheet palette() reads the
+        # application palette, and a row stylesheet cascades to its labels.
+        del event
+        if not self._selected and not self._focused:
+            return
+        palette = selected_problem_palette(self.palette())
+        accent = palette.color(QPalette.ColorRole.Accent)
+        width, height = self.width(), self.height()
+        painter = QPainter(self)
+        if self._selected:
+            painter.fillRect(self.rect(), palette.color(QPalette.ColorRole.Highlight))
+            painter.fillRect(QRect(0, 0, 3, height), accent)
+        if self._focused:
+            painter.fillRect(QRect(0, 0, width, 2), accent)
+            painter.fillRect(QRect(0, height - 2, width, 2), accent)
+            painter.fillRect(QRect(0, 0, 3, height), accent)
+            painter.fillRect(QRect(width - 2, 0, 2, height), accent)
+        painter.end()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self.clicked.emit(self._lineno)

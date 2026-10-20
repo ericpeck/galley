@@ -1,7 +1,15 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPixmap, QRegion
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QImage,
+    QKeySequence,
+    QPalette,
+    QPixmap,
+    QRegion,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
@@ -18,7 +26,7 @@ from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import problems_settings
 from galley.app.status_message import StatusMessage
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import ACCENT, ERROR
+from galley.app.theme import ERROR, selected_problem_palette
 from galley.core.problems import Problem
 
 _MISSING = '{\n  "price": 4.5\n  "qty": 3\n}\n'
@@ -311,8 +319,9 @@ def test_list_items_paint_no_text_under_the_rows(qtbot) -> None:
     assert _colors(image) == {QColor("#123456").rgb()}
 
 
-def test_selection_bar_stays_on_the_row_not_its_labels(qtbot) -> None:
+def test_selection_bar_stays_on_the_row_not_its_labels(qtbot, scheme_palette) -> None:
     pane = _show_pane_alone(qtbot)
+    accent = scheme_palette.color(QPalette.ColorRole.Accent)
     problems = pane.list_widget()
     selected = problems.itemWidget(problems.item(0))
     other = problems.itemWidget(problems.item(1))
@@ -323,14 +332,41 @@ def test_selection_bar_stays_on_the_row_not_its_labels(qtbot) -> None:
     assert "problemMarker" in {label.objectName() for label in labels}
     for label in labels:
         assert label.contentsMargins().left() == 0
-        assert not _has_pixel(label.grab().toImage(), QColor(ACCENT))
+        assert not _has_pixel(label.grab().toImage(), accent)
 
     bar = selected.grab().toImage()
-    assert _near(bar.pixelColor(0, bar.height() // 2), QColor(ACCENT))
-    assert not _has_pixel(other.grab().toImage(), QColor(ACCENT))
+    assert _near(bar.pixelColor(0, bar.height() // 2), accent)
+    assert not _has_pixel(other.grab().toImage(), accent)
 
 
-def test_the_focused_list_outlines_the_current_row(qtbot) -> None:
+def test_the_selected_row_reads_in_light_and_dark(qtbot, scheme_palette) -> None:
+    pane = _show_pane_alone(qtbot)
+    window = scheme_palette.color(QPalette.ColorRole.Window)
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    problems.setFocus()
+    qtbot.waitUntil(problems.hasFocus)
+
+    image = row.grab().toImage()
+    fill = image.pixelColor(image.width() - 4, image.height() - 4)
+    tint = selected_problem_palette(row.palette()).color(QPalette.ColorRole.Highlight)
+    assert _near(fill, tint)
+    outline = image.pixelColor(image.width() // 2, 0)
+    bar = image.pixelColor(0, image.height() // 2)
+    assert _contrast(outline, window) >= 3
+    assert _contrast(bar, window) >= 3
+    texts = [
+        label
+        for label in row.findChildren(QLabel)
+        if label.objectName() != "problemMarker"
+    ]
+    assert len(texts) == 2
+    for label in texts:
+        assert _strongest_contrast(label.grab().toImage(), fill) >= 4.5
+
+
+def test_the_focused_list_outlines_the_current_row(qtbot, scheme_palette) -> None:
     pane = _show_pane_alone(qtbot)
     problems = pane.list_widget()
     first = problems.itemWidget(problems.item(0))
@@ -396,7 +432,37 @@ def test_a_rewrapped_row_has_no_gap_under_the_line_number(qtbot) -> None:
 
 def _outlined(row: QWidget) -> bool:
     image = row.grab().toImage()
-    return _near(image.pixelColor(image.width() // 2, 0), QColor(ACCENT))
+    accent = row.palette().color(QPalette.ColorRole.Accent)
+    return _near(image.pixelColor(image.width() // 2, 0), accent)
+
+
+def _luminance(color: QColor) -> float:
+    def channel(value: int) -> float:
+        srgb = value / 255
+        if srgb <= 0.04045:
+            return srgb / 12.92
+        return ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.red())
+        + 0.7152 * channel(color.green())
+        + 0.0722 * channel(color.blue())
+    )
+
+
+def _contrast(first: QColor, second: QColor) -> float:
+    lighter = max(_luminance(first), _luminance(second))
+    darker = min(_luminance(first), _luminance(second))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _strongest_contrast(image: QImage, background: QColor) -> float:
+    """Contrast of the glyph pixel that stands out most from the fill."""
+    return max(
+        _contrast(image.pixelColor(x, y), background)
+        for y in range(image.height())
+        for x in range(image.width())
+    )
 
 
 def _colors(image: QImage) -> set[int]:
