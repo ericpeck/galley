@@ -194,10 +194,12 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         for button in window.findChildren(QPushButton)
         if button.toolTip() == COMING_SOON
     ]
-    assert len(pushed) == 5
-    assert {button.objectName() for button in pushed if button.objectName()} == {
-        "emptyOpenButton"
-    }
+    assert len(pushed) == 4
+    assert {button.objectName() for button in pushed if button.objectName()} == set()
+    open_button = window.findChild(QPushButton, "emptyOpenButton")
+    assert isinstance(open_button, QPushButton)
+    assert open_button.isEnabled()
+    assert open_button.toolTip() != COMING_SOON
     assert sorted(
         button.accessibleName() for button in pushed if button.accessibleName()
     ) == ["Close", "Close", "New tab", "New tab"]
@@ -244,7 +246,6 @@ def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
     for action in window.findChildren(QAction):
         if is_unbuilt(action):
             action.trigger()
-    qtbot.keyClick(editor, Qt.Key.Key_O, Qt.KeyboardModifier.ControlModifier)
     qtbot.keyClick(editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
     qtbot.keyClick(editor, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
     assert editor.toPlainText() == ""
@@ -255,7 +256,7 @@ def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
 
 def test_built_actions_are_unaffected(qtbot) -> None:
     window = _show(qtbot)
-    for text in ("Show Problems", "Stack Panes", "Paste", "Undo"):
+    for text in ("Show Problems", "Stack Panes", "Paste", "Undo", "Open file…"):
         action = _action(window, text)
         assert action.isEnabled()
         assert action.toolTip() != COMING_SOON

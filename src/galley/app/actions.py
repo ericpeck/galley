@@ -33,7 +33,6 @@ COMING_SOON = "Coming soon"
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
-    "Open",
     "Find",
     "Indent",
     "Sort keys",
@@ -352,7 +351,6 @@ class ShellActions:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
             self.preferences,
-            self.open_file,
             self.find,
             self.rename,
             self.duplicate,

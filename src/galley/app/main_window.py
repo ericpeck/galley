@@ -1,6 +1,7 @@
 """Galley main window: menus, toolbar, panes, and status bar."""
 
 import time
+from pathlib import Path
 from typing import NamedTuple
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
@@ -19,6 +20,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -38,6 +40,18 @@ from galley.app.about import show_about_dialog
 from galley.app.actions import ShellActions, coming_soon_wrapper
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
+from galley.app.open_file import (
+    OPEN_FILE_FILTER,
+    REPLACE_INPUT_DETAIL,
+    REPLACE_INPUT_TEXT,
+    OpenFileError,
+    format_name_for_file,
+    input_needs_replace,
+    input_window_title,
+    load_last_open_dir,
+    read_utf8_file,
+    save_last_open_dir,
+)
 from galley.app.pane import PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import DisplayProblem, problem_count_text
@@ -133,6 +147,8 @@ class MainWindow(QMainWindow):
         self._accepted_job_id: int | None = None
         self._size_warning_accepted = False
         self._size_warning: QMessageBox | None = None
+        self._opened_text: str | None = None
+        self._opening = False
         self._status_before_format = "Ready"
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setSingleShot(True)
@@ -471,6 +487,7 @@ class MainWindow(QMainWindow):
     def _connect(self) -> None:
         actions = self._actions
         actions.about.triggered.connect(self._show_about)
+        actions.open_file.triggered.connect(self._open_file)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -605,18 +622,7 @@ class MainWindow(QMainWindow):
 
     def _open_size_warning(self, text: str, size: int) -> None:
         """Ask once, with a window-modal sheet, before a large format."""
-        box = QMessageBox(self)
-        box.setObjectName("sizeWarning")
-        box.setWindowTitle("Galley")
-        box.setIcon(QMessageBox.Icon.NoIcon)
-        box.setWindowModality(Qt.WindowModality.WindowModal)
-        box.setText(f"Format this {si_size(size)} document?")
-        box.setInformativeText(SIZE_WARNING_DETAIL)
-        anyway = box.addButton("Format anyway", QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(anyway)
-        box.setEscapeButton(cancel)
-        self._size_warning = box
+        box, anyway = self._build_size_warning(size)
 
         def _choose() -> None:
             accepted = box.clickedButton() is anyway
@@ -631,6 +637,25 @@ class MainWindow(QMainWindow):
 
         box.finished.connect(_choose)
         box.open()
+
+    def _build_size_warning(self, size: int) -> tuple[QMessageBox, QPushButton]:
+        """Build the large-document warning. The caller shows it."""
+        box = QMessageBox(self)
+        box.setObjectName("sizeWarning")
+        box.setWindowTitle("Galley")
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setText(f"Format this {si_size(size)} document?")
+        box.setInformativeText(SIZE_WARNING_DETAIL)
+        anyway = box.addButton("Format anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        anyway.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        cancel.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        QWidget.setTabOrder(anyway, cancel)
+        box.setDefaultButton(anyway)
+        box.setEscapeButton(cancel)
+        self._size_warning = box
+        return box, anyway
 
     def _start_format(self, text: str) -> None:
         self._cancel_status_timer.stop()
@@ -967,10 +992,20 @@ class MainWindow(QMainWindow):
         return "Valid JSON"
 
     def _focus_input(self) -> None:
-        self._input_pane.editor.setFocus()
-        self._active_editor = self._input_pane.editor
+        editor = self._input_pane.editor
+        self.activateWindow()
+        editor.setFocus()
+        self._active_editor = editor
         self._update_caption()
         self._update_focus_ring()
+
+    def _return_focus_to_input(self) -> None:
+        """Focus Input after the dialog that held it has closed.
+
+        A message box clears focus while it is tearing down. Asking on the
+        next turn puts the caret back in Input.
+        """
+        QTimer.singleShot(0, self, self._focus_input)
 
     def _on_focus_changed(self, _old: QWidget | None, new: QWidget | None) -> None:
         editor = _editor_from(new)
@@ -1025,6 +1060,143 @@ class MainWindow(QMainWindow):
     def _clear_input(self) -> None:
         self._input_pane.editor.clear()
         self._input_pane.editor.setFocus()
+
+    def _open_file(self) -> None:
+        """Load a UTF-8 file into Input. Opening does not format."""
+        if self._opening or self._size_warning is not None:
+            return
+        chosen = self._choose_open_path()
+        if chosen is None:
+            self._return_focus_to_input()
+            return
+        save_last_open_dir(chosen.parent)
+        current = self._input_pane.editor.toPlainText()
+        if input_needs_replace(current, self._opened_text):
+            self._ask_replace_input(chosen)
+            return
+        self._load_opened_path(chosen)
+
+    def _choose_open_path(self) -> Path | None:
+        filename, _selected = QFileDialog.getOpenFileName(
+            self,
+            "Open",
+            load_last_open_dir(),
+            OPEN_FILE_FILTER,
+        )
+        if not filename:
+            return None
+        return Path(filename)
+
+    def _ask_replace_input(self, path: Path) -> None:
+        """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
+        box = self._warning_box(
+            "replaceInput",
+            REPLACE_INPUT_TEXT,
+            REPLACE_INPUT_DETAIL,
+        )
+        replace = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        replace.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        cancel.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        QWidget.setTabOrder(replace, cancel)
+        box.setDefaultButton(replace)
+        box.setEscapeButton(cancel)
+        self._opening = True
+
+        def _choose() -> None:
+            accepted = box.clickedButton() is replace
+            box.deleteLater()
+            if not accepted:
+                self._opening = False
+                self._return_focus_to_input()
+                return
+            self._load_opened_path(path)
+
+        box.finished.connect(_choose)
+        box.open()
+
+    def _load_opened_path(self, path: Path) -> None:
+        try:
+            text = read_utf8_file(path)
+        except OpenFileError as exc:
+            self._show_open_error(exc)
+            return
+        source = format_name_for_file(path, text)
+        size = _utf8_size(text)
+        if size >= _warning_bytes(source) and not self._size_warning_accepted:
+            self._confirm_large_open(path, text, source, size)
+            return
+        self._apply_opened_file(path, text, source)
+
+    def _confirm_large_open(
+        self, path: Path, text: str, source: str, size: int
+    ) -> None:
+        """Run the format size check before the file reaches Input."""
+        box, anyway = self._build_size_warning(size)
+        self._opening = True
+
+        def _choose() -> None:
+            accepted = box.clickedButton() is anyway
+            self._size_warning = None
+            box.deleteLater()
+            if not accepted:
+                self._opening = False
+                self._return_focus_to_input()
+                return
+            self._size_warning_accepted = True
+            self._apply_opened_file(path, text, source)
+
+        box.finished.connect(_choose)
+        box.open()
+
+    def _show_open_error(self, error: OpenFileError) -> None:
+        """Name the file and leave Input unchanged."""
+        box = self._warning_box("openError", str(error), error.detail)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        ok = box.button(QMessageBox.StandardButton.Ok)
+        if isinstance(ok, QPushButton):
+            ok.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        box.setEscapeButton(QMessageBox.StandardButton.Ok)
+        self._opening = True
+
+        def _close() -> None:
+            self._opening = False
+            box.deleteLater()
+            self._return_focus_to_input()
+
+        box.finished.connect(_close)
+        box.open()
+
+    def _apply_opened_file(self, path: Path, text: str, source: str) -> None:
+        """Put ``text`` in Input as one undo step and move the cursor home."""
+        self._opening = False
+        editor = self._input_pane.editor
+        _replace_as_one_undo(editor, text)
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        editor.setTextCursor(cursor)
+        self._set_input_format(source)
+        self._opened_text = editor.toPlainText()
+        self.setWindowTitle(input_window_title(path.name))
+        self._return_focus_to_input()
+
+    def _set_input_format(self, name: str) -> None:
+        combo = self._input_pane.format_combo
+        index = combo.findText(name)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _warning_box(self, object_name: str, text: str, detail: str) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setObjectName(object_name)
+        QWidget.setWindowTitle(box, "Galley")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(text)
+        box.setInformativeText(detail)
+        return box
 
     def _copy_output(self) -> None:
         QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
