@@ -34,3 +34,6 @@ Project Vault/
 
 # Size-benchmark reports. Synthetic inputs are created in a temp directory.
 benchmarks/results/
+
+# Hypothesis example database
+.hypothesis/
