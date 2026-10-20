@@ -74,6 +74,13 @@ class ProblemsPane(ResultsPanel):
     def lines(self) -> list[int]:
         return [problem.lineno for problem in self._problems]
 
+    def select_line(self, lineno: int) -> None:
+        """Select the first row for ``lineno``, without jumping to it."""
+        for index, problem in enumerate(self._problems):
+            if problem.lineno == lineno:
+                self._list.setCurrentRow(index)
+                return
+
     def set_problems(self, problems: Sequence[DisplayProblem]) -> None:
         """Replace the rows. An empty sequence is not shown by the window."""
         self._problems = tuple(problems)
