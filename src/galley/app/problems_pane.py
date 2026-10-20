@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QColor,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.format_picker import contrast_ratio
 from galley.app.problem_text import DisplayProblem
 from galley.app.style import muted_text_style
 from galley.app.theme import ERROR, selected_problem_palette
@@ -40,6 +42,8 @@ from galley.app.theme import ERROR, selected_problem_palette
 SHOW_REPLACE_TABS_BUTTON = False
 
 _ROW_HEIGHT = 56
+_TEXT_CONTRAST = 4.5
+_EDGE_CONTRAST = 3.0
 
 
 class ProblemsPane(QWidget):
@@ -134,7 +138,7 @@ class ProblemsPane(QWidget):
         )
         self._strip.setStyleSheet(
             f"QPushButton {{ background: {ERROR}; color: palette(highlighted-text); "
-            "border: none; font-weight: 700; }}"
+            "border: none; font-weight: 700; }"
         )
         self._strip.clicked.connect(self.expand_requested.emit)
         self._strip.hide()
@@ -321,10 +325,12 @@ class _ProblemRow(QWidget):
 
         line = QLabel(f"Line {problem.lineno}")
         line.setStyleSheet("font-weight: 700;")
+        self._line = line
 
         message = QLabel(problem.message)
         message.setWordWrap(True)
         message.setStyleSheet(muted_text_style())
+        self._message = message
 
         text_column = QVBoxLayout()
         text_column.setContentsMargins(0, 0, 0, 0)
@@ -346,7 +352,31 @@ class _ProblemRow(QWidget):
         """Tint and bar when selected, plus a 2 px outline when focused."""
         self._selected = selected
         self._focused = focused
+        self._sync_text_colors()
         self.update()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+        ):
+            self._sync_text_colors()
+
+    def _sync_text_colors(self) -> None:
+        # The palette's text roles can carry alpha (macOS dark muted text is
+        # 25 % white), which fades on the selection fill. A selected row
+        # paints its text in an opaque color that reads on the fill.
+        if not self._selected:
+            self._line.setStyleSheet("font-weight: 700;")
+            self._message.setStyleSheet(muted_text_style())
+            return
+        palette = selected_problem_palette(self.palette())
+        fill = palette.color(QPalette.ColorRole.Highlight)
+        line = _readable_on(fill, palette, QPalette.ColorRole.WindowText)
+        message = _readable_on(fill, palette, QPalette.ColorRole.PlaceholderText)
+        self._line.setStyleSheet(f"font-weight: 700; color: {line.name()};")
+        self._message.setStyleSheet(f"color: {message.name()};")
 
     def paintEvent(self, event: QPaintEvent) -> None:
         # Painted here, not by a stylesheet: stylesheet palette() reads the
@@ -355,7 +385,12 @@ class _ProblemRow(QWidget):
         if not self._selected and not self._focused:
             return
         palette = selected_problem_palette(self.palette())
-        accent = palette.color(QPalette.ColorRole.Accent)
+        fill = palette.color(QPalette.ColorRole.Highlight)
+        accent = _visible_edge(
+            palette.color(QPalette.ColorRole.Accent),
+            (fill, palette.color(QPalette.ColorRole.Window)),
+            _readable_on(fill, palette, QPalette.ColorRole.Text),
+        )
         width, height = self.width(), self.height()
         painter = QPainter(self)
         if self._selected:
@@ -371,3 +406,40 @@ class _ProblemRow(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self.clicked.emit(self._lineno)
         super().mousePressEvent(event)
+
+
+def _composite(color: QColor, background: QColor) -> QColor:
+    """``color`` blended over an opaque ``background``, as painted."""
+    alpha = color.alphaF()
+    return QColor(
+        round(color.red() * alpha + background.red() * (1 - alpha)),
+        round(color.green() * alpha + background.green() * (1 - alpha)),
+        round(color.blue() * alpha + background.blue() * (1 - alpha)),
+    )
+
+
+def _mix(first: QColor, second: QColor, amount: float) -> QColor:
+    return QColor(
+        round(first.red() * (1 - amount) + second.red() * amount),
+        round(first.green() * (1 - amount) + second.green() * amount),
+        round(first.blue() * (1 - amount) + second.blue() * amount),
+    )
+
+
+def _readable_on(fill: QColor, palette: QPalette, role: QPalette.ColorRole) -> QColor:
+    """``role`` made opaque on ``fill``, or full text if that is too faint."""
+    color = _composite(palette.color(role), fill)
+    if contrast_ratio(color, fill) >= _TEXT_CONTRAST:
+        return color
+    return _composite(palette.color(QPalette.ColorRole.Text), fill)
+
+
+def _visible_edge(
+    accent: QColor, backgrounds: Sequence[QColor], toward: QColor
+) -> QColor:
+    """``accent``, moved toward ``toward`` until it is 3:1 on every background."""
+    for step in range(11):
+        color = _mix(accent, toward, step / 10)
+        if all(contrast_ratio(color, b) >= _EDGE_CONTRAST for b in backgrounds):
+            return color
+    return toward

@@ -31,16 +31,18 @@ _SCHEMES = {
         QPalette.ColorRole.HighlightedText: "#FFFFFF",
         QPalette.ColorRole.Accent: "#0080A6",
     },
+    # macOS Dark Mode roles as cocoa reports them. Text roles carry alpha
+    # (#AARRGGBB), so a test sees the blended color users see.
     "dark": {
-        QPalette.ColorRole.Window: "#1C1C1C",
-        QPalette.ColorRole.Base: "#1C1C1C",
-        QPalette.ColorRole.WindowText: "#F3F2F2",
-        QPalette.ColorRole.Text: "#F3F2F2",
-        QPalette.ColorRole.PlaceholderText: "#B5B1B1",
-        QPalette.ColorRole.Mid: "#8A8686",
-        QPalette.ColorRole.Highlight: "#0E4F66",
+        QPalette.ColorRole.Window: "#323232",
+        QPalette.ColorRole.Base: "#171717",
+        QPalette.ColorRole.WindowText: "#D8FFFFFF",
+        QPalette.ColorRole.Text: "#D8FFFFFF",
+        QPalette.ColorRole.PlaceholderText: "#3FFFFFFF",
+        QPalette.ColorRole.Mid: "#242424",
+        QPalette.ColorRole.Highlight: "#314F78",
         QPalette.ColorRole.HighlightedText: "#FFFFFF",
-        QPalette.ColorRole.Accent: "#3DB2DB",
+        QPalette.ColorRole.Accent: "#0A60FF",
     },
 }
 
