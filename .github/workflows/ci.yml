@@ -57,8 +57,9 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+        # -rfEP keeps failure reports and prints the informational timing table.
         run: |
-          uv run pytest --junitxml="${RUNNER_TEMP}/pytest.xml"
+          uv run pytest -rfEP --junitxml="${RUNNER_TEMP}/pytest.xml"
           uv run python - "${RUNNER_TEMP}/pytest.xml" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
@@ -98,7 +99,8 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --no-sync pytest
+        # -rfEP keeps failure reports and prints the informational timing table.
+        run: uv run --no-sync pytest -rfEP
 
   secret-scan:
     name: Secret scan
