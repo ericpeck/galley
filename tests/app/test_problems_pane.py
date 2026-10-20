@@ -368,8 +368,7 @@ def test_the_selected_row_reads_in_light_and_dark(qtbot, scheme_palette) -> None
     problems = pane.list_widget()
     row = problems.itemWidget(problems.item(0))
     assert row is not None
-    problems.setFocus()
-    qtbot.waitUntil(problems.hasFocus)
+    _tab_into(qtbot, pane)
 
     # The row grab is what users see: alpha text already blended on the fill.
     image = row.grab().toImage()
@@ -426,8 +425,7 @@ def test_the_focused_list_outlines_the_current_row(qtbot, scheme_palette) -> Non
     assert first is not None and second is not None
     assert not _outlined(first)
 
-    problems.setFocus()
-    qtbot.waitUntil(problems.hasFocus)
+    _tab_into(qtbot, pane)
     assert _outlined(first)
     assert not _outlined(second)
 
@@ -441,11 +439,46 @@ def test_the_focused_list_outlines_the_current_row(qtbot, scheme_palette) -> Non
     assert not _outlined(second)
 
 
+def test_the_outline_shows_for_keyboard_focus_only(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    first = problems.itemWidget(problems.item(0))
+    second = problems.itemWidget(problems.item(1))
+    assert first is not None and second is not None
+
+    _tab_into(qtbot, pane)
+    assert _outlined(first)
+
+    # A click on the focused list hides it.
+    qtbot.mouseClick(second, Qt.MouseButton.LeftButton)
+    assert problems.currentItem() is problems.item(1)
+    assert not _outlined(first) and not _outlined(second)
+
+    # So does a click that moves focus into the list.
+    pane.close_button().setFocus()
+    qtbot.waitUntil(lambda: not problems.hasFocus())
+    qtbot.mouseClick(first, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(problems.hasFocus)
+    assert not _outlined(first) and not _outlined(second)
+
+    # Tab after a click brings it back.
+    _tab_into(qtbot, pane)
+    assert _outlined(first)
+
+
+def _tab_into(qtbot, pane: ProblemsPane) -> None:
+    """Move focus to the close button, then Tab into the problem list."""
+    problems = pane.list_widget()
+    pane.close_button().setFocus()
+    qtbot.waitUntil(pane.close_button().hasFocus)
+    qtbot.keyClick(pane.close_button(), Qt.Key.Key_Tab)
+    qtbot.waitUntil(problems.hasFocus)
+
+
 def test_the_list_paints_no_text_while_focused(qtbot) -> None:
     pane = _show_pane_alone(qtbot)
     problems = pane.list_widget()
-    problems.setFocus()
-    qtbot.waitUntil(problems.hasFocus)
+    _tab_into(qtbot, pane)
     item = problems.currentItem()
     viewport = problems.viewport()
     pixmap = QPixmap(viewport.size())

@@ -13,6 +13,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QFocusEvent,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -33,17 +34,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from galley.app.format_picker import contrast_ratio
 from galley.app.problem_text import DisplayProblem
 from galley.app.style import muted_text_style
-from galley.app.theme import ERROR, selected_problem_palette
+from galley.app.theme import (
+    ERROR,
+    composite,
+    contrast_ratio,
+    selected_problem_palette,
+    visible_edge,
+)
 
 # Off until Replace tabs with spaces is approved. The control stays hidden.
 SHOW_REPLACE_TABS_BUTTON = False
 
 _ROW_HEIGHT = 56
 _TEXT_CONTRAST = 4.5
-_EDGE_CONTRAST = 3.0
 
 
 class ProblemsPane(QWidget):
@@ -112,6 +117,8 @@ class ProblemsPane(QWidget):
         self._list.installEventFilter(self)
         self._list.viewport().installEventFilter(self)
         self._list_focused = False
+        # The outline shows for keyboard focus only, like :focus-visible.
+        self._keyboard_focus = False
 
         self._replace = QPushButton("Replace tabs with spaces")
         self._replace.setObjectName("replaceTabsButton")
@@ -153,17 +160,20 @@ class ProblemsPane(QWidget):
     def eventFilter(self, watched: QWidget, event: QEvent) -> bool:
         """Return and Enter jump to the current problem.
 
-        Focus changes on the list move the focus outline, and viewport
-        resizes refit the row heights to the new width.
+        Focus changes on the list move the focus outline, a click hides it,
+        and viewport resizes refit the row heights to the new width.
         """
-        if watched is self._list and event.type() in (
-            QEvent.Type.FocusIn,
-            QEvent.Type.FocusOut,
-        ):
+        if watched is self._list and isinstance(event, QFocusEvent):
             self._list_focused = event.type() == QEvent.Type.FocusIn
+            if self._list_focused:
+                self._note_focus_reason(event.reason())
             self._sync_selection()
-        if watched is self._list.viewport() and event.type() == QEvent.Type.Resize:
-            self._sync_row_heights()
+        if watched is self._list.viewport():
+            if event.type() == QEvent.Type.Resize:
+                self._sync_row_heights()
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                self._keyboard_focus = False
+                self._sync_selection()
         if (
             watched is self._list
             and event.type() == QEvent.Type.KeyPress
@@ -253,8 +263,21 @@ class ProblemsPane(QWidget):
         for item, row in self._rows:
             row.set_state(
                 selected=item is current,
-                focused=item is current and self._list_focused,
+                focused=(
+                    item is current and self._list_focused and self._keyboard_focus
+                ),
             )
+
+    def _note_focus_reason(self, reason: Qt.FocusReason) -> None:
+        if reason == Qt.FocusReason.MouseFocusReason:
+            self._keyboard_focus = False
+        elif reason not in (
+            Qt.FocusReason.ActiveWindowFocusReason,
+            Qt.FocusReason.PopupFocusReason,
+        ):
+            # Tab, Shift-Tab, shortcuts, and focus moved by a command.
+            # Returning to the window or closing a popup keeps the last mode.
+            self._keyboard_focus = True
 
     def _sync_row_heights(self) -> None:
         # Fit each row to the list's width, so a wrapped message that
@@ -387,7 +410,7 @@ class _ProblemRow(QWidget):
             return
         palette = selected_problem_palette(self.palette())
         fill = palette.color(QPalette.ColorRole.Highlight)
-        accent = _visible_edge(
+        accent = visible_edge(
             palette.color(QPalette.ColorRole.Accent),
             (fill, palette.color(QPalette.ColorRole.Window)),
             _readable_on(fill, palette, QPalette.ColorRole.Text),
@@ -409,38 +432,9 @@ class _ProblemRow(QWidget):
         super().mousePressEvent(event)
 
 
-def _composite(color: QColor, background: QColor) -> QColor:
-    """``color`` blended over an opaque ``background``, as painted."""
-    alpha = color.alphaF()
-    return QColor(
-        round(color.red() * alpha + background.red() * (1 - alpha)),
-        round(color.green() * alpha + background.green() * (1 - alpha)),
-        round(color.blue() * alpha + background.blue() * (1 - alpha)),
-    )
-
-
-def _mix(first: QColor, second: QColor, amount: float) -> QColor:
-    return QColor(
-        round(first.red() * (1 - amount) + second.red() * amount),
-        round(first.green() * (1 - amount) + second.green() * amount),
-        round(first.blue() * (1 - amount) + second.blue() * amount),
-    )
-
-
 def _readable_on(fill: QColor, palette: QPalette, role: QPalette.ColorRole) -> QColor:
     """``role`` made opaque on ``fill``, or full text if that is too faint."""
-    color = _composite(palette.color(role), fill)
+    color = composite(palette.color(role), fill)
     if contrast_ratio(color, fill) >= _TEXT_CONTRAST:
         return color
-    return _composite(palette.color(QPalette.ColorRole.Text), fill)
-
-
-def _visible_edge(
-    accent: QColor, backgrounds: Sequence[QColor], toward: QColor
-) -> QColor:
-    """``accent``, moved toward ``toward`` until it is 3:1 on every background."""
-    for step in range(11):
-        color = _mix(accent, toward, step / 10)
-        if all(contrast_ratio(color, b) >= _EDGE_CONTRAST for b in backgrounds):
-            return color
-    return toward
+    return composite(palette.color(QPalette.ColorRole.Text), fill)

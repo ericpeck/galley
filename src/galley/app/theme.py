@@ -7,6 +7,7 @@ find highlight. Syntax colors stay hex. macOS window-control colors
 belong to platform chrome and are not roles here.
 """
 
+from collections.abc import Sequence
 from typing import Final
 
 from PySide6.QtCore import Qt
@@ -89,6 +90,64 @@ COLORS: Final[dict[str, str]] = {
 }
 
 
+EDGE_CONTRAST: Final = 3.0
+
+
+def contrast_ratio(foreground: QColor, background: QColor) -> float:
+    """WCAG relative-luminance contrast of two opaque colors."""
+    lighter = max(_luminance(foreground), _luminance(background))
+    darker = min(_luminance(foreground), _luminance(background))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def composite(color: QColor, background: QColor) -> QColor:
+    """``color`` blended over an opaque ``background``, as painted."""
+    return mix(background, QColor(color.rgb()), color.alphaF())
+
+
+def mix(first: QColor, second: QColor, amount: float) -> QColor:
+    """``amount`` of ``second`` blended into ``first``. Both are opaque."""
+    return QColor(
+        round(first.red() * (1 - amount) + second.red() * amount),
+        round(first.green() * (1 - amount) + second.green() * amount),
+        round(first.blue() * (1 - amount) + second.blue() * amount),
+    )
+
+
+def visible_edge(edge: QColor, backgrounds: Sequence[QColor], toward: QColor) -> QColor:
+    """``edge``, moved toward ``toward`` until it is 3:1 on every background.
+
+    A color that already reaches 3:1, like every light-mode edge, is
+    returned unchanged.
+    """
+    for step in range(11):
+        color = mix(edge, toward, step / 10)
+        if all(contrast_ratio(color, b) >= EDGE_CONTRAST for b in backgrounds):
+            return color
+    return toward
+
+
+def pane_edge_colors(palette: QPalette) -> tuple[QColor, QColor]:
+    """The pane's resting edge and its focus ring, each 3:1 or better.
+
+    Both sit between the window and the editor's base, so each must stand
+    out from both. ``Mid`` and ``Accent`` are kept when they already do.
+    """
+    window = palette.color(QPalette.ColorRole.Window)
+    base = composite(palette.color(QPalette.ColorRole.Base), window)
+    backgrounds = (window, base)
+    toward = composite(palette.color(QPalette.ColorRole.WindowText), window)
+    edge = visible_edge(
+        composite(palette.color(QPalette.ColorRole.Mid), window), backgrounds, toward
+    )
+    ring = visible_edge(
+        composite(palette.color(QPalette.ColorRole.Accent), window),
+        backgrounds,
+        toward,
+    )
+    return edge, ring
+
+
 def selected_problem_palette(palette: QPalette) -> QPalette:
     """Problem selection fill on the highlight role.
 
@@ -98,12 +157,7 @@ def selected_problem_palette(palette: QPalette) -> QPalette:
     tinted = QPalette(palette)
     window = palette.color(QPalette.ColorRole.Window)
     if window.lightness() < 128:
-        accent = palette.color(QPalette.ColorRole.Accent)
-        fill = QColor(
-            round(window.red() * 0.75 + accent.red() * 0.25),
-            round(window.green() * 0.75 + accent.green() * 0.25),
-            round(window.blue() * 0.75 + accent.blue() * 0.25),
-        )
+        fill = mix(window, palette.color(QPalette.ColorRole.Accent), 0.25)
     else:
         fill = QColor(ACCENT_TINT)
     tinted.setColor(QPalette.ColorRole.Highlight, fill)
@@ -169,3 +223,18 @@ def _light_palette(current: QPalette) -> QPalette:
         )
         palette.setColor(group, QPalette.ColorRole.Light, QColor(ACCENT_DISABLED))
     return palette
+
+
+def _luminance(color: QColor) -> float:
+    return (
+        0.2126 * _channel(color.red())
+        + 0.7152 * _channel(color.green())
+        + 0.0722 * _channel(color.blue())
+    )
+
+
+def _channel(value: int) -> float:
+    srgb = value / 255
+    if srgb <= 0.04045:
+        return srgb / 12.92
+    return ((srgb + 0.055) / 1.055) ** 2.4
