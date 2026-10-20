@@ -1,4 +1,4 @@
-"""Plain-text editor with a line-number gutter."""
+"""Code editor with a line-number gutter and syntax colors."""
 
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import (
@@ -13,6 +13,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QFrame, QPlainTextEdit, QTextEdit, QWidget
 
 from galley.app.fonts import code_font
+from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.theme import (
     EDITOR_BG,
     ERROR,
@@ -58,6 +59,11 @@ class CodeEditor(QPlainTextEdit):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.document().setDocumentMargin(10)
         self._apply_palette()
+        self._syntax_mode_set = False
+        # Connected before the highlighter so a mode change from detection
+        # lands before the highlighter reformats the same edit.
+        self.document().contentsChange.connect(self._detect_syntax)
+        self._highlighter = SyntaxHighlighter(self.document())
         self._line_numbers = LineNumberArea(self)
         self._line_numbers.setObjectName("lineNumberArea")
         self.blockCountChanged.connect(self._update_line_number_width)
@@ -95,6 +101,26 @@ class CodeEditor(QPlainTextEdit):
         self._update_line_number_width(0)
         self._highlight_current_line()
         self._line_numbers.update()
+
+    def syntax_mode(self) -> SyntaxMode:
+        """``"JSON"`` or ``"YAML"``, the colors the editor applies."""
+        return self._highlighter.mode()
+
+    def set_syntax_mode(self, mode: SyntaxMode) -> None:
+        """Color as ``mode`` from now on and stop guessing from the text.
+
+        Until this is called, the first non-blank character picks the mode:
+        ``{`` or ``[`` means JSON, anything else YAML.
+        """
+        self._syntax_mode_set = True
+        self._highlighter.set_mode(mode)
+
+    def syntax_colors_enabled(self) -> bool:
+        return self._highlighter.is_enabled()
+
+    def set_syntax_colors_enabled(self, enabled: bool) -> None:
+        """Turn syntax colors on or off, for example for large documents."""
+        self._highlighter.set_enabled(enabled)
 
     def reveal_line(self, lineno: int) -> None:
         """Move the cursor to ``lineno``, scroll it into view, and focus."""
@@ -180,6 +206,22 @@ class CodeEditor(QPlainTextEdit):
         palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT))
         self.setPalette(palette)
+
+    def _detect_syntax(self, position: int, _removed: int, added: int) -> None:
+        if self._syntax_mode_set:
+            return
+        document = self.document()
+        count = document.characterCount()
+        index = 0
+        while index < count and document.characterAt(index).isspace():
+            index += 1
+        if index >= count:
+            return
+        mode: SyntaxMode = "JSON" if document.characterAt(index) in "{[" else "YAML"
+        # An edit that replaced everything is reformatted by the highlighter
+        # right after this slot, so a full pass here would be wasted.
+        whole = position == 0 and added >= count - 1
+        self._highlighter.set_mode(mode, rehighlight=not whole)
 
     def _update_line_number_width(self, _block_count: int) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
