@@ -9,6 +9,7 @@ macOS window-control colors belong to platform chrome and are not roles
 here.
 """
 
+from collections.abc import Sequence
 from typing import Final
 
 from PySide6.QtGui import QColor, QPalette
@@ -99,10 +100,77 @@ COLORS: Final[dict[str, str]] = {
 }
 
 
+EDGE_CONTRAST: Final = 3.0
+
+
+def contrast_ratio(foreground: QColor, background: QColor) -> float:
+    """WCAG relative-luminance contrast of two opaque colors."""
+    lighter = max(_luminance(foreground), _luminance(background))
+    darker = min(_luminance(foreground), _luminance(background))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def composite(color: QColor, background: QColor) -> QColor:
+    """``color`` blended over an opaque ``background``, as painted."""
+    return mix(background, QColor(color.rgb()), color.alphaF())
+
+
+def mix(first: QColor, second: QColor, amount: float) -> QColor:
+    """``amount`` of ``second`` blended into ``first``. Both are opaque."""
+    return QColor(
+        round(first.red() * (1 - amount) + second.red() * amount),
+        round(first.green() * (1 - amount) + second.green() * amount),
+        round(first.blue() * (1 - amount) + second.blue() * amount),
+    )
+
+
+def visible_edge(edge: QColor, backgrounds: Sequence[QColor], toward: QColor) -> QColor:
+    """``edge``, moved toward ``toward`` until it is 3:1 on every background.
+
+    A color that already reaches 3:1, like every light-mode edge, is
+    returned unchanged.
+    """
+    for step in range(11):
+        color = mix(edge, toward, step / 10)
+        if all(contrast_ratio(color, b) >= EDGE_CONTRAST for b in backgrounds):
+            return color
+    return toward
+
+
+def pane_edge_colors(palette: QPalette) -> tuple[QColor, QColor]:
+    """The pane's resting edge and its focus ring, each 3:1 or better.
+
+    Both sit between the window and the editor's base, so each must stand
+    out from both. ``Mid`` and ``Accent`` are kept when they already do.
+    """
+    window = palette.color(QPalette.ColorRole.Window)
+    base = composite(palette.color(QPalette.ColorRole.Base), window)
+    backgrounds = (window, base)
+    toward = composite(palette.color(QPalette.ColorRole.WindowText), window)
+    edge = visible_edge(
+        composite(palette.color(QPalette.ColorRole.Mid), window), backgrounds, toward
+    )
+    ring = visible_edge(
+        composite(palette.color(QPalette.ColorRole.Accent), window),
+        backgrounds,
+        toward,
+    )
+    return edge, ring
+
+
 def selected_problem_palette(palette: QPalette) -> QPalette:
-    """Light-mode problem selection: accent tint on the highlight role."""
+    """Problem selection fill on the highlight role.
+
+    Light mode uses the accent tint sample. A dark palette gets a fill mixed
+    from its own window and accent roles, so its light text still reads.
+    """
     tinted = QPalette(palette)
-    tinted.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_TINT))
+    window = palette.color(QPalette.ColorRole.Window)
+    if window.lightness() < 128:
+        fill = mix(window, palette.color(QPalette.ColorRole.Accent), 0.25)
+    else:
+        fill = QColor(ACCENT_TINT)
+    tinted.setColor(QPalette.ColorRole.Highlight, fill)
     return tinted
 
 
@@ -154,9 +222,8 @@ def light_palette(current: QPalette) -> QPalette:
     return palette
 
 
-# Text and control-edge minimums from AGENTS.md.
+# Text minimum from AGENTS.md. EDGE_CONTRAST above is the 3:1 edge rule.
 TEXT_MIN_CONTRAST: Final = 4.5
-EDGE_MIN_CONTRAST: Final = 3.0
 # Disabled labels are exempt from 4.5:1 but must stay legible and clearly
 # dimmer than enabled text. 3.5:1 on the window lands near 3:1 on the
 # slightly lighter native button face.
@@ -189,11 +256,11 @@ def dark_palette(platform: QPalette) -> QPalette:
         palette = _turned_over(light_palette(platform))
     window = palette.color(QPalette.ColorRole.Window)
     base = palette.color(QPalette.ColorRole.Base)
-    text = _over(palette.color(QPalette.ColorRole.Text), base)
-    window_text = _over(palette.color(QPalette.ColorRole.WindowText), window)
+    text = composite(palette.color(QPalette.ColorRole.Text), base)
+    window_text = composite(palette.color(QPalette.ColorRole.WindowText), window)
     gutter = mix(base, window, 0.5)
     muted = _first_passing(window, text, (window, base, gutter), TEXT_MIN_CONTRAST)
-    edge = _first_passing(window, text, (window, base), EDGE_MIN_CONTRAST)
+    edge = _first_passing(window, text, (window, base), EDGE_CONTRAST)
     roles = {
         QPalette.ColorRole.AlternateBase: gutter,
         QPalette.ColorRole.PlaceholderText: muted,
@@ -235,7 +302,7 @@ def _set_disabled_text(palette: QPalette) -> None:
     """
     window = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Window)
     base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
-    text = _over(
+    text = composite(
         palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text), window
     )
     faded = _first_passing(window, text, (window, base), DISABLED_TEXT_CONTRAST)
@@ -271,30 +338,6 @@ def problem_line_tint(palette: QPalette) -> QColor:
         return QColor(ERROR_TINT)
     base = palette.color(QPalette.ColorRole.Base)
     return mix(base, QColor(ERROR_DARK), _ERROR_TINT_DARK_SHARE)
-
-
-def contrast_ratio(foreground: QColor, background: QColor) -> float:
-    """WCAG relative-luminance contrast of two opaque colors."""
-    lighter = max(_luminance(foreground), _luminance(background))
-    darker = min(_luminance(foreground), _luminance(background))
-    return (lighter + 0.05) / (darker + 0.05)
-
-
-def mix(start: QColor, end: QColor, share: float) -> QColor:
-    """``share`` of ``end`` over ``start``, nearest integer per channel."""
-    keep = 1 - share
-    return QColor(
-        round(start.red() * keep + end.red() * share),
-        round(start.green() * keep + end.green() * share),
-        round(start.blue() * keep + end.blue() * share),
-    )
-
-
-def _over(color: QColor, surface: QColor) -> QColor:
-    """``color`` composited on ``surface``, so alpha roles measure as painted."""
-    return mix(
-        surface, QColor(color.red(), color.green(), color.blue()), color.alphaF()
-    )
 
 
 def _first_passing(

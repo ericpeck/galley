@@ -33,7 +33,7 @@ from galley.app.problems_settings import problems_settings
 from galley.app.theme import (
     ACCENT,
     ACCENT_TEXT_DARK,
-    EDGE_MIN_CONTRAST,
+    EDGE_CONTRAST,
     ERROR_DARK,
     ERROR_TINT,
     LINE_NUMBER_DARK,
@@ -347,7 +347,7 @@ def _assert_contrast(window) -> None:
     }
     for name, (edge, surface) in edge_pairs.items():
         ratio = _ratio(edge, surface)
-        assert ratio >= EDGE_MIN_CONTRAST, f"{name}: {ratio:.2f}"
+        assert ratio >= EDGE_CONTRAST, f"{name}: {ratio:.2f}"
     for picker in _pickers(window):
         ink, field = closed_field_colors(picker)
         assert _ratio(ink, field) >= TEXT_MIN_CONTRAST, picker.objectName()

@@ -13,7 +13,7 @@ from typing import Final
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from galley.app.problems_settings import problems_settings
 from galley.app.style import palette_baked_styles
@@ -90,7 +90,7 @@ class Appearance(QObject):
 
     def apply(self) -> None:
         """Rebuild the application palette for the current scheme."""
-        baked = _baked_styles()
+        baked = _baked_styles(self._app)
         # A default palette drops the explicit one, so this reads the
         # platform's palette for the scheme just requested. Qt has no other
         # public way to read it (on macOS, style().standardPalette() returns
@@ -128,31 +128,45 @@ class Appearance(QObject):
 
 def set_application_palette(app: QApplication, palette: QPalette) -> None:
     """Install ``palette`` and bring every widget stylesheet up to date."""
-    baked = _baked_styles()
+    baked = _baked_styles(app)
     app.setPalette(palette)
     _restyle(app, baked)
 
 
-def _baked_styles() -> dict[str, Callable[[], str]]:
-    """Current text of each palette-baked stylesheet, mapped to its builder."""
-    return {style(): style for style in palette_baked_styles()}
+def _baked_styles(app: QApplication) -> dict[QWidget, Callable[[QWidget], str]]:
+    """Widgets whose stylesheet a palette-baked builder made, and the builder.
+
+    Read before the palette changes, while the builders still produce the
+    text the widgets carry.
+    """
+    baked: dict[QWidget, Callable[[QWidget], str]] = {}
+    builders = palette_baked_styles()
+    for widget in app.allWidgets():
+        sheet = widget.styleSheet()
+        if not sheet:
+            continue
+        for build in builders:
+            if build(widget) == sheet:
+                baked[widget] = build
+                break
+    return baked
 
 
-def _restyle(app: QApplication, baked: dict[str, Callable[[], str]]) -> None:
+def _restyle(app: QApplication, baked: dict[QWidget, Callable[[QWidget], str]]) -> None:
     """Parse each widget stylesheet again.
 
     A stylesheet resolves ``palette(...)`` when it is applied, so without
     this the status bar, links, and menus keep the old scheme's colors.
-    ``baked`` maps the old text of a stylesheet that writes colors out as
-    values to the function that rebuilds it.
+    Stylesheets in ``baked`` write colors out as values, so they are built
+    again from the new palette instead.
     """
     for widget in app.allWidgets():
         sheet = widget.styleSheet()
         if not sheet:
             continue
-        rebuild = baked.get(sheet)
+        build = baked.get(widget)
         widget.setStyleSheet("")
-        widget.setStyleSheet(rebuild() if rebuild is not None else sheet)
+        widget.setStyleSheet(build(widget) if build is not None else sheet)
 
 
 def install_appearance(app: QApplication) -> Appearance:

@@ -7,9 +7,9 @@ Everything else asks the palette, which the light samples seed.
 from collections.abc import Callable
 
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
-from galley.app.theme import ACCENT
+from galley.app.theme import ACCENT, pane_edge_colors
 
 
 def primary_button_style() -> str:
@@ -124,14 +124,22 @@ def menu_style() -> str:
 
 
 def pane_style(object_name: str) -> str:
-    """1 px mid edge, thickening to a 2 px accent ring while focused."""
+    """1 px edge, thickening to a 2 px ring while focused.
+
+    The edge starts from ``Mid`` and the ring from ``Accent``. Each is
+    lifted toward the text color until it is 3:1 on the window and the
+    base, so the macOS dark accent still shows. Light mode keeps both roles.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    edge, ring = pane_edge_colors(palette)
     return f"""
         QWidget#{object_name} {{
             background-color: palette(window);
-            border: 1px solid palette(mid);
+            border: 1px solid {edge.name()};
         }}
         QWidget#{object_name}[paneFocused="true"] {{
-            border: 2px solid palette(accent);
+            border: 2px solid {ring.name()};
         }}
         """
 
@@ -160,10 +168,19 @@ def muted_text_style() -> str:
     return "color: palette(placeholder-text);"
 
 
-def palette_baked_styles() -> tuple[Callable[[], str], ...]:
-    """Stylesheets that write palette colors out as values.
+def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
+    """Builders for stylesheets that write palette colors out as values.
 
-    A scheme switch rebuilds these, because re-parsing the old text would
-    keep the old colors.
+    Each takes the widget the stylesheet is on. A scheme switch rebuilds
+    any stylesheet one of these produced, because re-parsing the old text
+    would keep the old colors.
     """
-    return (menu_style,)
+    return (_menu_style_for, _pane_style_for)
+
+
+def _menu_style_for(_widget: QWidget) -> str:
+    return menu_style()
+
+
+def _pane_style_for(widget: QWidget) -> str:
+    return pane_style(widget.objectName())

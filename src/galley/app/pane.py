@@ -57,6 +57,8 @@ class PaneWidget(QWidget):
         self.setObjectName(f"{role.value}Pane")
         self.setMinimumWidth(240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # A QWidget subclass skips stylesheet borders unless this is set.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(pane_style(self.objectName()))
         self.setAutoFillBackground(True)
 
