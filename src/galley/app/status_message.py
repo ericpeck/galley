@@ -10,8 +10,10 @@ from galley.app.problem_text import problem_count_text
 class StatusMessage(QLabel):
     """Left-hand status text. Problem counts open the Problems pane.
 
-    Text too long for the slot is elided. The full text goes in the
-    tooltip and the accessible description.
+    Text too long for the slot is elided on screen only. ``text()`` and
+    ``full_text()`` return the full message; ``displayed_text()`` is what
+    the label paints. The full text also goes in the tooltip and the
+    accessible description while it is elided.
     """
 
     clicked = Signal()
@@ -41,6 +43,17 @@ class StatusMessage(QLabel):
     def full_text(self) -> str:
         """The text as set, before any eliding."""
         return self._full_text
+
+    def text(self) -> str:
+        """The full message, never the elided one, so callers can compare it."""
+        return self._full_text
+
+    def setText(self, text: str) -> None:
+        self._set_full_text(text)
+
+    def displayed_text(self) -> str:
+        """The text the label paints, elided when the slot is too narrow."""
+        return QLabel.text(self)
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()
@@ -81,7 +94,7 @@ class StatusMessage(QLabel):
                 self._full_text, Qt.TextElideMode.ElideRight, width
             )
         elided = shown != self._full_text
-        if self.text() != shown:
-            self.setText(shown)
+        if self.displayed_text() != shown:
+            QLabel.setText(self, shown)
         self.setToolTip(self._full_text if elided else "")
         self.setAccessibleDescription(self._full_text if elided else "")

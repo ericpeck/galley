@@ -7,7 +7,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QComboBox, QLabel, QProgressBar, QPushButton, QWidget
 
+from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
+from galley.app.main_window import CANCELLED_MESSAGE
+from galley.app.parse_session import ParseSession
 from galley.app.status_bar import INFO_RESERVE, Busy, StatusBar
 from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style
@@ -203,11 +206,13 @@ def test_long_state_text_is_elided_with_the_full_text_kept(qtbot) -> None:
     long_text = "Converted, but " + "this notice is very long. " * 20
     bar.set_state(long_text)
     _settle(qtbot, bar)
-    assert message.text() != long_text
-    assert message.text().endswith("…")
-    assert message.fontMetrics().horizontalAdvance(message.text()) <= (
+    shown = message.displayed_text()
+    assert shown != long_text
+    assert shown.endswith("…")
+    assert message.fontMetrics().horizontalAdvance(shown) <= (
         message.contentsRect().width()
     )
+    assert message.text() == long_text
     assert bar.state_text() == long_text
     assert message.toolTip() == long_text
     assert message.accessibleName() == long_text
@@ -216,9 +221,43 @@ def test_long_state_text_is_elided_with_the_full_text_kept(qtbot) -> None:
 
     bar.set_state("Valid JSON")
     _settle(qtbot, bar)
-    assert message.text() == "Valid JSON"
+    assert message.text() == message.displayed_text() == "Valid JSON"
     assert message.toolTip() == ""
     assert message.accessibleDescription() == ""
+
+
+def test_elided_text_keeps_status_logic_on_the_full_message(qtbot, monkeypatch) -> None:
+    """Narrow enough to elide every message, and the window still reads them whole.
+
+    Windows' wider font elided the crash banner first; a narrow slot shows
+    the same thing on any platform.
+    """
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window = _show(qtbot)
+    window._session.submit = lambda *_args, **_kwargs: None
+    bar = _bar(window)
+    message = _child(window, StatusMessage, "statusMessage")
+    message.setMaximumWidth(message.minimumSizeHint().width() + 24)
+    previous = "Converted to JSON. Some Python values became strings."
+    bar.set_state(previous)
+    _settle(qtbot, bar)
+    assert message.displayed_text() != previous
+    assert message.text() == bar.state_text() == previous
+    assert message.toolTip() == previous
+
+    editor = _child(window, CodeEditor, "inputEditor")
+    editor.setPlainText('{"a": 1}')
+    window._actions.format.trigger()
+    assert window._formatting
+    window._cancel_format()
+    _settle(qtbot, bar)
+    assert message.displayed_text() != CANCELLED_MESSAGE
+    assert message.text() == bar.state_text() == CANCELLED_MESSAGE
+
+    window._clear_canceled_status()
+    _settle(qtbot, bar)
+    assert message.text() == bar.state_text() == previous
+    assert message.displayed_text().endswith("…")
 
 
 def test_busy_indicators_have_distinct_accessible_names(qtbot) -> None:
