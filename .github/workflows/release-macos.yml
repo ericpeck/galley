@@ -64,6 +64,12 @@ jobs:
           set -euo pipefail
           uv run --frozen --no-dev --no-editable python packaging/check_copyright_notice.py
 
+      - name: Check unbuilt actions
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          uv run --frozen --no-dev --no-editable python -m galley.app.actions
+
       - name: Build Galley.app
         run: >
           uv run --frozen --no-dev --no-editable
