@@ -17,32 +17,44 @@ _GAP = 4
 
 
 def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
-    """Return a toolbar icon for ``name``, or an empty icon when unknown."""
-    pixmap = _draw(name)
-    if pixmap is None:
-        return QIcon()
-    if not pad:
-        return QIcon(pixmap)
+    """Return a toolbar icon for ``name``, or an empty icon when unknown.
+
+    The normal pixmap uses the active color group. The disabled pixmap
+    uses the disabled group, so a disabled menu row is not redrawn
+    brighter than an enabled one.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    icon = QIcon()
+    for mode, group in (
+        (QIcon.Mode.Normal, QPalette.ColorGroup.Active),
+        (QIcon.Mode.Disabled, QPalette.ColorGroup.Disabled),
+    ):
+        pixmap = _draw(name, _ink(name, palette, group))
+        if pixmap is None:
+            return QIcon()
+        icon.addPixmap(_with_gap(pixmap) if pad else pixmap, mode)
+    return icon
+
+
+def _ink(name: str, palette: QPalette, group: QPalette.ColorGroup) -> QColor:
+    if name == "Format":
+        # Dark mode moves the Accent role off the brand blue, but the
+        # Format button fill stays ACCENT, so the glyph stays with it.
+        return QColor(ACCENT)
+    return palette.color(group, QPalette.ColorRole.PlaceholderText)
+
+
+def _with_gap(pixmap: QPixmap) -> QPixmap:
     wider = QPixmap(pixmap.width() + _GAP, pixmap.height())
     wider.fill(Qt.GlobalColor.transparent)
     painter = QPainter(wider)
     painter.drawPixmap(0, 0, pixmap)
     painter.end()
-    return QIcon(wider)
+    return wider
 
 
-def _ink(name: str) -> QColor:
-    if name == "Format":
-        # Dark mode moves the Accent role off the brand blue, but the
-        # Format button fill stays ACCENT, so the glyph stays with it.
-        return QColor(ACCENT)
-    app = QApplication.instance()
-    palette = app.palette() if isinstance(app, QApplication) else QPalette()
-    return palette.color(QPalette.ColorRole.PlaceholderText)
-
-
-def _draw(name: str) -> QPixmap | None:
-    color = _ink(name)
+def _draw(name: str, color: QColor) -> QPixmap | None:
     pixmap = QPixmap(_ICON, _ICON)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)

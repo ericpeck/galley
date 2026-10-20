@@ -228,7 +228,7 @@ def dark_palette(platform: QPalette) -> QPalette:
 
 
 def _set_disabled_text(palette: QPalette) -> None:
-    """Disabled text roles: an opaque blend of Text toward Window.
+    """Disabled text and icon roles: an opaque blend of Text toward Window.
 
     The platform fade is 25% alpha on macOS (about 1.9:1 in light and 2.1:1
     in dark on the toolbar), so Coming soon buttons read as faint smudges.
@@ -243,6 +243,7 @@ def _set_disabled_text(palette: QPalette) -> None:
         QPalette.ColorRole.Text,
         QPalette.ColorRole.ButtonText,
         QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.PlaceholderText,
     ):
         palette.setColor(QPalette.ColorGroup.Disabled, role, faded)
 

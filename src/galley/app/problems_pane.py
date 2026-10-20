@@ -112,8 +112,9 @@ class ProblemsPane(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._strip.setStyleSheet(
-            f"QPushButton {{ background: {ERROR}; color: palette(highlighted-text); "
-            "border: none; font-weight: 700; }}"
+            "QPushButton {"
+            f" background: {ERROR}; color: palette(highlighted-text);"
+            " border: none; font-weight: 700; }"
         )
         self._strip.clicked.connect(self.expand_requested.emit)
         self._strip.hide()

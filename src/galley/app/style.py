@@ -4,6 +4,11 @@ The Format button fill is the one UI surface that names the brand hex.
 Everything else asks the palette, which the light samples seed.
 """
 
+from collections.abc import Callable
+
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
+
 from galley.app.theme import ACCENT
 
 
@@ -74,27 +79,47 @@ def progress_style() -> str:
 def menu_style() -> str:
     """Menu bar and menus. The selected row uses the link role.
 
-    Its label is the base role: white on the light link, and the dark base
-    on the lighter dark-mode link, where a white label would fall below
-    4.5:1.
+    The selected row's label is the base role: white on the light link,
+    and the dark base on the lighter dark-mode link, where a white label
+    would fall below 4.5:1.
+
+    Disabled rows use the disabled window text. Fusion ignores
+    ``palette(disabled, …)`` on a menu item and etches a brighter color,
+    so that role is written out as components from the current palette.
     """
-    return """
-        QMenuBar {
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    disabled = palette.color(
+        QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText
+    )
+    disabled_ink = f"rgb({disabled.red()}, {disabled.green()}, {disabled.blue()})"
+    return f"""
+        QMenuBar {{
             background: palette(window);
+        }}
+        QMenuBar::item {{
             color: palette(window-text);
-        }
-        QMenuBar::item:selected {
+        }}
+        QMenuBar::item:selected {{
             background: palette(link);
             color: palette(base);
-        }
-        QMenu {
+        }}
+        QMenuBar::item:disabled {{
+            color: {disabled_ink};
+        }}
+        QMenu {{
             background: palette(window);
+        }}
+        QMenu::item {{
             color: palette(window-text);
-        }
-        QMenu::item:selected {
+        }}
+        QMenu::item:selected {{
             background: palette(link);
             color: palette(base);
-        }
+        }}
+        QMenu::item:disabled {{
+            color: {disabled_ink};
+        }}
         """
 
 
@@ -133,3 +158,12 @@ def status_bar_style() -> str:
 def muted_text_style() -> str:
     """Captions, counts, and the resting status message."""
     return "color: palette(placeholder-text);"
+
+
+def palette_baked_styles() -> tuple[Callable[[], str], ...]:
+    """Stylesheets that write palette colors out as values.
+
+    A scheme switch rebuilds these, because re-parsing the old text would
+    keep the old colors.
+    """
+    return (menu_style,)
