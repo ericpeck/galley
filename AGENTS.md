@@ -13,7 +13,7 @@ Python 3.12 (`requires-python` in `pyproject.toml`). Use uv.
 - `uv run galley`
 - `uv run python -m galley.app.actions` — release check
 
-The release check exits 0 when no action still shows Coming soon. While any remain, it exits 1 and prints their names. A `v*` tag runs the same module as `uv run --frozen --no-dev --no-editable python -m galley.app.actions` in `.github/workflows/release-macos.yml` before the disk image is built.
+The release check exits 0 only when `UNBUILT_ACTIONS` and `ShellActions._not_yet_actions` are both empty. `UNBUILT_ACTIONS` is the Coming soon list. `_not_yet_actions` is the Not yet list. While either list is non-empty, the check exits 1 and prints `Release blocked: these actions still show "Coming soon"` or `Release blocked: these actions still show "Not yet"`. A `v*` tag runs the same module as `uv run --frozen --no-dev --no-editable python -m galley.app.actions` in `.github/workflows/release-macos.yml` before the disk image is built.
 
 ## Layout
 
@@ -45,7 +45,7 @@ Ruff `S102` and `S307` ban `exec` and `eval`. Convert from Python parses with `a
 
 ## Releases
 
-Push a `v*` release tag only after the project owner has tested that build and approved it. Pushing a `v*` tag does not change the version in `pyproject.toml`; the tag only marks a build the project owner has already tested and approved. Do not release while any menu or toolbar action still shows Coming soon or Not yet. The release check fails a tag build while Coming soon actions remain.
+Push a `v*` release tag only after the project owner has tested that build and approved it. Pushing a `v*` tag does not change the version in `pyproject.toml`; the tag only marks a build the project owner has already tested and approved. Do not release while any menu or toolbar action still shows Coming soon or Not yet. The release check fails a tag build while `UNBUILT_ACTIONS` or `ShellActions._not_yet_actions` is non-empty.
 
 ## Cross-platform
 
