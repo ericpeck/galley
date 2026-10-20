@@ -2,8 +2,15 @@
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent
+from PySide6.QtCore import (
+    QEvent,
+    QModelIndex,
+    QPersistentModelIndex,
+    QSize,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -11,6 +18,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -78,6 +87,8 @@ class ProblemsPane(QWidget):
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._list.setTabKeyNavigation(False)
+        self._delegate = _RowWidgetDelegate(self._list)
+        self._list.setItemDelegate(self._delegate)
         self._list.setStyleSheet(
             "QListWidget { background: transparent; border: none; }"
             "QListWidget::item { background: transparent; border: none; }"
@@ -238,6 +249,22 @@ def _header_button(text: str, name: str, object_name: str) -> QPushButton:
     return button
 
 
+class _RowWidgetDelegate(QStyledItemDelegate):
+    """Paints nothing, so the item text stays for accessibility only.
+
+    Each item carries a _ProblemRow that draws the whole row. Painting the
+    item's own text under it left a ghost "Line" behind the marker.
+    """
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        del painter, option, index
+
+
 class _ProblemRow(QWidget):
     """A red marker, a bold line number, and the message under it."""
 
@@ -246,6 +273,9 @@ class _ProblemRow(QWidget):
     def __init__(self, problem: DisplayProblem, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._lineno = problem.lineno
+        self.setObjectName("problemRow")
+        # A QWidget subclass skips stylesheet backgrounds unless this is set.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAccessibleName(problem.accessible)
         self.setMinimumHeight(_ROW_HEIGHT)
 
@@ -279,14 +309,17 @@ class _ProblemRow(QWidget):
         self.set_selected(False)
 
     def set_selected(self, selected: bool) -> None:
+        # Scoped to the row so the bar and tint stay off the labels.
         self._selected = selected
         if selected:
             self.setStyleSheet(
-                f"background: {ACCENT_TINT}; border-left: 3px solid {ACCENT};"
+                f"QWidget#problemRow {{ background: {ACCENT_TINT}; "
+                f"border-left: 3px solid {ACCENT}; }}"
             )
             return
         self.setStyleSheet(
-            "background: transparent; border-left: 3px solid transparent;"
+            "QWidget#problemRow { background: transparent; "
+            "border-left: 3px solid transparent; }"
         )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:

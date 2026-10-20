@@ -1,8 +1,15 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
-from PySide6.QtWidgets import QComboBox, QListWidget, QPushButton, QSplitter
+from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPixmap, QRegion
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QSplitter,
+    QWidget,
+)
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
@@ -11,7 +18,7 @@ from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import problems_settings
 from galley.app.status_message import StatusMessage
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import ERROR
+from galley.app.theme import ACCENT, ERROR
 from galley.core.problems import Problem
 
 _MISSING = '{\n  "price": 4.5\n  "qty": 3\n}\n'
@@ -273,8 +280,63 @@ def test_pane_hides_once_the_input_is_fixed(qtbot) -> None:
     assert '"price"' in output.toPlainText()
 
 
-def _has_error_pixel(image) -> bool:
-    target = QColor(ERROR)
+def _show_pane_alone(qtbot) -> ProblemsPane:
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.resize(320, 300)
+    pane.set_problems(
+        (
+            display_problem(Problem("yaml_tab", 3)),
+            display_problem(Problem("yaml_tab", 5)),
+        )
+    )
+    pane.show()
+    qtbot.waitExposed(pane)
+    return pane
+
+
+def test_list_items_paint_no_text_under_the_rows(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    item = problems.item(0)
+    assert item.isSelected()
+    assert item.text() == "Line 3: Starts with a tab. YAML needs spaces for indenting."
+    rect = problems.visualItemRect(item)
+    viewport = problems.viewport()
+    pixmap = QPixmap(viewport.size())
+    pixmap.fill(QColor("#123456"))
+    # Leave out the row widgets so only the list's own painting shows.
+    viewport.render(pixmap, QPoint(), QRegion(), QWidget.RenderFlag(0))
+    image = pixmap.toImage().copy(rect)
+    assert _colors(image) == {QColor("#123456").rgb()}
+
+
+def test_selection_bar_stays_on_the_row_not_its_labels(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    selected = problems.itemWidget(problems.item(0))
+    other = problems.itemWidget(problems.item(1))
+    assert selected is not None and other is not None
+
+    labels = selected.findChildren(QLabel)
+    assert len(labels) == 3
+    assert "problemMarker" in {label.objectName() for label in labels}
+    for label in labels:
+        assert label.contentsMargins().left() == 0
+        assert not _has_pixel(label.grab().toImage(), QColor(ACCENT))
+
+    bar = selected.grab().toImage()
+    assert bar.pixelColor(0, bar.height() // 2) == QColor(ACCENT)
+    assert not _has_pixel(other.grab().toImage(), QColor(ACCENT))
+
+
+def _colors(image: QImage) -> set[int]:
+    return {
+        image.pixel(x, y) for y in range(image.height()) for x in range(image.width())
+    }
+
+
+def _has_pixel(image: QImage, target: QColor) -> bool:
     for y in range(image.height()):
         for x in range(image.width()):
             color = image.pixelColor(x, y)
@@ -285,3 +347,7 @@ def _has_error_pixel(image) -> bool:
             ):
                 return True
     return False
+
+
+def _has_error_pixel(image: QImage) -> bool:
+    return _has_pixel(image, QColor(ERROR))
