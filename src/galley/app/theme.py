@@ -48,7 +48,7 @@ TEXT_ON_ACCENT: Final = "#FFFFFF"
 # Syntax colors on a dark editor Base, named after the light role each
 # replaces. Keys, strings, and numbers/literals are the approved dark-mode
 # values from issue #54. #54 lists no punctuation color, so
-# TEXT_MUTED_DARK is a muted grey that clears 4.5:1 on the macOS dark Base
+# TEXT_MUTED_DARK is a muted gray that clears 4.5:1 on the macOS dark Base
 # #171717 and its current-line band #343434. COLORS mirrors the light
 # spec table, so these are not in it.
 ACCENT_INK_DARK: Final = "#7CC7E8"
