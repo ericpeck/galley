@@ -25,13 +25,13 @@ def message_for(problem: Problem) -> str:
         token = problem.token if problem.token else "}"
         return f"Unexpected {token} on line {line}."
     if code == "unquoted_key":
-        return f"Key on line {line} needs double quotes."
+        return f"Put double quotes around the key on line {line}."
     if code == "single_quotes":
         return f"Use double quotes instead of single quotes on line {line}."
     if code == "missing_close":
         opener = problem.token if problem.token else "{"
         closer = "]" if opener == "[" else "}"
-        return f"Missing {closer} to close the {opener} opened on line {line}."
+        return f"Missing {closer} for the {opener} opened on line {line}."
     if code == "incomplete":
         return f"The text ends on line {line} before the JSON document finishes."
     if code == "json_other":
