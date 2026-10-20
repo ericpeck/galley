@@ -6,16 +6,25 @@ Other parsers still stop at the first problem, so those stay a single code.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Literal
 
 from ruamel.yaml.error import YAMLError
+
+# A complete JSON string or one bracket. The unrolled string body stays
+# linear, and strings are skipped so brackets inside them do not count.
+_STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
+_CLOSERS = {"[": "]", "{": "}"}
 
 ProblemCode = Literal[
     "missing_comma",
     "unclosed_quote",
     "trailing_comma",
     "unexpected_close",
+    "unquoted_key",
+    "single_quotes",
+    "missing_close",
     "incomplete",
     "json_other",
     "yaml_tab",
@@ -80,26 +89,60 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
 
 def _classify_json(exc: json.JSONDecodeError, text: str) -> Problem:
     message = exc.msg
+    char = _char_at(text, exc.pos)
     if message.startswith("Unterminated string"):
         return Problem("unclosed_quote", exc.lineno)
-    if message.startswith("Invalid control character") and _char_at(text, exc.pos) in {
-        "\n",
-        "\r",
-    }:
+    if message.startswith("Invalid control character") and char in {"\n", "\r"}:
         return Problem("unclosed_quote", exc.lineno)
+    if char == "'" and message in {
+        "Expecting value",
+        "Expecting property name enclosed in double quotes",
+    }:
+        return Problem("single_quotes", exc.lineno)
+    if message == "Expecting property name enclosed in double quotes" and _word_start(
+        char
+    ):
+        return Problem("unquoted_key", exc.lineno)
     if message == "Expecting ',' delimiter":
-        if _at_end(text, exc.pos):
-            return Problem("incomplete", _end_line(text, exc.lineno))
+        if _at_end(text, exc.pos) or char in {"}", "]"}:
+            return _missing_close(text, exc.pos, exc.lineno)
         return Problem("missing_comma", _comma_line(text, exc.lineno, exc.colno))
     if _at_end(text, exc.pos):
-        return Problem("incomplete", _end_line(text, exc.lineno))
+        return _missing_close(text, exc.pos, exc.lineno)
     comma_at = _comma_before(text, exc.pos)
     if comma_at is not None:
         return Problem("trailing_comma", _line_of_index(text, comma_at))
-    char = _char_at(text, exc.pos)
     if char in {"}", "]"}:
         return Problem("unexpected_close", exc.lineno, char)
     return Problem("json_other", max(exc.lineno, 1))
+
+
+def _missing_close(text: str, pos: int, lineno: int) -> Problem:
+    """Name the innermost bracket still open at ``pos``.
+
+    The parser accepted everything before ``pos``, so one pass over that
+    prefix finds the open brackets. With none open, the text just ends.
+    """
+    opened = _innermost_open(text, pos)
+    if opened is None:
+        return Problem("incomplete", _end_line(text, lineno))
+    return Problem("missing_close", _line_of_index(text, opened), text[opened])
+
+
+def _innermost_open(text: str, end: int) -> int | None:
+    stack: list[int] = []
+    for match in _STRING_OR_BRACKET.finditer(text, 0, end):
+        token = match.group()
+        if token in _CLOSERS:
+            stack.append(match.start())
+        elif token in {"]", "}"} and stack:
+            stack.pop()
+    return stack[-1] if stack else None
+
+
+def _word_start(char: str) -> bool:
+    """True for a character that can start a bare key such as ``name``."""
+    return char.isalnum() or char in {"_", "$"}
 
 
 def _classify_yaml(exc: YAMLError, text: str) -> Problem:
