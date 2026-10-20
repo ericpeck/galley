@@ -1,6 +1,7 @@
 """Format picker and Pop out contrast in light and dark palettes."""
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton
 
 from galley.app.format_picker import closed_field_colors, pop_out_colors
@@ -95,6 +96,41 @@ def _install(widget, *, dark: bool) -> None:
     QApplication.processEvents()
 
 
+def _force_scheme(scheme: Qt.ColorScheme) -> bool:
+    """Ask Qt for ``scheme``. Return whether the hint actually changed.
+
+    Offscreen ignores the OS dark-mode setting, and this PySide build
+    keeps ``colorScheme()`` at ``Unknown`` after ``setColorScheme``.
+    Callers then apply an explicit palette so the dark pass is not a
+    second look at the light colors.
+    """
+    hints = QGuiApplication.styleHints()
+    setter = getattr(hints, "setColorScheme", None)
+    if setter is None:
+        return False
+    setter(scheme)
+    QApplication.processEvents()
+    return hints.colorScheme() == scheme
+
+
+def _apply_mode(widgets, *, dark: bool) -> None:
+    scheme = Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light
+    if _force_scheme(scheme):
+        for widget in widgets:
+            widget.repaint()
+        QApplication.processEvents()
+        return
+    for widget in widgets:
+        _install(widget, dark=dark)
+
+
+def _restore_scheme(previous: Qt.ColorScheme) -> None:
+    hints = QGuiApplication.styleHints()
+    hints.setColorScheme(previous)
+    QApplication.processEvents()
+    assert hints.colorScheme() == previous
+
+
 def _sampled_contrast(widget, *, width_fraction: float) -> float:
     """Contrast of the strongest rendered pixel against the field fill."""
     image = widget.grab().toImage()
@@ -115,6 +151,8 @@ def _sampled_contrast(widget, *, width_fraction: float) -> float:
 def test_format_pickers_contrast_in_light_and_dark(qtbot) -> None:
     window = _show(qtbot)
     pickers = _pickers(window)
+    hints = QGuiApplication.styleHints()
+    previous = hints.colorScheme()
     window_ink = window.palette().color(QPalette.ColorRole.ButtonText)
 
     for picker in pickers:
@@ -123,63 +161,100 @@ def test_format_pickers_contrast_in_light_and_dark(qtbot) -> None:
         ink = picker.palette().color(QPalette.ColorRole.ButtonText)
         assert ink.name() == window_ink.name()
         assert _luminance(ink) <= _luminance(_LIGHT_TEXT) + 1e-9
-        painted_ink, painted_field = closed_field_colors(picker)
-        assert painted_ink.name() != painted_field.name()
-        assert _contrast(painted_ink, painted_field) >= _MIN_CONTRAST
-        assert _sampled_contrast(picker, width_fraction=0.55) >= _MIN_CONTRAST
 
-    for dark in (False, True):
+    try:
+        _apply_mode(pickers, dark=False)
+        light_pairs = {}
         for picker in pickers:
-            _install(picker, dark=dark)
             painted_ink, painted_field = closed_field_colors(picker)
+            light_pairs[picker.objectName()] = (
+                painted_ink.name(),
+                painted_field.name(),
+            )
+            assert painted_ink.name() != painted_field.name()
+            assert _contrast(painted_ink, painted_field) >= _MIN_CONTRAST
+            assert _sampled_contrast(picker, width_fraction=0.55) >= _MIN_CONTRAST
+
+        _apply_mode(pickers, dark=True)
+        for picker in pickers:
+            painted_ink, painted_field = closed_field_colors(picker)
+            dark_pair = (painted_ink.name(), painted_field.name())
+            assert dark_pair != light_pairs[picker.objectName()]
             assert painted_ink.name() != painted_field.name()
             assert _contrast(painted_ink, painted_field) >= _MIN_CONTRAST
             assert _sampled_contrast(picker, width_fraction=0.55) >= _MIN_CONTRAST
             resolved = picker.palette().color(QPalette.ColorRole.ButtonText)
-            assert _contrast(resolved, painted_field) >= _MIN_CONTRAST
-            if dark:
-                assert _luminance(resolved) > _luminance(_LIGHT_MUTED)
+            assert resolved.name() != light_pairs[picker.objectName()][0]
+            assert _luminance(resolved) > _luminance(_LIGHT_MUTED)
+    finally:
+        _restore_scheme(previous)
+
+
+def _popup_colors(picker: QComboBox) -> tuple[str, str, str, str]:
+    picker.showPopup()
+    view = picker.view()
+    text = view.palette().color(QPalette.ColorRole.Text).name()
+    field = view.palette().color(QPalette.ColorRole.Base).name()
+    highlight = view.palette().color(QPalette.ColorRole.Highlight).name()
+    highlighted = view.palette().color(QPalette.ColorRole.HighlightedText).name()
+    picker.hidePopup()
+    return text, field, highlight, highlighted
 
 
 def test_popup_list_contrast_in_light_and_dark(qtbot) -> None:
     window = _show(qtbot)
     picker = _pickers(window)[0]
-    for dark in (False, True):
-        _install(picker, dark=dark)
-        picker.showPopup()
-        view = picker.view()
-        text = view.palette().color(QPalette.ColorRole.Text)
-        field = view.palette().color(QPalette.ColorRole.Base)
-        highlight = view.palette().color(QPalette.ColorRole.Highlight)
-        highlighted = view.palette().color(QPalette.ColorRole.HighlightedText)
+    hints = QGuiApplication.styleHints()
+    previous = hints.colorScheme()
+    try:
+        _apply_mode([picker], dark=False)
+        light = _popup_colors(picker)
+        text, field, highlight, highlighted = (QColor(name) for name in light)
         assert text.name() != field.name()
         assert _contrast(text, field) >= _MIN_CONTRAST
         assert _contrast(highlighted, highlight) >= _MIN_CONTRAST
-        picker.hidePopup()
+
+        _apply_mode([picker], dark=True)
+        dark = _popup_colors(picker)
+        assert dark != light
+        text, field, highlight, highlighted = (QColor(name) for name in dark)
+        assert text.name() != field.name()
+        assert _contrast(text, field) >= _MIN_CONTRAST
+        assert _contrast(highlighted, highlight) >= _MIN_CONTRAST
+    finally:
+        _restore_scheme(previous)
 
 
 def test_pop_out_contrast_in_light_and_dark(qtbot) -> None:
     window = _show(qtbot)
     buttons = _pop_outs(window)
+    hints = QGuiApplication.styleHints()
+    previous = hints.colorScheme()
     for button in buttons:
         assert button.styleSheet() == ""
-        ink, surface = pop_out_colors(button)
-        assert ink.name() != surface.name()
-        assert _contrast(ink, surface) >= _MIN_CONTRAST
-        assert _luminance(ink) <= _luminance(_LIGHT_MUTED) + 1e-9
-        assert _sampled_contrast(button, width_fraction=1.0) >= _MIN_CONTRAST
 
-    for dark in (False, True):
+    try:
+        _apply_mode(buttons, dark=False)
+        light_pairs = {}
         for button in buttons:
-            _install(button, dark=dark)
             ink, surface = pop_out_colors(button)
+            light_pairs[id(button)] = (ink.name(), surface.name())
             assert ink.name() != surface.name()
             assert _contrast(ink, surface) >= _MIN_CONTRAST
+            assert _luminance(ink) <= _luminance(_LIGHT_MUTED) + 1e-9
             assert _sampled_contrast(button, width_fraction=1.0) >= _MIN_CONTRAST
-            if not dark:
-                assert _luminance(ink) <= _luminance(_LIGHT_MUTED) + 1e-9
-            else:
-                assert _luminance(ink) > _luminance(_LIGHT_MUTED)
+
+        _apply_mode(buttons, dark=True)
+        for button in buttons:
+            ink, surface = pop_out_colors(button)
+            dark_pair = (ink.name(), surface.name())
+            assert dark_pair != light_pairs[id(button)]
+            assert ink.name() != surface.name()
+            assert _contrast(ink, surface) >= _MIN_CONTRAST
+            assert _luminance(ink) > _luminance(_LIGHT_MUTED)
+            assert _sampled_contrast(button, width_fraction=1.0) >= _MIN_CONTRAST
+    finally:
+        _restore_scheme(previous)
 
 
 def test_format_picker_selection_still_switches_json_and_yaml(qtbot) -> None:
