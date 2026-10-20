@@ -1,28 +1,17 @@
 """Open loads a UTF-8 file into Input and does not format it."""
 
+import threading
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QStandardPaths, Qt, QUrl
-from PySide6.QtGui import (
-    QAction,
-    QColor,
-    QDragEnterEvent,
-    QDragLeaveEvent,
-    QDropEvent,
-    QImage,
-    QKeySequence,
-    QPalette,
-)
+from PySide6.QtCore import QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPalette
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QLabel,
-    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QWidget,
 )
 
 from galley.app.actions import COMING_SOON
@@ -30,17 +19,16 @@ from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.main_window import OPEN_REVEAL_MS, YAML_WARNING_BYTES
 from galley.app.open_file import (
-    MAX_RECENT,
     OPEN_FILE_FILTER,
+    InputDocument,
     load_last_open_dir,
-    load_recent_files,
-    remember_recent_file,
     save_last_open_dir,
 )
-from galley.app.pane import PaneRole, PaneWidget
+from galley.app.pane import PaneKind, PaneWidget
 from galley.app.problems_settings import problems_settings
-from galley.app.theme import composite, contrast_ratio
-from galley.core.open_text import MAX_OPEN_BYTES, OpenedText
+from galley.app.theme import contrast_ratio
+from galley.core import load
+from galley.core.load import MAX_OPEN_BYTES, LoadedDocument
 
 _KEEP = '{"keep": true}\n'
 _SAMPLE = '{"a":1,"b":[true,null]}'
@@ -298,7 +286,8 @@ def test_opening_shows_after_500_ms_and_blocks_open_and_format(
     assert _spinner(window).accessibleName() == "Opening"
     assert _message(window, "sizeWarning") is None
 
-    window._reader.finished.emit(jobs[0], OpenedText(_SAMPLE, len(_SAMPLE)))
+    loaded = LoadedDocument(_SAMPLE, "JSON", len(_SAMPLE), False, "\n")
+    window._reader.finished.emit(jobs[0], loaded)
     _wait_loaded(qtbot, window, _SAMPLE)
     assert not _spinner(window).isVisible()
     assert _spinner(window).accessibleName() != "Opening"
@@ -321,6 +310,7 @@ def test_large_file_opens_without_a_prompt_and_format_still_asks(
     _wait_loaded(qtbot, window, payload)
     assert _message(window, "sizeWarning") is None
     assert not window._formatting
+    assert not window._size_warning_accepted
     assert _status(window).text() == "Opened big.yaml (352 KB)"
     assert _format_name(window) == "YAML"
 
@@ -372,7 +362,6 @@ def test_open_settings_stay_in_the_test_folder(tmp_path: Path) -> None:
     folder = tmp_path / "keep"
     folder.mkdir()
     save_last_open_dir(folder)
-    remember_recent_file(folder / "a.json")
     stored = Path(problems_settings().fileName())
     assert stored.is_file()
     # Resolve both: Windows can give the temp folder its short 8.3 name.
@@ -433,146 +422,27 @@ def test_utf8_bom_is_dropped(qtbot, tmp_path, monkeypatch) -> None:
     _wait_loaded(qtbot, window, "{}\n")
 
 
-def test_open_recent_lists_files_newest_first(qtbot, tmp_path, monkeypatch) -> None:
-    first = tmp_path / "a" / "config.json"
-    second = tmp_path / "b" / "config.json"
-    third = tmp_path / "b" / "other.yaml"
-    for path in (first, second, third):
-        path.parent.mkdir(exist_ok=True)
-        _write(path, "{}\n")
-    window = _show(qtbot)
-    _choose_sequence(monkeypatch, [first, second, third])
-    for _path in range(3):
-        window._actions.open_file.trigger()
-        qtbot.waitUntil(lambda: window._loading_path is None)
-    menu = _recent_menu(window)
-    entries = _menu_entries(menu)
-    assert [item.text() for item in entries] == [
-        "other.yaml",
-        "config.json — b",
-        "config.json — a",
-        "Clear Menu",
-    ]
-    assert [item.toolTip() for item in entries[:3]] == [
-        str(third),
-        str(second),
-        str(first),
-    ]
-    assert all(item.isEnabled() for item in entries)
-
-    first.unlink()
-    menu.aboutToShow.emit()
-    missing = _menu_entries(menu)[2]
-    assert missing.text() == "config.json — a"
-    assert not missing.isEnabled()
-    assert missing.toolTip() == "File not found"
-
-    _write(third, "picked: 1\n")
-    _menu_entries(menu)[0].trigger()
-    _wait_loaded(qtbot, window, "picked: 1\n")
-    assert window.windowTitle() == "other.yaml — Galley"
-
-    _menu_entries(menu)[-1].trigger()
-    entries = _menu_entries(menu)
-    assert [item.text() for item in entries] == ["Clear Menu"]
-    assert not entries[0].isEnabled()
-    assert load_recent_files() == []
-
-
-def test_open_recent_keeps_ten_entries(tmp_path: Path) -> None:
-    for index in range(MAX_RECENT + 2):
-        remember_recent_file(tmp_path / f"file{index}.json")
-    recent = load_recent_files()
-    assert len(recent) == MAX_RECENT == 10
-    assert recent[0] == tmp_path / "file11.json"
-    remember_recent_file(tmp_path / "file5.json")
-    recent = load_recent_files()
-    assert recent[0] == tmp_path / "file5.json"
-    assert recent.count(tmp_path / "file5.json") == 1
-
-
-def test_dropping_a_file_on_input_opens_it(qtbot, tmp_path) -> None:
-    path = tmp_path / "dropped.json"
-    _write(path, _SAMPLE)
-    window = _show(qtbot)
-    pane = _input_pane(window)
-    viewport = _input(window).viewport()
-
-    enter = _drag_enter(viewport, [path])
-    assert enter.isAccepted()
-    assert pane.property("paneDropTarget") is True
-    QApplication.sendEvent(viewport, QDragLeaveEvent())
-    assert pane.property("paneDropTarget") is False
-
-    _drag_enter(viewport, [path])
-    drop = _drop(viewport, [path])
-    assert drop.isAccepted()
-    assert pane.property("paneDropTarget") is False
-    _wait_loaded(qtbot, window, _SAMPLE)
-    assert window.windowTitle() == "dropped.json — Galley"
-    assert _status(window).text() == "Opened dropped.json (23 B)"
-
-
-def test_dropping_on_the_window_opens_without_an_outline(qtbot, tmp_path) -> None:
-    path = tmp_path / "dropped.json"
-    _write(path, _SAMPLE)
-    window = _show(qtbot)
-    pane = _input_pane(window)
-    output = _output(window).viewport()
-    _drag_enter(output, [path])
-    assert pane.property("paneDropTarget") is not True
-    _drop(output, [path])
-    _wait_loaded(qtbot, window, _SAMPLE)
-
-
-def test_dropping_several_files_opens_the_first(qtbot, tmp_path) -> None:
-    paths = [tmp_path / f"part{index}.json" for index in range(3)]
-    for index, path in enumerate(paths):
-        _write(path, f'{{"part": {index}}}\n')
-    window = _show(qtbot)
-    viewport = _input(window).viewport()
-    _drag_enter(viewport, paths)
-    _drop(viewport, paths)
-    _wait_loaded(qtbot, window, '{"part": 0}\n')
-    assert _status(window).text() == "Opened the first of 3 files."
-
-
-def test_dropping_text_is_left_to_the_editor(qtbot) -> None:
-    window = _show(qtbot)
-    viewport = _input(window).viewport()
-    mime = QMimeData()
-    mime.setText("plain")
-    event = QDragEnterEvent(
-        QPoint(10, 10),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    QApplication.sendEvent(viewport, event)
-    assert _input_pane(window).property("paneDropTarget") is not True
-
-
-def test_formatting_blocks_open_and_says_why(qtbot, tmp_path) -> None:
-    path = tmp_path / "dropped.json"
+def test_open_is_disabled_while_formatting(qtbot, tmp_path, monkeypatch) -> None:
+    path = tmp_path / "next.json"
     _write(path, _SAMPLE)
     window = _show(qtbot)
     editor = _input(window)
     editor.setPlainText("typed")
+    calls = _choose(monkeypatch, path)
     window._formatting = True
     window._sync_format_button()
     action = window._actions.open_file
+    assert not window.can_open()
     assert not action.isEnabled()
     assert action.toolTip() == "Wait for formatting to finish"
-    assert not _recent_menu(window).isEnabled()
 
-    viewport = editor.viewport()
-    enter = _drag_enter(viewport, [path])
-    assert enter.isAccepted()
-    assert _input_pane(window).property("paneDropTarget") is not True
-    _drop(viewport, [path])
-    assert _status(window).text() == "Can't open a file while formatting."
+    # Neither the hook nor the menu swaps Input under a running job.
+    window.open_path(path)
+    window._open_file()
+    action.trigger()
+    assert calls == {}
     assert _message(window, "replaceInput") is None
+    assert window._loading_path is None
     assert editor.toPlainText() == "typed"
 
     window._formatting = False
@@ -593,23 +463,6 @@ def test_empty_input_heading_names_the_open_shortcut(qtbot) -> None:
     )
 
 
-def test_drop_outline_reaches_three_to_one(qtbot, scheme_palette) -> None:
-    pane = PaneWidget(PaneRole.INPUT)
-    qtbot.addWidget(pane)
-    pane.resize(480, 520)
-    pane.show()
-    qtbot.waitExposed(pane)
-    background = scheme_palette.color(QPalette.ColorRole.Window)
-    base = composite(scheme_palette.color(QPalette.ColorRole.Base), background)
-    resting = _left_edge(pane)
-    pane.set_drop_target(True)
-    outline = _left_edge(pane)
-    pane.set_drop_target(False)
-    assert outline != resting
-    assert contrast_ratio(outline, background) >= 3
-    assert contrast_ratio(outline, base) >= 3
-
-
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_open_status_text_reaches_four_and_a_half_to_one(
     qtbot, tmp_path, monkeypatch, install_scheme, scheme: str
@@ -626,6 +479,81 @@ def test_open_status_text_reaches_four_and_a_half_to_one(
     fill = image.pixelColor(1, 1)
     assert fill == palette.color(QPalette.ColorRole.Window)
     assert _strongest_contrast(image, fill) >= 4.5
+
+
+def test_the_read_runs_off_the_ui_thread(qtbot, tmp_path, monkeypatch) -> None:
+    path = tmp_path / "slow.json"
+    _write(path, _SAMPLE)
+    release = threading.Event()
+    threads: list[int] = []
+    real_read = load.read_document
+
+    def _slow_read(target: Path, *args: object) -> LoadedDocument:
+        threads.append(threading.get_ident())
+        release.wait(10)
+        return real_read(target)
+
+    monkeypatch.setattr("galley.app.open_file.read_document", _slow_read)
+    window = _show(qtbot)
+    _choose(monkeypatch, path)
+    window._actions.open_file.trigger()
+
+    ticks: list[int] = []
+    QTimer.singleShot(50, lambda: ticks.append(1))
+    qtbot.waitUntil(lambda: bool(ticks))
+    qtbot.waitUntil(lambda: _status(window).text() == "Opening slow.json…")
+    assert threads and threads[0] != threading.get_ident()
+    assert _input(window).toPlainText() == ""
+    release.set()
+    _wait_loaded(qtbot, window, _SAMPLE)
+
+
+def test_open_path_fills_the_source_pane_and_reports(qtbot, tmp_path) -> None:
+    path = tmp_path / "crlf.json"
+    path.write_bytes(b'\xef\xbb\xbf{"a": 1}\r\n')
+    missing = tmp_path / "gone.json"
+    window = _show(qtbot)
+    pane = _input_pane(window)
+    assert pane.spec.kind is PaneKind.SOURCE
+    assert window._source_pane() is pane
+    started: list[bool] = []
+    finished: list[object] = []
+    failed: list[tuple[str, str]] = []
+    window.open_started.connect(lambda: started.append(True))
+    window.open_finished.connect(finished.append)
+    window.open_failed.connect(lambda kind, name: failed.append((kind, name)))
+
+    assert window.can_open()
+    window.open_path(path)
+    _wait_loaded(qtbot, window, '{"a": 1}\n')
+    assert started == [True]
+    document = pane.document
+    assert finished == [document]
+    assert document == InputDocument(path, '{"a": 1}\n', True, "\r\n")
+    assert pane.source_path == path
+    assert "﻿" not in _input(window).toPlainText()
+
+    window.open_path(missing)
+    qtbot.waitUntil(lambda: bool(failed))
+    assert failed == [("not_found", "gone.json")]
+    assert pane.document == document
+
+
+def test_cancel_open_drops_the_result(qtbot, tmp_path, monkeypatch) -> None:
+    path = tmp_path / "late.json"
+    _write(path, _SAMPLE)
+    window = _show(qtbot)
+    jobs: list[int] = []
+    monkeypatch.setattr(window._reader, "read", lambda job, _path: jobs.append(job))
+    window.open_path(path)
+    assert not window.can_open()
+    window.cancel_open()
+    assert window.can_open()
+    loaded = LoadedDocument(_SAMPLE, "JSON", len(_SAMPLE), False, "\n")
+    window._reader.finished.emit(jobs[0], loaded)
+    qtbot.wait(10)
+    assert _input(window).toPlainText() == ""
+    assert window.windowTitle() == "Galley"
 
 
 def _assert_open_error(qtbot, monkeypatch, path: Path, expected: str) -> None:
@@ -651,7 +579,6 @@ def _assert_open_error(qtbot, monkeypatch, path: Path, expected: str) -> None:
     assert editor.toPlainText() == "keep"
     assert output.toPlainText() == "leave\n"
     assert window.windowTitle() == "Galley"
-    assert load_recent_files() == []
     assert window._actions.open_file.isEnabled()
     qtbot.waitUntil(lambda: editor.hasFocus())
 
@@ -679,44 +606,6 @@ def _default_folder() -> str:
     if documents and Path(documents).is_dir():
         return documents
     return str(Path.home())
-
-
-def _drag_enter(target: QWidget, paths: list[Path]) -> QDragEnterEvent:
-    # The event does not own its mime data, so keep it alive until sent.
-    mime = _file_mime(paths)
-    event = QDragEnterEvent(
-        QPoint(10, 10),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    QApplication.sendEvent(target, event)
-    return event
-
-
-def _drop(target: QWidget, paths: list[Path]) -> QDropEvent:
-    mime = _file_mime(paths)
-    event = QDropEvent(
-        QPointF(10, 10),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    QApplication.sendEvent(target, event)
-    return event
-
-
-def _file_mime(paths: list[Path]) -> QMimeData:
-    mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
-    return mime
-
-
-def _left_edge(pane: PaneWidget) -> QColor:
-    image = pane.grab().toImage()
-    return image.pixelColor(0, image.height() // 2)
 
 
 def _strongest_contrast(image: QImage, background: QColor) -> float:
@@ -769,16 +658,6 @@ def _spinner(window) -> QProgressBar:
     spinner = window.findChild(QProgressBar, "formatSpinner")
     assert isinstance(spinner, QProgressBar)
     return spinner
-
-
-def _recent_menu(window) -> QMenu:
-    menu = window.findChild(QMenu, "menuOpenRecent")
-    assert isinstance(menu, QMenu)
-    return menu
-
-
-def _menu_entries(menu: QMenu) -> list[QAction]:
-    return [item for item in menu.actions() if not item.isSeparator()]
 
 
 def _format_name(window) -> str:

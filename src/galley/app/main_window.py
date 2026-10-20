@@ -5,11 +5,9 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
-    QDragMoveEvent,
-    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QResizeEvent,
@@ -44,30 +42,25 @@ from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
 from galley.app.open_file import (
-    CLEAR_RECENT,
-    DROP_WHILE_FORMATTING,
     OPEN_DIALOG_CAPTION,
     OPEN_FILE_FILTER,
     OPEN_WHILE_FORMATTING_TOOLTIP,
     OPENED_STATUS_MS,
-    RECENT_MISSING_TOOLTIP,
     REPLACE_BUTTON,
     FileReader,
-    clear_recent_files,
+    InputDocument,
     input_needs_replace,
-    input_window_title,
     load_last_open_dir,
-    load_recent_files,
-    open_error_text,
-    opened_first_text,
-    opened_text,
-    opening_text,
-    recent_labels,
-    remember_recent_file,
-    replace_input_text,
     save_last_open_dir,
 )
-from galley.app.pane import PaneRole, PaneWidget
+from galley.app.open_text import (
+    input_window_title,
+    open_error_text,
+    opened_text,
+    opening_text,
+    replace_input_text,
+)
+from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import DisplayProblem, problem_count_text
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
@@ -97,12 +90,7 @@ from galley.app.tab_repair import replace_leading_tabs
 from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.format import _has_tab
-from galley.core.open_text import (
-    OpenedText,
-    OpenTextError,
-    format_for_suffix,
-    sniff_format,
-)
+from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
 CANCELLED_MESSAGE = "Formatting canceled."
@@ -181,7 +169,16 @@ class _FormatButton(QPushButton):
 
 
 class MainWindow(QMainWindow):
-    """The single Galley window in its empty, ready state."""
+    """The single Galley window in its empty, ready state.
+
+    ``open_started``, ``open_finished(InputDocument)`` and
+    ``open_failed(kind, name)`` report each Open for loading and error
+    visuals. ``kind`` is a :class:`~galley.core.load.LoadErrorKind` value.
+    """
+
+    open_started = Signal()
+    open_finished = Signal(object)
+    open_failed = Signal(str, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -196,10 +193,8 @@ class MainWindow(QMainWindow):
         self._accepted_job_id: int | None = None
         self._size_warning_accepted = False
         self._size_warning: QMessageBox | None = None
-        self._opened_text: str | None = None
         self._replace_box: QMessageBox | None = None
         self._loading_path: Path | None = None
-        self._loading_count = 1
         self._open_job = 0
         self._reader = FileReader(self)
         self._reader.finished.connect(self._on_file_read)
@@ -228,7 +223,6 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
         self.setAutoFillBackground(True)
-        self.setAcceptDrops(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -263,6 +257,7 @@ class MainWindow(QMainWindow):
         self._session.shutdown()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.cancel_open()
         self._session.shutdown()
         super().closeEvent(event)
 
@@ -337,11 +332,6 @@ class MainWindow(QMainWindow):
         file_menu = _add_menu(bar, "File")
         file_menu.setToolTipsVisible(True)
         file_menu.addAction(actions.open_file)
-        self._recent_menu = file_menu.addMenu("Open Recent")
-        self._recent_menu.setObjectName("menuOpenRecent")
-        self._recent_menu.setToolTipsVisible(True)
-        self._recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
-        self._rebuild_recent_menu()
 
         edit = _add_menu(bar, "Edit")
         edit.addAction(actions.undo)
@@ -613,20 +603,9 @@ class MainWindow(QMainWindow):
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Esc cancels the running format from whichever editor has focus.
-
-        Files dragged anywhere over the window are taken here, before an
-        editor can paste their paths as text.
-        """
+        """Esc cancels the running format from whichever editor has focus."""
         if not isinstance(watched, QObject):
             return False
-        if (
-            event.type() in _DRAG_EVENTS
-            and isinstance(watched, QWidget)
-            and _is_inside(watched, self)
-            and self._take_file_drag(watched, event)
-        ):
-            return True
         if (
             self._formatting
             and event.type() == QEvent.Type.KeyPress
@@ -1114,24 +1093,59 @@ class MainWindow(QMainWindow):
         self._input_pane.editor.clear()
         self._input_pane.editor.setFocus()
 
-    def _open_file(self) -> None:
-        """Choose a file and load it into Input. Opening does not format."""
-        if not self._can_open():
-            return
-        chosen = self._choose_open_path()
-        if chosen is None:
-            self._return_focus_to_input()
-            return
-        save_last_open_dir(chosen.parent)
-        self._request_open(chosen)
+    def can_open(self) -> bool:
+        """True when a file may replace the source pane's text now.
 
-    def _can_open(self) -> bool:
+        Never while a format job runs, a file is loading, or a sheet is up.
+        Menu, shortcut, button, and later drop and recents all ask this.
+        """
         return not (
             self._formatting
             or self._loading_path is not None
             or self._replace_box is not None
             or self._size_warning is not None
         )
+
+    def open_path(self, path: Path) -> None:
+        """Load ``path`` into the source pane. Opening never formats.
+
+        Every way of opening a file comes through here. Unsaved edits are
+        confirmed first.
+        """
+        if not self.can_open():
+            return
+        pane = self._source_pane()
+        if input_needs_replace(pane.editor.toPlainText(), pane.document):
+            self._ask_replace_input(path)
+            return
+        self._start_loading(path)
+
+    def cancel_open(self) -> None:
+        """Drop the file being read. The read itself runs to its end."""
+        if self._loading_path is None:
+            return
+        self._open_job += 1
+        self._open_reveal_timer.stop()
+        self._loading_path = None
+        self._status.set_busy(Busy.IDLE)
+        self._sync_format_button()
+
+    def _source_pane(self) -> PaneWidget:
+        """The pane Open fills: the one whose spec is a source (#73)."""
+        for pane in (self._input_pane, self._output_pane):
+            if pane.spec.kind is PaneKind.SOURCE:
+                return pane
+        raise AssertionError("no source pane")
+
+    def _open_file(self) -> None:
+        if not self.can_open():
+            return
+        chosen = self._choose_open_path()
+        if chosen is None:
+            self._return_focus_to_input()
+            return
+        save_last_open_dir(chosen.parent)
+        self.open_path(chosen)
 
     def _choose_open_path(self) -> Path | None:
         filename, _selected = QFileDialog.getOpenFileName(
@@ -1144,18 +1158,7 @@ class MainWindow(QMainWindow):
             return None
         return Path(filename)
 
-    def _request_open(self, path: Path, count: int = 1) -> None:
-        """Load ``path``, asking first when Input has unsaved edits.
-
-        ``count`` is how many files were dropped; only the first is opened.
-        """
-        current = self._input_pane.editor.toPlainText()
-        if input_needs_replace(current, self._opened_text):
-            self._ask_replace_input(path, count)
-            return
-        self._start_loading(path, count)
-
-    def _ask_replace_input(self, path: Path, count: int) -> None:
+    def _ask_replace_input(self, path: Path) -> None:
         """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
         box = QMessageBox(self)
         box.setObjectName("replaceInput")
@@ -1180,22 +1183,22 @@ class MainWindow(QMainWindow):
             self._replace_box = None
             box.deleteLater()
             self._sync_open_actions()
-            if not accepted or self._formatting:
+            if not accepted or not self.can_open():
                 self._return_focus_to_input()
                 return
-            self._start_loading(path, count)
+            self._start_loading(path)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_loading(self, path: Path, count: int) -> None:
+    def _start_loading(self, path: Path) -> None:
         """Read ``path`` off the UI thread. Open and Format wait for it."""
         self._opened_status_timer.stop()
         self._open_job += 1
         self._loading_path = path
-        self._loading_count = count
         self._sync_format_button()
         self._open_reveal_timer.start(OPEN_REVEAL_MS)
+        self.open_started.emit()
         self._reader.read(self._open_job, path)
 
     def _show_opening(self) -> None:
@@ -1213,38 +1216,41 @@ class MainWindow(QMainWindow):
         self._loading_path = None
         self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
-        if isinstance(result, OpenTextError):
+        if isinstance(result, LoadError):
             self._status.set_state(open_error_text(path.name, result), str(path))
+            self.open_failed.emit(result.kind.value, path.name)
             self._return_focus_to_input()
             return
-        if isinstance(result, OpenedText):
+        if isinstance(result, LoadedDocument):
             self._apply_opened_file(path, result)
 
-    def _apply_opened_file(self, path: Path, opened: OpenedText) -> None:
-        """Put the text in Input as one undo step and clear the output."""
-        editor = self._input_pane.editor
-        _replace_as_one_undo(editor, opened.text)
+    def _apply_opened_file(self, path: Path, loaded: LoadedDocument) -> None:
+        """Put the text in the source pane as one undo step.
+
+        The output and the Problems pane are cleared. Format's size answer
+        is left alone; Format asks for itself.
+        """
+        pane = self._source_pane()
+        editor = pane.editor
+        _replace_as_one_undo(editor, loaded.text)
         cursor = editor.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         editor.setTextCursor(cursor)
         self._output_pane.editor.clear()
         self._clear_problems()
-        self._size_warning_accepted = False
-        source = format_for_suffix(path.suffix) or sniff_format(opened.text)
-        if source is not None:
-            self._set_input_format(source)
-        self._opened_text = editor.toPlainText()
+        if loaded.fmt is not None:
+            _set_format(pane, loaded.fmt)
+        document = InputDocument(
+            path, editor.toPlainText(), loaded.had_bom, loaded.newline
+        )
+        pane.set_document(document)
         self.setWindowTitle(input_window_title(path.name))
         self.setWindowFilePath(str(path))
-        remember_recent_file(path)
-        self._rebuild_recent_menu()
-        if self._loading_count > 1:
-            status = opened_first_text(self._loading_count)
-        else:
-            status = opened_text(path.name, si_size(opened.size))
+        status = opened_text(path.name, si_size(loaded.size))
         self._opened_status = status
         self._status.set_state(status, str(path))
         self._opened_status_timer.start(OPENED_STATUS_MS)
+        self.open_finished.emit(document)
         self._return_focus_to_input()
 
     def _clear_opened_status(self) -> None:
@@ -1252,84 +1258,18 @@ class MainWindow(QMainWindow):
             return
         self._status.set_state("Ready")
 
-    def _set_input_format(self, name: str) -> None:
-        combo = self._input_pane.format_combo
-        index = combo.findText(name)
-        if index >= 0:
-            combo.setCurrentIndex(index)
-
-    def _rebuild_recent_menu(self) -> None:
-        """List recent files, newest first, with Clear Menu at the bottom."""
-        menu = self._recent_menu
-        menu.clear()
-        paths = load_recent_files()
-        for path, label in zip(paths, recent_labels(paths), strict=True):
-            item = menu.addAction(label)
-            if path.is_file():
-                item.setToolTip(str(path))
-                item.triggered.connect(
-                    lambda _checked=False, chosen=path: self._open_recent(chosen)
-                )
-            else:
-                item.setEnabled(False)
-                item.setToolTip(RECENT_MISSING_TOOLTIP)
-        if paths:
-            menu.addSeparator()
-        clear = menu.addAction(CLEAR_RECENT)
-        clear.setEnabled(bool(paths))
-        clear.triggered.connect(self._clear_recent)
-
-    def _open_recent(self, path: Path) -> None:
-        if not self._can_open():
-            return
-        self._request_open(path)
-
-    def _clear_recent(self) -> None:
-        clear_recent_files()
-        self._rebuild_recent_menu()
-
     def _sync_open_actions(self) -> None:
         """Block Open while a file loads or a format runs, and say why."""
         action = self._actions.open_file
         if is_unbuilt(action):
             return
-        available = self._can_open()
+        available = self.can_open()
         action.setEnabled(available)
         action.setToolTip(OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else "")
-        self._recent_menu.setEnabled(available)
-        open_button = self._input_pane.open_button
+        open_button = self._source_pane().open_button
         if open_button is not None:
             open_button.setEnabled(available)
             open_button.setToolTip(action.toolTip())
-
-    def _take_file_drag(self, watched: QWidget, event: QEvent) -> bool:
-        """Handle a drag of local files. Return False for anything else."""
-        if event.type() == QEvent.Type.DragLeave:
-            self._input_pane.set_drop_target(False)
-            return False
-        if not isinstance(event, QDropEvent):
-            return False
-        paths = _dropped_files(event)
-        if not paths:
-            return False
-        if isinstance(event, QDragMoveEvent):
-            if self._loading_path is not None or self._replace_box is not None:
-                event.ignore()
-                return True
-            over_input = _is_inside(watched, self._input_pane)
-            self._input_pane.set_drop_target(over_input and not self._formatting)
-            event.setDropAction(Qt.DropAction.CopyAction)
-            event.accept()
-            return True
-        self._input_pane.set_drop_target(False)
-        event.setDropAction(Qt.DropAction.CopyAction)
-        event.accept()
-        if self._formatting:
-            self._status.set_state(DROP_WHILE_FORMATTING)
-            return True
-        if self._can_open():
-            self._request_open(paths[0], len(paths))
-        return True
 
     def _copy_output(self) -> None:
         QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
@@ -1451,22 +1391,11 @@ class MainWindow(QMainWindow):
         self._status.set_info(f"{left} → {right}")
 
 
-_DRAG_EVENTS = frozenset(
-    {
-        QEvent.Type.DragEnter,
-        QEvent.Type.DragMove,
-        QEvent.Type.DragLeave,
-        QEvent.Type.Drop,
-    }
-)
-
-
-def _dropped_files(event: QDropEvent) -> list[Path]:
-    """Local files carried by a drag, in the order they were picked."""
-    mime = event.mimeData()
-    if mime is None or not mime.hasUrls():
-        return []
-    return [Path(url.toLocalFile()) for url in mime.urls() if url.isLocalFile()]
+def _set_format(pane: PaneWidget, name: str) -> None:
+    combo = pane.format_combo
+    index = combo.findText(name)
+    if index >= 0:
+        combo.setCurrentIndex(index)
 
 
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:

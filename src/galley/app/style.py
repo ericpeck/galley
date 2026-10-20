@@ -124,7 +124,7 @@ def menu_style() -> str:
 
 
 def pane_style(object_name: str) -> str:
-    """1 px edge, thickening to a 2 px ring while focused or a drop target.
+    """1 px edge, thickening to a 2 px ring while focused.
 
     The edge starts from ``Mid`` and the ring from ``Accent``. Each is
     lifted toward the text color until it is 3:1 on the window and the
@@ -138,8 +138,7 @@ def pane_style(object_name: str) -> str:
             background-color: palette(window);
             border: 1px solid {edge.name()};
         }}
-        QWidget#{object_name}[paneFocused="true"],
-        QWidget#{object_name}[paneDropTarget="true"] {{
+        QWidget#{object_name}[paneFocused="true"] {{
             border: 2px solid {ring.name()};
         }}
         """
