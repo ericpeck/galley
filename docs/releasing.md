@@ -18,6 +18,9 @@ You can also run it by hand, or by pushing a tag:
    - `Galley-<version>-arm64.dmg.sha256`
 3. To publish those files on a GitHub Release, push a tag whose name starts with `v`, such as `v0.1.0`. The file name uses the tag without the leading `v`. The release job creates the release when one does not already exist, or uploads onto the existing release.
 
+Before tagging, `galley.__version__` must equal the tag without the `v`, and CI enforces it.
+Tag builds fail until `COPYRIGHT_NOTICE` in `galley.app.about` has the final wording.
+
 Each ref has its own concurrency group. A new run on that ref cancels the run already in progress.
 
 Check the checksum from the directory that contains the disk image:
@@ -44,6 +47,8 @@ After that, Galley opens with a normal double-click.
 ## Minimum macOS and licenses
 
 `LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, rounded up to the oldest macOS CI launches on. With PySide6 6.9.3 that highest recorded minos is 12.0, and the disk-image job runs on macOS 14, so the declared floor is 14.0. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
+
+The **Verify bundle metadata** step fails when any Mach-O file records a minimum macOS higher than that floor. It runs `vtool -show-build` per architecture, uses `LC_VERSION_MIN_MACOSX` when a file has no `LC_BUILD_VERSION`, and on failure prints the count, each path, architecture, minos, and floor, then `pin dependencies lower or raise MINIMUM_MACOS in galley.spec`.
 
 The workflow leaves `MACOSX_DEPLOYMENT_TARGET` unset. The job ships prebuilt Python, Qt, the PyInstaller bootloader, and ruamel.yaml.clib, and PyInstaller 6.22.3 does not read that variable.
 
