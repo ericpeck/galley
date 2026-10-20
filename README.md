@@ -40,6 +40,8 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 
 An unsigned Apple Silicon disk image is built by the Release macOS workflow. See [docs/releasing.md](docs/releasing.md) for how to run it and how to open the app the first time. The app has no Developer ID signature and is not notarized.
 
+Requires macOS 14 (Sonoma) or later, Apple Silicon.
+
 1. Drag Galley to Applications.
 2. Open it once and dismiss the warning.
 3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley (asks for your password).
