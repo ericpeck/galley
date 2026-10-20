@@ -187,7 +187,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     assert _labels(_submenu(view, "Indent Guides")) == [
         "Off",
         "Lines",
-        "Coloured by depth",
+        "Colored by depth",
     ]
     assert _labels(_menu(window, "Window")) == [
         "Pop out into window",
@@ -209,7 +209,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
 def test_view_defaults_match_spec(qtbot) -> None:
     window = _show(qtbot)
     assert _action(window, "Word Wrap").isChecked()
-    assert _action(window, "Coloured by depth").isChecked()
+    assert _action(window, "Colored by depth").isChecked()
     assert not _action(window, "Off").isChecked()
     assert not _action(window, "Lines").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()

@@ -4,15 +4,17 @@ Shortcut-bearing commands that Qt already knows use standard keys. The
 remaining spec shortcuts come from :mod:`galley.app.shortcuts`.
 
 Unbuilt roadmap commands stay visible and disabled. :data:`UNBUILT_ACTIONS`
-is the only on/off list: delete a name when that command ships.
-:func:`main` fails while that list is non-empty.
+is the Coming soon list: delete a name when that command ships.
+:meth:`ShellActions._not_yet_actions` is the Not yet list: delete a command
+there when it ships. :func:`main` fails while either list is non-empty.
 """
 
+import os
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import QHBoxLayout, QLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
@@ -67,7 +69,7 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
 
 
 def release_failure(actions: Sequence[str] | None = None) -> str | None:
-    """Return the two-line release block, or None when ``actions`` is empty.
+    """Return the two-line Coming soon block, or None when ``actions`` is empty.
 
     Names are printed in the order given. Pass None to read
     :data:`UNBUILT_ACTIONS`.
@@ -84,12 +86,36 @@ def release_failure(actions: Sequence[str] | None = None) -> str | None:
     )
 
 
+def not_yet_failure(actions: Sequence[str] | None = None) -> str | None:
+    """Return the two-line Not yet block, or None when ``actions`` is empty.
+
+    Names are printed in the order given. Pass None to read the menu labels
+    of :meth:`ShellActions._not_yet_actions`, which is menu order.
+    """
+    names = _not_yet_menu_names() if actions is None else actions
+    if not names:
+        return None
+    listed = ", ".join(names)
+    return (
+        'Release blocked: these actions still show "Not yet": '
+        f"{listed}.\n"
+        "Build them or remove them from _not_yet_actions() in actions.py "
+        "before tagging."
+    )
+
+
 def main() -> int:
-    """Fail while :data:`UNBUILT_ACTIONS` is non-empty. Return 0 when it is empty."""
-    failure = release_failure()
-    if failure is None:
+    """Fail while either unfinished list is non-empty. Return 0 when both are empty.
+
+    Coming soon names come from :data:`UNBUILT_ACTIONS`. Not yet names are the
+    menu labels from :meth:`ShellActions._not_yet_actions`, in menu order.
+    """
+    blocks = [
+        block for block in (release_failure(), not_yet_failure()) if block is not None
+    ]
+    if not blocks:
         return 0
-    print(failure)
+    print("\n".join(blocks))
     return 1
 
 
@@ -258,7 +284,7 @@ class ShellActions:
         self.guides_lines = _action(parent, "Lines", checkable=True)
         self.guides_depth = _action(
             parent,
-            "Coloured by depth",
+            "Colored by depth",
             checkable=True,
             checked=True,
         )
@@ -369,7 +395,12 @@ class ShellActions:
         ]
 
     def _not_yet_actions(self) -> list[QAction]:
-        """Unfinished commands that are not on the Coming soon roadmap."""
+        """Unfinished commands that are not on the Coming soon roadmap.
+
+        Menu order: menu bar, then the toolbar. Delete a command here when it
+        ships. The release check prints each menu label and fails while this
+        list is non-empty. Guide commands are printed with their parent menu.
+        """
         return [
             self.find_replace,
             self.escape_string,
@@ -382,6 +413,37 @@ class ShellActions:
             self.bring_back,
             self.outdent,
         ]
+
+
+def _qapplication() -> QApplication:
+    """Return the running application, or a headless one for the release check."""
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        return app
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    return QApplication([])
+
+
+def _not_yet_release_name(shell: ShellActions, action: QAction) -> str:
+    """Release-check label. Guide commands name their parent menu."""
+    guides = (shell.guides_off, shell.guides_lines, shell.guides_depth)
+    if any(action is item for item in guides):
+        return f"Guides › {action.text()}"
+    return action.text()
+
+
+def _not_yet_menu_names() -> tuple[str, ...]:
+    """Release labels of :meth:`ShellActions._not_yet_actions`, in menu order."""
+    _qapplication()
+    parent = QWidget()
+    parent.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    try:
+        shell = ShellActions(parent)
+        return tuple(
+            _not_yet_release_name(shell, action) for action in shell._not_yet_actions()
+        )
+    finally:
+        parent.deleteLater()
 
 
 if __name__ == "__main__":

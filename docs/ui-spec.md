@@ -54,7 +54,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `error.icon.ring` | `#EEC3D4` | soft ring behind the gutter error icon | low |
 | `amber.tint` | `#F1E3BE` | 6k "source text kept as a string" highlight and `to string` margin tag | measured |
 | `amber.ink` | `#6E4604` | text on `amber.tint` (6.5:1) | measured |
-| `guide.depth.*` | `#62C5EE` (blue), `#FF90B1` (pink), others unclear | "Coloured by depth" indent guides, thin 1 px lines | low |
+| `guide.depth.*` | `#62C5EE` (blue), `#FF90B1` (pink), others unclear | "Colored by depth" indent guides, thin 1 px lines | low |
 | window controls | `#FF5F57`, `#FEBC2E`, `#28C840` | macOS traffic lights only; come from the platform chrome layer, not the palette | n/a |
 
 **Amber**: per the confirmed decision, amber is mixed from the palette's yellow. The mocks only show the mixed results (`#F1E3BE` fill, `#6E4604` ink). The base yellow itself does not appear as a flat swatch in any of the 18 mocks, so its hex is an open question. Do not use amber for errors; magenta means error everywhere else (6k).
@@ -145,7 +145,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 ### 5.4 Editor (QPlainTextEdit subclass)
 - Background `editor.bg`; current line `line.current`.
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
-- Indent guides: View → Indent Guides → `Off` / `Lines` / `Coloured by depth` (default shown checked: Coloured by depth).
+- Indent guides: View → Indent Guides → `Off` / `Lines` / `Colored by depth` (default shown checked: Colored by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
 - Word wrap toggle (⌥⌘W on macOS, Ctrl+Alt+W on Windows), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §12).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`.
@@ -185,7 +185,7 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 ### 5.13 Menus
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
-- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Coloured by depth) | Enter Full Screen ^⌘F.
+- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
 - `File` includes `Open file…` (6c). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
 ---
@@ -227,7 +227,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 ### 4a — Output find (default), View menu open (ref: 4a)
 - Input holds minified one-line JSON; Output holds formatted JSON with breadcrumb `… › items › [1] › price`, `Copy path`.
 - Find bar open on Output: query `price`, `2 of 3`, scope `Keys` selected. Current match at line 23 highlighted. Line 8 folded (`{ … } 3 keys`); line 14 annotated `3 items`.
-- View menu open with Indent Guides submenu (Off / Lines / ✓ Coloured by depth).
+- View menu open with Indent Guides submenu (Off / Lines / ✓ Colored by depth).
 - Path-scope variant: query `order.items[2].price`, `1 match`, `Path` selected; jumps and unfolds parents.
 - Status bar: `✓ Valid JSON · formatted in 3 ms · 34 lines`. Output footer `34 lines`, Copy.
 - Empty query: count hidden. No matches: show `No matches` in muted text (proposal, not in mocks) and keep field focused; do not color the field red.
