@@ -55,6 +55,8 @@ from galley.app.problems_settings import (
     save_stacked_panes,
 )
 from galley.app.splitter import PaneSplitter
+
+# Re-exported: tests and callers import the slot widths from here.
 from galley.app.status_bar import PROGRESS_WIDTH_PX as PROGRESS_WIDTH_PX
 from galley.app.status_bar import SPINNER_WIDTH_PX as SPINNER_WIDTH_PX
 from galley.app.status_bar import Busy, StatusBar

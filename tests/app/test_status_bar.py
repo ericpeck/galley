@@ -4,11 +4,12 @@ from collections import Counter
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QWidget
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QComboBox, QLabel, QProgressBar, QPushButton, QWidget
 
 from galley.app.main import create_main_window
-from galley.app.status_bar import Busy, StatusBar
+from galley.app.status_bar import INFO_RESERVE, Busy, StatusBar
+from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style
 from galley.app.theme import contrast_ratio
 
@@ -78,24 +79,105 @@ def test_setting_counts_shows_the_slot_and_clearing_hides_it(qtbot) -> None:
     assert message.width() == empty_width
 
 
-def test_counts_keep_their_widest_width_until_cleared(qtbot) -> None:
+def _edges(bar: StatusBar, *widgets: QWidget) -> list[tuple[int, int]]:
+    return [(_left(widget, bar), _right(widget, bar)) for widget in widgets]
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_growing_counts_never_move_counts_or_progress(
+    qtbot, install_scheme, scheme
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    bar = _bar(window)
+    counts = _child(window, QLabel, "statusCounts")
+    progress = _child(window, QProgressBar, "writeProgress")
+    cancel = _child(window, QPushButton, "cancelButton")
+    bar.set_busy(Busy.PROGRESS)
+    bar.set_counts("1 difference")
+    _settle(qtbot, bar)
+    edges = _edges(bar, counts, progress, cancel)
+    for text in ("9 differences", "10 differences", "10000 differences"):
+        bar.set_counts(text)
+        _settle(qtbot, bar)
+        assert counts.text() == text
+        assert _edges(bar, counts, progress, cancel) == edges, text
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_info_changes_never_move_any_slot(qtbot, install_scheme, scheme) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    bar = _bar(window)
+    counts = _child(window, QLabel, "statusCounts")
+    progress = _child(window, QProgressBar, "writeProgress")
+    cancel = _child(window, QPushButton, "cancelButton")
+    direction = _child(window, QLabel, "directionLabel")
+    assert bar.info_text() == "JSON → JSON"
+    bar.set_busy(Busy.PROGRESS)
+    bar.set_counts("5 differences")
+    _settle(qtbot, bar)
+    edges = _edges(bar, counts, progress, cancel, direction)
+    for text in (*INFO_RESERVE, "JSON → JSON"):
+        bar.set_info(text)
+        _settle(qtbot, bar)
+        assert bar.info_text() == text
+        assert direction.alignment() & Qt.AlignmentFlag.AlignLeft
+        assert _edges(bar, counts, progress, cancel, direction) == edges, text
+
+
+def test_format_pickers_never_move_the_info_slot(qtbot) -> None:
+    window = _show(qtbot)
+    bar = _bar(window)
+    direction = _child(window, QLabel, "directionLabel")
+    pickers = [
+        _child(window, QComboBox, name) for name in ("inputFormat", "outputFormat")
+    ]
+    _settle(qtbot, bar)
+    edges = _edges(bar, direction)
+    for left in ("YAML", "JSON"):
+        for right in ("YAML", "JSON"):
+            pickers[0].setCurrentText(left)
+            pickers[1].setCurrentText(right)
+            _settle(qtbot, bar)
+            assert direction.text() == f"{left} → {right}"
+            assert _edges(bar, direction) == edges
+
+
+def test_a_tally_wider_than_the_reserve_widens_until_cleared(qtbot) -> None:
     window = _show(qtbot)
     bar = _bar(window)
     counts = _child(window, QLabel, "statusCounts")
-    bar.set_counts("12 differences")
+    reserved = counts.reserved_width()
+    bar.set_counts("1 difference")
+    _settle(qtbot, bar)
+    assert counts.width() == reserved
+
+    bar.set_counts("123456789 differences, 12345 moved")
     _settle(qtbot, bar)
     wide = counts.width()
-    left = _left(counts, bar)
-
+    assert wide > reserved
     bar.set_counts("1 difference")
     _settle(qtbot, bar)
     assert counts.width() == wide
-    assert _left(counts, bar) == left
 
     bar.set_counts("")
     bar.set_counts("1 difference")
     _settle(qtbot, bar)
-    assert counts.width() < wide
+    assert counts.width() == reserved
+
+
+def test_reserves_follow_a_font_change(qtbot) -> None:
+    window = _show(qtbot)
+    counts = _child(window, QLabel, "statusCounts")
+    direction = _child(window, QLabel, "directionLabel")
+    for label in (counts, direction):
+        before = label.minimumWidth()
+        font = QFont(label.font())
+        font.setPixelSize(font.pixelSize() * 2)
+        label.setFont(font)
+        assert label.minimumWidth() > before
+        assert label.minimumWidth() == label.reserved_width()
 
 
 def test_counts_do_not_move_when_the_state_text_changes(qtbot) -> None:
@@ -110,19 +192,41 @@ def test_counts_do_not_move_when_the_state_text_changes(qtbot) -> None:
     assert _left(counts, bar) == left
 
 
-def test_info_text_updates_and_stays_at_the_right(qtbot) -> None:
+def test_long_state_text_is_elided_with_the_full_text_kept(qtbot) -> None:
     window = _show(qtbot)
+    window.resize(window.minimumWidth(), window.height())
     bar = _bar(window)
+    message = _child(window, StatusMessage, "statusMessage")
     direction = _child(window, QLabel, "directionLabel")
-    assert bar.info_text() == "JSON → JSON"
     _settle(qtbot, bar)
-    right = _right(direction, bar)
+    edges = _edges(bar, direction)
+    long_text = "Converted, but " + "this notice is very long. " * 20
+    bar.set_state(long_text)
+    _settle(qtbot, bar)
+    assert message.text() != long_text
+    assert message.text().endswith("…")
+    assert message.fontMetrics().horizontalAdvance(message.text()) <= (
+        message.contentsRect().width()
+    )
+    assert bar.state_text() == long_text
+    assert message.toolTip() == long_text
+    assert message.accessibleName() == long_text
+    assert message.accessibleDescription() == long_text
+    assert _edges(bar, direction) == edges
 
-    bar.set_info("JSON → YAML")
+    bar.set_state("Valid JSON")
     _settle(qtbot, bar)
-    assert direction.text() == "JSON → YAML"
-    assert bar.info_text() == "JSON → YAML"
-    assert _right(direction, bar) == right
+    assert message.text() == "Valid JSON"
+    assert message.toolTip() == ""
+    assert message.accessibleDescription() == ""
+
+
+def test_busy_indicators_have_distinct_accessible_names(qtbot) -> None:
+    window = _show(qtbot)
+    spinner = _child(window, QProgressBar, "formatSpinner")
+    progress = _child(window, QProgressBar, "writeProgress")
+    assert spinner.accessibleName() == "Formatting"
+    assert progress.accessibleName() == "Formatting progress"
 
 
 def test_slot_order_is_fixed(qtbot) -> None:

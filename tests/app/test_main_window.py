@@ -628,7 +628,7 @@ def test_write_bar_appears_after_the_progress_delay(
         assert not spinner.isVisible()
         assert cancel.isVisible()
         assert bar.width() == PROGRESS_WIDTH_PX
-        assert bar.accessibleName() == "Formatting"
+        assert bar.accessibleName() == "Formatting progress"
         assert bar.minimum() == 0
         assert bar.maximum() == 0
         assert not bar.isTextVisible()
