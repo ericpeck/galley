@@ -931,12 +931,12 @@ def test_empty_yaml_is_null() -> None:
 # --- Worker readiness -------------------------------------------------------
 
 
-def test_changes_and_documents_pickle() -> None:
+def test_results_and_documents_pickle() -> None:
     left = load_document(_YAML_TEXT, "yaml")
     right = load_document(_YAML_TEXT.replace("Ada", "Grace"), "yaml")
-    changes = diff(left, right).changes
-    assert changes
-    assert pickle.loads(pickle.dumps(changes)) == changes
+    result = diff(left, right)
+    assert result.changes
+    assert pickle.loads(pickle.dumps(result)) == result
     restored = pickle.loads(pickle.dumps(left))
     assert restored == left
 
