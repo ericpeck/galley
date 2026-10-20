@@ -289,6 +289,16 @@ def test_unbuilt_actions_are_visible_disabled_and_marked(qtbot) -> None:
             assert action.toolTip() == COMING_SOON
 
 
+def _coming_soon_tip(button: QWidget) -> str:
+    """Icon-only unbuilt buttons keep the action name in the tooltip."""
+    if isinstance(button, QToolButton):
+        action = button.defaultAction()
+        icon_only = button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+        if isinstance(action, QAction) and is_unbuilt(action) and icon_only:
+            return f"{action.text()} — coming soon"
+    return COMING_SOON
+
+
 def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     window = _show(qtbot)
     buttons: list[QWidget] = [
@@ -315,22 +325,25 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     for button in buttons:
         assert button.isVisible()
         assert not button.isEnabled()
-        assert button.toolTip() == COMING_SOON
+        expected = _coming_soon_tip(button)
+        assert button.toolTip() == expected
         assert button.accessibleDescription() == COMING_SOON
         assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
         host = button.parentWidget()
         assert isinstance(host, QWidget)
         if host.property("comingSoonHost") is True:
             assert host.isEnabled()
-            assert host.toolTip() == COMING_SOON
+            assert host.toolTip() == expected
             assert host.accessibleDescription() == COMING_SOON
         action = button.defaultAction() if isinstance(button, QToolButton) else None
         if isinstance(action, QAction):
             seen.add(action.property("unbuiltName"))
+            if button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly:
+                assert button.accessibleName() == expected
         QToolTip.hideText()
         center = QPoint(max(button.width() // 2, 0), max(button.height() // 2, 0))
         qtbot.mouseMove(button, center)
-        qtbot.waitUntil(lambda: QToolTip.text() == COMING_SOON, timeout=2000)
+        qtbot.waitUntil(lambda tip=expected: QToolTip.text() == tip, timeout=2000)
     hosts = [
         button.parentWidget() for button in buttons if isinstance(button, QToolButton)
     ]
