@@ -37,9 +37,10 @@ from PySide6.QtWidgets import (
 from galley.app.problem_text import DisplayProblem
 from galley.app.style import muted_text_style
 from galley.app.theme import (
-    ERROR,
     composite,
     contrast_ratio,
+    error_color,
+    ink_on,
     selected_problem_palette,
     visible_edge,
 )
@@ -49,6 +50,8 @@ SHOW_REPLACE_TABS_BUTTON = False
 
 _ROW_HEIGHT = 56
 _TEXT_CONTRAST = 4.5
+# The row marker. Color is never the only cue: the row also says "Error".
+_ERROR_ICON = "\u2297"  # ⊗
 
 
 class ProblemsPane(QWidget):
@@ -76,10 +79,6 @@ class ProblemsPane(QWidget):
         self._badge = QLabel("0")
         self._badge.setObjectName("problemsBadge")
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._badge.setStyleSheet(
-            f"background: {ERROR}; color: palette(highlighted-text); "
-            "border-radius: 8px; padding: 0 6px; font-weight: 700;"
-        )
 
         self._minimize = _header_button("–", "Minimize", "problemsMinimize")
         self._close = _header_button("×", "Close", "problemsClose")
@@ -143,11 +142,6 @@ class ProblemsPane(QWidget):
         self._strip.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        self._strip.setStyleSheet(
-            "QPushButton {"
-            f" background: {ERROR}; color: palette(highlighted-text);"
-            " border: none; font-weight: 700; }"
-        )
         self._strip.clicked.connect(self.expand_requested.emit)
         self._strip.hide()
 
@@ -156,6 +150,33 @@ class ProblemsPane(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._body)
         layout.addWidget(self._strip)
+        self._sync_error_colors()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._sync_error_colors()
+
+    def _sync_error_colors(self) -> None:
+        """Badge and strip in the scheme's error color with a label that reads.
+
+        The colors are written into the stylesheets, so they are rebuilt
+        whenever the palette changes.
+        """
+        palette = self.palette()
+        fill = error_color(palette)
+        label = ink_on(fill, palette)
+        _set_style(
+            self._badge,
+            f"background: {fill.name()}; color: {label.name()}; "
+            "border-radius: 8px; padding: 0 6px; font-weight: 700;",
+        )
+        _set_style(
+            self._strip,
+            "QPushButton {"
+            f" background: {fill.name()}; color: {label.name()};"
+            " border: none; font-weight: 700; }",
+        )
 
     def eventFilter(self, watched: QWidget, event: QEvent) -> bool:
         """Return and Enter jump to the current problem.
@@ -300,6 +321,12 @@ class ProblemsPane(QWidget):
         self.jump_requested.emit(lineno)
 
 
+def _set_style(widget: QWidget, sheet: str) -> None:
+    # Setting a stylesheet repolishes and can send PaletteChange again.
+    if widget.styleSheet() != sheet:
+        widget.setStyleSheet(sheet)
+
+
 def _header_button(text: str, name: str, object_name: str) -> QPushButton:
     button = QPushButton(text)
     button.setObjectName(object_name)
@@ -327,7 +354,7 @@ class _RowWidgetDelegate(QStyledItemDelegate):
 
 
 class _ProblemRow(QWidget):
-    """A red marker, a bold line number, and the message under it."""
+    """An ⊗ marker, "Error · Line n" in bold, and the message under it."""
 
     clicked = Signal(int)
 
@@ -338,16 +365,14 @@ class _ProblemRow(QWidget):
         self.setAccessibleName(problem.accessible)
         self.setMinimumHeight(_ROW_HEIGHT)
 
-        marker = QLabel("!")
+        marker = QLabel(_ERROR_ICON)
         marker.setObjectName("problemMarker")
+        marker.setAccessibleName("Error")
         marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        marker.setFixedSize(16, 16)
-        marker.setStyleSheet(
-            f"background: {ERROR}; color: palette(highlighted-text); "
-            "border-radius: 8px;"
-        )
+        marker.setFixedSize(18, 18)
+        self._marker = marker
 
-        line = QLabel(f"Line {problem.lineno}")
+        line = QLabel(f"Error · Line {problem.lineno}")
         line.setStyleSheet("font-weight: 700;")
         self._line = line
 
@@ -371,6 +396,7 @@ class _ProblemRow(QWidget):
         row.addLayout(text_column, 1)
         self._selected = False
         self._focused = False
+        self._sync_text_colors()
 
     def set_state(self, *, selected: bool, focused: bool) -> None:
         """Tint and bar when selected, plus a 2 px outline when focused."""
@@ -391,6 +417,11 @@ class _ProblemRow(QWidget):
         # The palette's text roles can carry alpha (macOS dark muted text is
         # 25 % white), which fades on the selection fill. A selected row
         # paints its text in an opaque color that reads on the fill.
+        _set_style(
+            self._marker,
+            f"color: {error_color(self.palette()).name()}; "
+            "font-size: 16px; font-weight: 700;",
+        )
         if not self._selected:
             self._line.setStyleSheet("font-weight: 700;")
             self._message.setStyleSheet(muted_text_style())

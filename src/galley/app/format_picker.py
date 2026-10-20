@@ -7,7 +7,7 @@ Blue is limited to the arrow chip. Pop out is painted from
 ``QPalette.Link`` or ``QPalette.PlaceholderText``.
 """
 
-from PySide6.QtCore import QEvent, QRect, Qt
+from PySide6.QtCore import QEvent, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen, QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -56,6 +56,7 @@ class FormatComboBox(QComboBox):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._followed_window_text = False
+        self._copied_window_text: tuple[int, ...] = ()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -72,6 +73,10 @@ class FormatComboBox(QComboBox):
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange:
             self._sync_popup_palette()
+            if self._followed_window_text:
+                # The copied text roles are explicit, so a scheme change
+                # skips them. Copy again once the window has settled.
+                QTimer.singleShot(0, self, self._follow_window_text)
 
     def paintEvent(self, event: QPaintEvent) -> None:
         del event
@@ -106,6 +111,17 @@ class FormatComboBox(QComboBox):
         _paint_arrow_chip(painter, arrow, self.palette())
         painter.end()
 
+    def _follow_window_text(self) -> None:
+        """Copy again only when the window's text roles changed.
+
+        A palette set on the picker itself is left alone.
+        """
+        window = self.window()
+        if window is None or window is self:
+            return
+        if _text_roles(window.palette()) != self._copied_window_text:
+            self._use_window_text_roles()
+
     def _use_window_text_roles(self) -> None:
         """Copy the window's text roles so light mode follows the app palette.
 
@@ -127,6 +143,7 @@ class FormatComboBox(QComboBox):
         for group in groups:
             for role in roles:
                 palette.setColor(group, role, source.color(group, role))
+        self._copied_window_text = _text_roles(source)
         self.setPalette(palette)
 
     def _sync_popup_palette(self) -> None:
@@ -203,6 +220,18 @@ def _best_ink(background: QColor, candidates: tuple[QColor, ...]) -> QColor:
             best = color
             best_ratio = ratio
     return best
+
+
+def _text_roles(palette: QPalette) -> tuple[int, ...]:
+    return tuple(
+        palette.color(group, role).rgba()
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive)
+        for role in (
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.ButtonText,
+            QPalette.ColorRole.WindowText,
+        )
+    )
 
 
 def _group(widget: QWidget) -> QPalette.ColorGroup:

@@ -1,5 +1,6 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
+import pytest
 from PySide6.QtCore import QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import (
     QAction,
@@ -27,7 +28,7 @@ from galley.app.problems_settings import problems_settings
 from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import ERROR, selected_problem_palette
+from galley.app.theme import ERROR, error_color, selected_problem_palette
 from galley.core.problems import Problem
 
 _MISSING = '{\n  "price": 4.5\n  "qty": 3\n}\n'
@@ -586,3 +587,108 @@ def _near(color: QColor, target: QColor, tolerance: int = 8) -> bool:
 
 def _has_error_pixel(image: QImage) -> bool:
     return _has_pixel(image, QColor(ERROR))
+
+
+def _label_contrast(label: QLabel, background: QColor) -> float:
+    """Strongest glyph pixel of ``label`` against ``background``, as seen."""
+    image = label.grab().toImage()
+    return max(
+        _contrast(_seen(image.pixelColor(x, y), background), background)
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+
+
+def _fill_and_label_contrast(widget: QWidget, window: QColor) -> tuple[QColor, float]:
+    """The widget's most common color and its strongest pixel against it."""
+    image = widget.grab().toImage()
+    seen = [
+        _seen(image.pixelColor(x, y), window)
+        for y in range(image.height())
+        for x in range(image.width())
+    ]
+    counts: dict[int, int] = {}
+    for color in seen:
+        counts[color.rgb()] = counts.get(color.rgb(), 0) + 1
+    fill = QColor(max(counts, key=counts.__getitem__))
+    return fill, max(_contrast(color, fill) for color in seen)
+
+
+def _assert_pane_reads(qtbot, pane: ProblemsPane, palette: QPalette) -> None:
+    window = palette.color(QPalette.ColorRole.Window)
+    expected = error_color(pane.palette())
+
+    badge = pane.findChild(QLabel, "problemsBadge")
+    assert isinstance(badge, QLabel)
+    fill, ratio = _fill_and_label_contrast(badge, window)
+    assert _near(fill, expected), (fill.name(), expected.name())
+    assert ratio >= 4.5, f"badge count {ratio:.2f}"
+
+    problems = pane.list_widget()
+    for index in range(problems.count()):
+        row = problems.itemWidget(problems.item(index))
+        assert row is not None
+        labels = row.findChildren(QLabel)
+        marker = next(
+            label for label in labels if label.objectName() == "problemMarker"
+        )
+        assert marker.text() == "\u2297"
+        assert marker.accessibleName() == "Error"
+        assert any(label.text().startswith("Error · Line ") for label in labels)
+        image = row.grab().toImage()
+        surface = _seen(image.pixelColor(image.width() - 4, image.height() - 4), window)
+        icon = _label_contrast(marker, surface)
+        assert icon >= 3, f"row {index} marker {icon:.2f}"
+        for label in labels:
+            if label is marker:
+                continue
+            text = _label_contrast(label, surface)
+            assert text >= 4.5, f"row {index} {label.text()!r} {text:.2f}"
+
+    pane.set_minimized(True)
+    strip = pane.findChild(QPushButton, "problemsStrip")
+    assert isinstance(strip, QPushButton)
+    strip.resize(28, 200)
+    qtbot.waitUntil(strip.isVisible)
+    fill, ratio = _fill_and_label_contrast(strip, window)
+    assert _near(fill, expected)
+    assert ratio >= 4.5, f"strip count {ratio:.2f}"
+    pane.set_minimized(False)
+
+
+@pytest.mark.parametrize("start", ["light", "dark"])
+def test_problems_pane_reads_in_both_schemes_and_after_a_live_switch(
+    qtbot, install_scheme, start: str
+) -> None:
+    """Badge, strip, ⊗ markers, and row text, with alpha composited."""
+    palette = install_scheme(start)
+    pane = _show_pane_alone(qtbot)
+    _assert_pane_reads(qtbot, pane, palette)
+
+    other = "light" if start == "dark" else "dark"
+    for name in (other, start):
+        palette = install_scheme(name)
+        dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
+        assert dark == (name == "dark"), "the palette did not change"
+        qtbot.waitUntil(lambda: _near(_badge_fill(pane), error_color(pane.palette())))
+        _assert_pane_reads(qtbot, pane, palette)
+
+
+def _badge_fill(pane: ProblemsPane) -> QColor:
+    badge = pane.findChild(QLabel, "problemsBadge")
+    assert isinstance(badge, QLabel)
+    image = badge.grab().toImage()
+    return image.pixelColor(image.width() // 2, 2)
+
+
+def test_the_dark_selection_is_the_native_highlight(qtbot, install_scheme) -> None:
+    pane = _show_pane_alone(qtbot)
+    dark = install_scheme("dark")
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    native = dark.color(QPalette.ColorRole.Highlight)
+    tinted = selected_problem_palette(row.palette()).color(QPalette.ColorRole.Highlight)
+    assert tinted.name() == native.name()
+    image = row.grab().toImage()
+    assert _near(image.pixelColor(image.width() - 4, image.height() - 4), native)

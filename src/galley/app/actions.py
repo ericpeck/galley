@@ -309,6 +309,10 @@ class ShellActions:
             checkable=True,
         )
         self.stack_panes.setObjectName("stackPanes")
+        self.appearance_system = _action(parent, "System", checkable=True, checked=True)
+        self.appearance_light = _action(parent, "Light", checkable=True)
+        self.appearance_dark = _action(parent, "Dark", checkable=True)
+        self.appearance = self._exclusive_appearance(parent)
 
         self.pop_out = _action(parent, "Pop out into window")
         self.show_window = _action(parent, "Show window", enabled=False)
@@ -361,6 +365,14 @@ class ShellActions:
         group.addAction(self.guides_off)
         group.addAction(self.guides_lines)
         group.addAction(self.guides_depth)
+        return group
+
+    def _exclusive_appearance(self, parent: QWidget) -> QActionGroup:
+        group = QActionGroup(parent)
+        group.setExclusive(True)
+        group.addAction(self.appearance_system)
+        group.addAction(self.appearance_light)
+        group.addAction(self.appearance_dark)
         return group
 
     def stubs(self) -> list[QAction]:

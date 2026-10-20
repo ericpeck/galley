@@ -4,8 +4,10 @@ The Format button fill is the one UI surface that names the brand hex.
 Everything else asks the palette, which the light samples seed.
 """
 
+from collections.abc import Callable
+
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from galley.app.theme import ACCENT, pane_edge_colors
 
@@ -77,6 +79,10 @@ def progress_style() -> str:
 def menu_style() -> str:
     """Menu bar and menus. The selected row uses the link role.
 
+    The selected row's label is the base role: white on the light link,
+    and the dark base on the lighter dark-mode link, where a white label
+    would fall below 4.5:1.
+
     Disabled rows use the disabled window text. Fusion ignores
     ``palette(disabled, …)`` on a menu item and etches a brighter color,
     so that role is written out as components from the current palette.
@@ -96,7 +102,7 @@ def menu_style() -> str:
         }}
         QMenuBar::item:selected {{
             background: palette(link);
-            color: palette(highlighted-text);
+            color: palette(base);
         }}
         QMenuBar::item:disabled {{
             color: {disabled_ink};
@@ -109,7 +115,7 @@ def menu_style() -> str:
         }}
         QMenu::item:selected {{
             background: palette(link);
-            color: palette(highlighted-text);
+            color: palette(base);
         }}
         QMenu::item:disabled {{
             color: {disabled_ink};
@@ -160,3 +166,21 @@ def status_bar_style() -> str:
 def muted_text_style() -> str:
     """Captions, counts, and the resting status message."""
     return "color: palette(placeholder-text);"
+
+
+def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
+    """Builders for stylesheets that write palette colors out as values.
+
+    Each takes the widget the stylesheet is on. A scheme switch rebuilds
+    any stylesheet one of these produced, because re-parsing the old text
+    would keep the old colors.
+    """
+    return (_menu_style_for, _pane_style_for)
+
+
+def _menu_style_for(_widget: QWidget) -> str:
+    return menu_style()
+
+
+def _pane_style_for(widget: QWidget) -> str:
+    return pane_style(widget.objectName())

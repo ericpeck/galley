@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.actions import COMING_SOON, is_unbuilt
+from galley.app.appearance import set_application_palette
 from galley.app.main import create_main_window
 
 _PERMANENT_ICON = frozenset({"Outdent", "Indent", "Expand all", "Collapse all"})
@@ -437,9 +438,11 @@ def test_overflow_disabled_items_use_the_disabled_palette(qtbot, dark: bool) -> 
     app = QApplication.instance()
     assert isinstance(app, QApplication)
     previous = QPalette(app.palette())
-    app.setPalette(_contrast_palette(dark=dark))
     try:
+        # The window applies the saved appearance when it is created, so
+        # the test palette goes in afterwards, the way a scheme switch would.
         window, toolbar = _show(qtbot, 1024)
+        set_application_palette(app, _contrast_palette(dark=dark))
         overflow = _overflow_button(toolbar)
 
         def _mixed_menu() -> bool:

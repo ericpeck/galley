@@ -14,8 +14,9 @@ from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit, QTextEdit, Q
 
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
-from galley.app.theme import ERROR, ERROR_TINT
+from galley.app.theme import error_color, ink_on, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
+from galley.app.theme import line_number_color as theme_line_number_color
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -69,8 +70,8 @@ class CodeEditor(QPlainTextEdit):
         return brand_find_highlight()
 
     def line_number_color(self) -> QColor:
-        """Gutter numerals. This is the palette's placeholder text."""
-        return self.palette().color(QPalette.ColorRole.PlaceholderText)
+        """Gutter numerals: placeholder text, or the dark-mode number color."""
+        return theme_line_number_color(self.palette())
 
     def gutter_color(self) -> QColor:
         """Fill behind the line numbers. This is ``AlternateBase``."""
@@ -91,13 +92,18 @@ class CodeEditor(QPlainTextEdit):
         palette = QPalette(app.palette())
         current = self.palette().color(QPalette.ColorRole.Base).rgba()
         if current == palette.color(QPalette.ColorRole.Base).rgba():
-            self._line_numbers.update()
+            self._repaint_line_colors()
             return
         self._adopting_palette = True
         try:
             self.setPalette(palette)
         finally:
             self._adopting_palette = False
+        self._repaint_line_colors()
+
+    def _repaint_line_colors(self) -> None:
+        """Rebuild the line bands, which keep the colors they were made with."""
+        self._highlight_current_line()
         self._line_numbers.update()
 
     def changeEvent(self, event: QEvent) -> None:
@@ -214,7 +220,7 @@ class CodeEditor(QPlainTextEdit):
                 lineno = number + 1
                 if lineno in self._problem_lines:
                     self._paint_error_marker(painter, top)
-                    painter.setPen(QColor(ERROR))
+                    painter.setPen(error_color(self.palette()))
                 else:
                     painter.setPen(self.line_number_color())
                 painter.drawText(
@@ -272,7 +278,7 @@ class CodeEditor(QPlainTextEdit):
         block = self.document().firstBlock()
         while block.isValid():
             if block.blockNumber() + 1 in self._problem_lines:
-                tint = QColor(ERROR_TINT)
+                tint = problem_line_tint(self.palette())
                 selections.append(self._line_band(QTextCursor(block), tint))
             block = block.next()
         self.setExtraSelections(selections)
@@ -291,10 +297,11 @@ class CodeEditor(QPlainTextEdit):
         """Draw a circled exclamation so the error is not color alone."""
         diameter = 12
         marker_y = top + max(0, (self.fontMetrics().height() - diameter) // 2)
+        fill = error_color(self.palette())
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(ERROR))
+        painter.setBrush(fill)
         painter.drawEllipse(2, marker_y, diameter, diameter)
-        painter.setPen(self.palette().color(QPalette.ColorRole.HighlightedText))
+        painter.setPen(ink_on(fill, self.palette()))
         painter.drawText(
             2,
             marker_y,
