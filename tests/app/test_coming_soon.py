@@ -30,9 +30,9 @@ _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
     "Escape as String",
     "Unescape String",
-    "Off",
-    "Lines",
-    "Coloured by depth",
+    "Guides › Off",
+    "Guides › Lines",
+    "Guides › Colored by depth",
     "Pop out into window",
     "Show window",
     "Bring back",
@@ -118,14 +118,23 @@ def _menu_order(window) -> list[str]:
 
 
 def _not_yet_menu_order(window) -> list[str]:
-    """Not yet menu labels as they first appear: menu bar, toolbar, tab menu."""
-    pending = {id(action) for action in window._actions._not_yet_actions()}
+    """Not yet release labels as they first appear: menu bar, toolbar, tab menu."""
+    actions = window._actions
+    guides = {
+        id(actions.guides_off),
+        id(actions.guides_lines),
+        id(actions.guides_depth),
+    }
+    pending = {id(action) for action in actions._not_yet_actions()}
     found: list[str] = []
 
     def note(action: QAction) -> None:
         if id(action) not in pending:
             return
-        found.append(action.text())
+        text = action.text()
+        if id(action) in guides:
+            text = f"Guides › {text}"
+        found.append(text)
         pending.remove(id(action))
 
     _visit_shell(window, note)

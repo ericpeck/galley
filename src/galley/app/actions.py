@@ -284,7 +284,7 @@ class ShellActions:
         self.guides_lines = _action(parent, "Lines", checkable=True)
         self.guides_depth = _action(
             parent,
-            "Coloured by depth",
+            "Colored by depth",
             checkable=True,
             checked=True,
         )
@@ -399,7 +399,7 @@ class ShellActions:
 
         Menu order: menu bar, then the toolbar. Delete a command here when it
         ships. The release check prints each menu label and fails while this
-        list is non-empty.
+        list is non-empty. Guide commands are printed with their parent menu.
         """
         return [
             self.find_replace,
@@ -424,14 +424,24 @@ def _qapplication() -> QApplication:
     return QApplication([])
 
 
+def _not_yet_release_name(shell: ShellActions, action: QAction) -> str:
+    """Release-check label. Guide commands name their parent menu."""
+    guides = (shell.guides_off, shell.guides_lines, shell.guides_depth)
+    if any(action is item for item in guides):
+        return f"Guides › {action.text()}"
+    return action.text()
+
+
 def _not_yet_menu_names() -> tuple[str, ...]:
-    """Menu labels of :meth:`ShellActions._not_yet_actions`, in menu order."""
+    """Release labels of :meth:`ShellActions._not_yet_actions`, in menu order."""
     _qapplication()
     parent = QWidget()
     parent.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     try:
         shell = ShellActions(parent)
-        return tuple(action.text() for action in shell._not_yet_actions())
+        return tuple(
+            _not_yet_release_name(shell, action) for action in shell._not_yet_actions()
+        )
     finally:
         parent.deleteLater()
 
