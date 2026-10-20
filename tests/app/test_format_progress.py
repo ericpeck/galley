@@ -124,7 +124,7 @@ def test_progress_bar_and_cancel_appear_at_2_s(qtbot, monkeypatch) -> None:
     assert bar.width() == PROGRESS_WIDTH_PX
     assert bar.minimum() == 0 and bar.maximum() == 0
     assert not bar.isTextVisible()
-    assert bar.accessibleName() == "Formatting"
+    assert bar.accessibleName() == "Formatting progress"
     assert status.text() == FORMATTING_MESSAGE
     assert "%" not in status.text()
     clock["now"] = started + (ELAPSED_STATUS_MS - 1) / 1000
