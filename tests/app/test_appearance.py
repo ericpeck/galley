@@ -485,6 +485,39 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
             )
 
 
+def test_icon_only_coming_soon_buttons_draw_3_to_1(qtbot) -> None:
+    """The Windows runner's wider fallback font made the toolbar overflow.
+
+    Overflow shows Coming soon buttons icon-only, so the drawn disabled
+    ink is the glyph's strokes. Off-center 1.6 px strokes covered each
+    pixel at 80% and drew 2.57:1; centered strokes draw the role's color.
+    """
+    window = _window(qtbot)
+    paste = _tool_button(window, "Paste")
+    sort_keys = _tool_button(window, "Sort keys")
+    width = window.width()
+    while (
+        sort_keys.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
+        and width > window.minimumWidth()
+    ):
+        width -= 20
+        window.resize(width, window.height())
+        QApplication.processEvents()
+    assert sort_keys.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert sort_keys.isVisible() and not sort_keys.isEnabled()
+
+    for label in ("Light", "Dark"):
+        _pick(qtbot, window, label)
+        paste_ink, paste_bg = _label_ink(paste)
+        paste_ratio = contrast_ratio(paste_ink, paste_bg)
+        ink, background = _label_ink(sort_keys)
+        ratio = contrast_ratio(ink, background)
+        assert DISABLED_TEXT_CONTRAST <= ratio < paste_ratio - 1.5, (
+            f"{label} icon-only Sort keys: {ratio:.2f}; "
+            + _render_details(sort_keys, ink, background, paste_ink, paste_bg)
+        )
+
+
 @pytest.mark.parametrize(
     ("window", "base", "text", "face"),
     [

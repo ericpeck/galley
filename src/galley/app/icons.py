@@ -64,6 +64,11 @@ def _draw(name: str, color: QColor) -> QPixmap | None:
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.BrushStyle.NoBrush)
+    # Strokes on whole coordinates straddle two pixel rows, so a 1.6 px
+    # line covers each at only 80% and draws lighter than its role (the
+    # disabled Sort keys glyph measured 2.57:1 instead of 3.43:1).
+    # Centering them on pixel centers draws the middle row at full color.
+    painter.translate(0.5, 0.5)
     drawn = _stroke(painter, name)
     painter.end()
     if not drawn:
