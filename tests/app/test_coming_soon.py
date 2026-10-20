@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPushButton, QToolButton, QToolTip, QWidget
 
 from galley.app.actions import (
+    _ACTION_ATTRS,
     COMING_SOON,
     UNBUILT_ACTIONS,
     is_unbuilt,
@@ -278,6 +279,39 @@ def test_built_actions_are_unaffected(qtbot) -> None:
     host = buttons[0].parentWidget()
     assert isinstance(host, QWidget)
     assert host.toolTip() != COMING_SOON
+
+
+def test_every_stub_action_is_covered_by_an_unbuilt_entry(qtbot) -> None:
+    window = _show(qtbot)
+    actions = window._actions
+    covered: dict[int, str] = {}
+    for name in UNBUILT_ACTIONS:
+        for attr in _ACTION_ATTRS[name]:
+            action = getattr(actions, attr)
+            covered[id(action)] = name
+    missing = [
+        action.text() for action in actions._stub_actions() if id(action) not in covered
+    ]
+    assert missing == []
+    for action in actions._stub_actions():
+        assert action.property("unbuiltName") == covered[id(action)]
+        assert action.property("unbuiltName") in UNBUILT_ACTIONS
+    collapse = actions.collapse_all
+    assert covered[id(collapse)] == "Expand"
+    assert collapse.property("unbuiltName") == "Expand"
+    assert collapse.toolTip() == COMING_SOON
+    assert not collapse.isEnabled()
+    assert collapse.isVisible()
+    assert "Collapse" not in UNBUILT_ACTIONS
+    message = release_failure()
+    assert message == _release_text(", ".join(UNBUILT_ACTIONS))
+    assert message is not None
+    assert message.count("Expand") == 1
+    assert "Collapse" not in message
+    not_yet = {id(action) for action in actions._not_yet_actions()}
+    assert not_yet
+    assert not_yet.isdisjoint(covered)
+    assert {id(action) for action in actions.stubs()} == not_yet
 
 
 def test_deleting_a_name_from_the_list_turns_that_action_on(monkeypatch, qtbot) -> None:

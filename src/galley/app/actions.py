@@ -52,7 +52,8 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
-    "Expand": ("expand_all",),
+    # Collapse all shares this entry, so the release line stays "Expand".
+    "Expand": ("expand_all", "collapse_all"),
     "Validate": ("validate",),
     "Tabs": (
         "rename",
@@ -340,16 +341,36 @@ class ShellActions:
         """Commands whose behavior is not part of the shell.
 
         Names still listed in :data:`UNBUILT_ACTIONS` are disabled instead,
-        so triggering them does nothing.
+        so triggering them does nothing. The rest report that they are
+        not yet available.
         """
         blocked = {id(action) for action in self._unbuilt_qactions()}
-        return [action for action in self._stub_actions() if id(action) not in blocked]
+        pending = [*self._stub_actions(), *self._not_yet_actions()]
+        return [action for action in pending if id(action) not in blocked]
 
     def _stub_actions(self) -> list[QAction]:
+        """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
             self.preferences,
             self.open_file,
             self.find,
+            self.rename,
+            self.duplicate,
+            self.close_tab,
+            self.close_others,
+            self.close_tabs_right,
+            self.new_tab,
+            self.indent,
+            self.sort_keys,
+            self.minify,
+            self.expand_all,
+            self.collapse_all,
+            self.validate,
+        ]
+
+    def _not_yet_actions(self) -> list[QAction]:
+        """Unfinished commands that are not on the Coming soon roadmap."""
+        return [
             self.find_replace,
             self.escape_string,
             self.unescape_string,
@@ -359,19 +380,7 @@ class ShellActions:
             self.pop_out,
             self.show_window,
             self.bring_back,
-            self.rename,
-            self.duplicate,
-            self.close_tab,
-            self.close_others,
-            self.close_tabs_right,
-            self.new_tab,
             self.outdent,
-            self.indent,
-            self.sort_keys,
-            self.minify,
-            self.expand_all,
-            self.collapse_all,
-            self.validate,
         ]
 
 
