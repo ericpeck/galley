@@ -98,6 +98,8 @@ class ProblemsPane(QWidget):
         self._list.itemActivated.connect(self._activate)
         self._list.currentItemChanged.connect(self._sync_selection)
         self._list.installEventFilter(self)
+        self._list.viewport().installEventFilter(self)
+        self._list_focused = False
 
         self._replace = QPushButton("Replace tabs with spaces")
         self._replace.setObjectName("replaceTabsButton")
@@ -136,7 +138,19 @@ class ProblemsPane(QWidget):
         layout.addWidget(self._strip)
 
     def eventFilter(self, watched: QWidget, event: QEvent) -> bool:
-        """Return and Enter jump to the current problem."""
+        """Return and Enter jump to the current problem.
+
+        Focus changes on the list move the focus outline, and viewport
+        resizes refit the row heights to the new width.
+        """
+        if watched is self._list and event.type() in (
+            QEvent.Type.FocusIn,
+            QEvent.Type.FocusOut,
+        ):
+            self._list_focused = event.type() == QEvent.Type.FocusIn
+            self._sync_selection()
+        if watched is self._list.viewport() and event.type() == QEvent.Type.Resize:
+            self._sync_row_heights()
         if (
             watched is self._list
             and event.type() == QEvent.Type.KeyPress
@@ -184,9 +198,9 @@ class ProblemsPane(QWidget):
             row.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self._list.addItem(item)
             self._list.setItemWidget(item, row)
-            item.setSizeHint(row.sizeHint().expandedTo(QSize(0, _ROW_HEIGHT)))
             self._rows.append((item, row))
             row.clicked.connect(self._activate_line)
+        self._sync_row_heights()
         if self._rows:
             self._list.setCurrentItem(self._rows[0][0])
         self._sync_badge()
@@ -224,7 +238,18 @@ class ProblemsPane(QWidget):
     def _sync_selection(self) -> None:
         current = self._list.currentItem()
         for item, row in self._rows:
-            row.set_selected(item is current)
+            row.set_state(
+                selected=item is current,
+                focused=item is current and self._list_focused,
+            )
+
+    def _sync_row_heights(self) -> None:
+        # Fit each row to the list's width, so a wrapped message that
+        # rewraps to fewer lines leaves no gap under the line number.
+        width = self._list.viewport().width()
+        for item, row in self._rows:
+            height = max(row.heightForWidth(width), _ROW_HEIGHT)
+            item.setSizeHint(QSize(0, height))
 
     def _activate(self, item: QListWidgetItem) -> None:
         lineno = item.data(Qt.ItemDataRole.UserRole)
@@ -299,27 +324,27 @@ class _ProblemRow(QWidget):
         text_column.setSpacing(0)
         text_column.addWidget(line)
         text_column.addWidget(message)
+        text_column.addStretch(1)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(8, 4, 8, 4)
+        # The 2 px border always takes space, so focus does not shift text.
+        row.setContentsMargins(8, 2, 6, 2)
         row.setSpacing(8)
         row.addWidget(marker, 0, Qt.AlignmentFlag.AlignTop)
         row.addLayout(text_column, 1)
-        self._selected = False
-        self.set_selected(False)
+        self.set_state(selected=False, focused=False)
 
-    def set_selected(self, selected: bool) -> None:
-        # Scoped to the row so the bar and tint stay off the labels.
-        self._selected = selected
-        if selected:
-            self.setStyleSheet(
-                f"QWidget#problemRow {{ background: {ACCENT_TINT}; "
-                f"border-left: 3px solid {ACCENT}; }}"
-            )
-            return
+    def set_state(self, *, selected: bool, focused: bool) -> None:
+        """Tint and bar when selected, plus a 2 px outline when focused.
+
+        Scoped to the row so the bar and tint stay off the labels.
+        """
+        background = ACCENT_TINT if selected else "transparent"
+        bar = ACCENT if selected else "transparent"
+        outline = ACCENT if focused else "transparent"
         self.setStyleSheet(
-            "QWidget#problemRow { background: transparent; "
-            "border-left: 3px solid transparent; }"
+            f"QWidget#problemRow {{ background: {background}; "
+            f"border: 2px solid {outline}; border-left: 3px solid {bar}; }}"
         )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:

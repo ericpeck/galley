@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.problem_text import display_problem
+from galley.app.problem_text import DisplayProblem, display_problem
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import problems_settings
 from galley.app.status_message import StatusMessage
@@ -326,8 +326,77 @@ def test_selection_bar_stays_on_the_row_not_its_labels(qtbot) -> None:
         assert not _has_pixel(label.grab().toImage(), QColor(ACCENT))
 
     bar = selected.grab().toImage()
-    assert bar.pixelColor(0, bar.height() // 2) == QColor(ACCENT)
+    assert _near(bar.pixelColor(0, bar.height() // 2), QColor(ACCENT))
     assert not _has_pixel(other.grab().toImage(), QColor(ACCENT))
+
+
+def test_the_focused_list_outlines_the_current_row(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    first = problems.itemWidget(problems.item(0))
+    second = problems.itemWidget(problems.item(1))
+    assert first is not None and second is not None
+    assert not _outlined(first)
+
+    problems.setFocus()
+    qtbot.waitUntil(problems.hasFocus)
+    assert _outlined(first)
+    assert not _outlined(second)
+
+    qtbot.keyClick(problems, Qt.Key.Key_Down)
+    assert not _outlined(first)
+    assert _outlined(second)
+
+    pane.minimize_button().setFocus()
+    qtbot.waitUntil(lambda: not problems.hasFocus())
+    assert not _outlined(first)
+    assert not _outlined(second)
+
+
+def test_the_list_paints_no_text_while_focused(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    problems.setFocus()
+    qtbot.waitUntil(problems.hasFocus)
+    item = problems.currentItem()
+    viewport = problems.viewport()
+    pixmap = QPixmap(viewport.size())
+    pixmap.fill(QColor("#123456"))
+    viewport.render(pixmap, QPoint(), QRegion(), QWidget.RenderFlag(0))
+    image = pixmap.toImage().copy(problems.visualItemRect(item))
+    assert _colors(image) == {QColor("#123456").rgb()}
+
+
+def test_a_rewrapped_row_has_no_gap_under_the_line_number(qtbot) -> None:
+    message = (
+        "Line 3 starts with a tab. YAML needs spaces for indenting, "
+        "so replace the tab before formatting again."
+    )
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.resize(320, 400)
+    pane.set_problems((DisplayProblem(3, message, f"Line 3: {message}", "yaml_tab"),))
+    pane.show()
+    qtbot.waitExposed(pane)
+    pane.resize(520, 400)
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    qtbot.waitUntil(lambda: row.width() > 400)
+
+    line, text = (
+        label
+        for label in row.findChildren(QLabel)
+        if label.objectName() != "problemMarker"
+    )
+    assert line.height() == line.sizeHint().height()
+    assert text.geometry().top() == line.geometry().bottom() + 1
+    assert row.height() == max(row.heightForWidth(row.width()), 56)
+
+
+def _outlined(row: QWidget) -> bool:
+    image = row.grab().toImage()
+    return _near(image.pixelColor(image.width() // 2, 0), QColor(ACCENT))
 
 
 def _colors(image: QImage) -> set[int]:
@@ -339,14 +408,17 @@ def _colors(image: QImage) -> set[int]:
 def _has_pixel(image: QImage, target: QColor) -> bool:
     for y in range(image.height()):
         for x in range(image.width()):
-            color = image.pixelColor(x, y)
-            if (
-                abs(color.red() - target.red()) < 16
-                and abs(color.green() - target.green()) < 16
-                and abs(color.blue() - target.blue()) < 16
-            ):
+            if _near(image.pixelColor(x, y), target, 16):
                 return True
     return False
+
+
+def _near(color: QColor, target: QColor, tolerance: int = 8) -> bool:
+    return (
+        abs(color.red() - target.red()) <= tolerance
+        and abs(color.green() - target.green()) <= tolerance
+        and abs(color.blue() - target.blue()) <= tolerance
+    )
 
 
 def _has_error_pixel(image: QImage) -> bool:
