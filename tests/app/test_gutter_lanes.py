@@ -79,6 +79,11 @@ def _lane_pixels(editor: CodeEditor, image: QImage, lane: str, lineno: int) -> s
     left, width = editor.gutter_layout().lanes[lane]
     top = _line_top(editor, lineno)
     height = editor.fontMetrics().height()
+    # Outside the image, pixelColor returns an invalid (black) color.
+    assert 0 <= top and top + height <= image.height(), (
+        f"line {lineno} (y {top}..{top + height}) is outside the "
+        f"{image.height()} px gutter grab"
+    )
     return {
         image.pixelColor(x, y).rgb()
         for x in range(left, left + width)
@@ -277,8 +282,11 @@ _VALID = (
     + _KEYS
     + '  "ok": true\n}\n'
 )
-# The same text with the comma after "count" removed: one problem, line 4.
-_MISSING_COMMA = _VALID.replace('"count": 3,', '"count": 3', 1)
+# The same text with the comma after "name" removed: one problem, on line 2.
+# It sits above the long line so it stays in view however far that wraps
+# (a wider font on Windows pushes line 4 out of the gutter).
+_MISSING_COMMA = _VALID.replace('"name": "Galley",', '"name": "Galley"', 1)
+_ERROR_LINE = 2
 _LONG_LINE = 3
 
 
@@ -358,14 +366,14 @@ def test_the_first_problem_from_format_moves_and_rewraps_nothing(
     assert clean_flow["wrapped lines"] > 1
 
     _format_input(qtbot, window, _MISSING_COMMA, "1 problem")
-    qtbot.waitUntil(lambda: editor.problem_lines() == {4}, timeout=15000)
+    qtbot.waitUntil(lambda: editor.problem_lines() == {_ERROR_LINE}, timeout=15000)
     assert not pane.isVisible()
 
     assert _gutter_geometry(editor) == clean_gutter
     assert _text_flow(editor) == clean_flow
     image = _gutter(editor)
     error = error_color(editor.palette()).rgb()
-    assert error in _lane_pixels(editor, image, "markers", 4)
+    assert error in _lane_pixels(editor, image, "markers", _ERROR_LINE)
     assert error not in _lane_pixels(editor, image, "markers", _LONG_LINE)
 
 
@@ -383,7 +391,7 @@ def test_the_first_problem_with_the_problems_pane_keeps_the_gutter(
     assert clean_gutter["markers lane"] == (0, 16)
 
     _format_input(qtbot, window, _MISSING_COMMA, "1 problem")
-    qtbot.waitUntil(lambda: editor.problem_lines() == {4}, timeout=15000)
+    qtbot.waitUntil(lambda: editor.problem_lines() == {_ERROR_LINE}, timeout=15000)
     qtbot.waitUntil(pane.isVisible, timeout=15000)
 
     assert _gutter_geometry(editor) == clean_gutter
