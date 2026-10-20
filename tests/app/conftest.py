@@ -1,11 +1,14 @@
 """Keep Qt settings from one app test out of the next."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPalette
+
+from galley.app.appearance import set_application_palette
+from galley.app.theme import dark_palette, light_palette
 
 
 @pytest.fixture(autouse=True)
@@ -62,3 +65,28 @@ def scheme_palette(request, qapp) -> Iterator[QPalette]:
     qapp.setPalette(palette)
     yield palette
     qapp.setPalette(previous)
+
+
+@pytest.fixture
+def install_scheme(qapp) -> Iterator[Callable[[str], QPalette]]:
+    """Switch to the app's ``"light"`` or ``"dark"`` palette mid-test.
+
+    The scheme's roles (cocoa's, for dark) stand in for the platform
+    palette, and the app's light_palette or dark_palette is built on them,
+    as View › Appearance does. The switch goes through the same stylesheet
+    refresh. The palette before the first switch is restored.
+    """
+    previous = QPalette(qapp.palette())
+
+    def install(name: str) -> QPalette:
+        platform = QPalette(previous)
+        for role, color in _SCHEMES[name].items():
+            platform.setColor(role, QColor(color))
+        build = dark_palette if name == "dark" else light_palette
+        palette = build(platform)
+        set_application_palette(qapp, palette)
+        qapp.processEvents()
+        return palette
+
+    yield install
+    set_application_palette(qapp, previous)

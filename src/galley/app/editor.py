@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit, QTextEdit, Q
 
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
-from galley.app.theme import contrast_ratio, error_color, problem_line_tint
+from galley.app.theme import error_color, ink_on, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
 
@@ -301,7 +301,7 @@ class CodeEditor(QPlainTextEdit):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(fill)
         painter.drawEllipse(2, marker_y, diameter, diameter)
-        painter.setPen(self._marker_ink(fill))
+        painter.setPen(ink_on(fill, self.palette()))
         painter.drawText(
             2,
             marker_y,
@@ -310,12 +310,3 @@ class CodeEditor(QPlainTextEdit):
             int(Qt.AlignmentFlag.AlignCenter),
             "!",
         )
-
-    def _marker_ink(self, fill: QColor) -> QColor:
-        """White on the light-mode error, the dark Base on the dark one."""
-        palette = self.palette()
-        label = palette.color(QPalette.ColorRole.HighlightedText)
-        base = palette.color(QPalette.ColorRole.Base)
-        if contrast_ratio(label, fill) >= contrast_ratio(base, fill):
-            return label
-        return base

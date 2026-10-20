@@ -161,16 +161,13 @@ def pane_edge_colors(palette: QPalette) -> tuple[QColor, QColor]:
 def selected_problem_palette(palette: QPalette) -> QPalette:
     """Problem selection fill on the highlight role.
 
-    Light mode uses the accent tint sample. A dark palette gets a fill mixed
-    from its own window and accent roles, so its light text still reads.
+    Light mode uses the accent tint sample. Dark mode keeps the native
+    Highlight; the row paints its text in an opaque color that reaches
+    4.5:1 on it.
     """
     tinted = QPalette(palette)
-    window = palette.color(QPalette.ColorRole.Window)
-    if window.lightness() < 128:
-        fill = mix(window, palette.color(QPalette.ColorRole.Accent), 0.25)
-    else:
-        fill = QColor(ACCENT_TINT)
-    tinted.setColor(QPalette.ColorRole.Highlight, fill)
+    if not is_dark(palette):
+        tinted.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_TINT))
     return tinted
 
 
@@ -323,6 +320,18 @@ def is_dark(palette: QPalette) -> bool:
 def error_color(palette: QPalette) -> QColor:
     """Error ink for the scheme ``palette`` belongs to."""
     return QColor(ERROR_DARK if is_dark(palette) else ERROR)
+
+
+def ink_on(fill: QColor, palette: QPalette) -> QColor:
+    """Label color on a filled shape: HighlightedText or Base, whichever
+    reads better. White on the light error, the dark Base on #FF7B72, where
+    white is about 2.5:1.
+    """
+    label = composite(palette.color(QPalette.ColorRole.HighlightedText), fill)
+    base = composite(palette.color(QPalette.ColorRole.Base), fill)
+    if contrast_ratio(label, fill) >= contrast_ratio(base, fill):
+        return label
+    return base
 
 
 def line_number_color(palette: QPalette) -> QColor:
