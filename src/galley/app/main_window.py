@@ -1,17 +1,15 @@
 """Galley main window: menus, toolbar, panes, and status bar."""
 
+import html
 import time
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import (
-    QAction,
     QCloseEvent,
-    QColor,
     QKeyEvent,
     QKeySequence,
-    QPalette,
     QResizeEvent,
     QShowEvent,
     QTextCursor,
@@ -19,16 +17,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -38,8 +32,15 @@ from PySide6.QtWidgets import (
 
 from galley.app.about import show_about_dialog
 from galley.app.actions import ShellActions, coming_soon_wrapper
+from galley.app.appearance import (
+    MODE_DARK,
+    MODE_LIGHT,
+    MODE_SYSTEM,
+    application_appearance,
+)
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
+from galley.app.icons import toolbar_icon
 from galley.app.open_file import (
     OPEN_FILE_FILTER,
     REPLACE_INPUT_DETAIL,
@@ -68,29 +69,27 @@ from galley.app.problems_settings import (
     save_stacked_panes,
 )
 from galley.app.splitter import PaneSplitter
-from galley.app.status_message import StatusMessage
+
+# Re-exported: tests and callers import the slot widths from here.
+from galley.app.status_bar import PROGRESS_WIDTH_PX as PROGRESS_WIDTH_PX
+from galley.app.status_bar import SPINNER_WIDTH_PX as SPINNER_WIDTH_PX
+from galley.app.status_bar import Busy, StatusBar
 from galley.app.style import (
     menu_style,
     muted_text_style,
     primary_button_style,
-    progress_style,
-    status_bar_style,
 )
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import (
-    EDITOR_BG,
-    GUTTER_BG,
-    SELECTION,
-    TEXT,
-    TEXT_ON_ACCENT,
-    WINDOW_BG,
-)
+from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.format import _has_tab
 
 NOT_YET_MESSAGE = "Not yet available."
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+FORMAT_ACCESSIBLE_NAME = "Format"
+FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
+FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
 FORMAT_NOT_STARTED_MESSAGE = (
     "Formatting didn't start. The formatter is shut down or already running."
 )
@@ -105,8 +104,6 @@ SPINNER_REVEAL_MS = 500
 PROGRESS_BAR_REVEAL_MS = 2000
 ELAPSED_STATUS_MS = 10_000
 CANCELED_STATUS_MS = 3_000
-SPINNER_WIDTH_PX = 80
-PROGRESS_WIDTH_PX = 160
 
 # Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
 # 1_000_000 bytes, the same SI units the warning shows.
@@ -132,6 +129,34 @@ class _EditorView(NamedTuple):
     horizontal: int
 
 
+class _FormatButton(QPushButton):
+    """Format button sized for its widest label.
+
+    The toolbar measures Format when it reflows. Sizing for both labels
+    keeps the toolbar still when a resize lands mid-job.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._labels: tuple[str, ...] = ()
+
+    def set_labels(self, labels: tuple[str, ...]) -> None:
+        self._labels = labels
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        current = metrics.horizontalAdvance(self.text())
+        widest = max(
+            (metrics.horizontalAdvance(label) for label in self._labels),
+            default=current,
+        )
+        if widest > current:
+            hint.setWidth(hint.width() + widest - current)
+        return hint
+
+
 class MainWindow(QMainWindow):
     """The single Galley window in its empty, ready state."""
 
@@ -139,6 +164,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._initial_show_done = False
         self._split_settled = False
+        self._following_palette = False
         self._splitter: PaneSplitter | None = None
         self._formatting = False
         self._format_started_s = 0.0
@@ -160,12 +186,13 @@ class MainWindow(QMainWindow):
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_idle_text = ""
+        self._format_idle_tooltip = ""
         self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
-        self._apply_palette()
+        self.setAutoFillBackground(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -180,7 +207,7 @@ class MainWindow(QMainWindow):
         self._editing = self._build_caption()
         self._format_button = self._build_format_button()
         toolbar = self._build_toolbar()
-        self._status_message, self._direction = self._build_status_bar()
+        self._status = self._build_status_bar()
         self._assemble(toolbar)
         self._connect()
         self._sync_input_state()
@@ -189,6 +216,7 @@ class MainWindow(QMainWindow):
         self._splitter.apply_even_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -223,6 +251,9 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._follow_editor_palette()
+            self._refresh_toolbar_icons()
         if event.type() != QEvent.Type.WindowStateChange:
             return
         fullscreen = self.isFullScreen()
@@ -230,18 +261,32 @@ class MainWindow(QMainWindow):
         if action.isChecked() != fullscreen:
             action.setChecked(fullscreen)
 
-    def _apply_palette(self) -> None:
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(EDITOR_BG))
-        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+    def _follow_editor_palette(self) -> None:
+        """Keep each editor on the application Base after a scheme change."""
+        if self._following_palette or not hasattr(self, "_output_pane"):
+            return
+        self._following_palette = True
+        try:
+            for editor in self._editors():
+                editor.follow_application_palette()
+        finally:
+            self._following_palette = False
+
+    def _refresh_toolbar_icons(self) -> None:
+        """Redraw the toolbar glyphs, which keep the ink they were drawn with."""
+        if not hasattr(self, "_format_button"):
+            return
+        for button in self.findChildren(QToolButton):
+            action = button.defaultAction()
+            if action is None or action.icon().isNull():
+                continue
+            icon_only = (
+                button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+            )
+            icon = toolbar_icon(action.text(), pad=not icon_only)
+            action.setIcon(icon)
+            button.setIcon(icon)
+        self._format_button.setIcon(toolbar_icon("Format", pad=True))
 
     def _build_menus(self) -> None:
         actions = self._actions
@@ -292,6 +337,8 @@ class MainWindow(QMainWindow):
         view.addSeparator()
         view.addAction(actions.stack_panes)
         view.addSeparator()
+        self._build_appearance_menu(view)
+        view.addSeparator()
         view.addAction(actions.full_screen)
 
         window_menu = _add_menu(bar, "Window")
@@ -324,6 +371,36 @@ class MainWindow(QMainWindow):
         self._editor_menu.addAction(actions.paste)
         self._editor_menu.addAction(actions.select_all)
 
+    def _build_appearance_menu(self, view: QMenu) -> None:
+        """View › Appearance: System, Light, Dark. Shared by every window."""
+        menu = view.addMenu("Appearance")
+        menu.setObjectName("menuAppearance")
+        modes = {
+            MODE_SYSTEM: self._actions.appearance_system,
+            MODE_LIGHT: self._actions.appearance_light,
+            MODE_DARK: self._actions.appearance_dark,
+        }
+        for mode, action in modes.items():
+            menu.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, chosen=mode: self._set_appearance(chosen)
+            )
+        self._appearance_actions = modes
+        appearance = application_appearance()
+        if appearance is not None:
+            appearance.mode_changed.connect(self._sync_appearance_actions)
+            self._sync_appearance_actions(appearance.mode())
+
+    def _set_appearance(self, mode: str) -> None:
+        appearance = application_appearance()
+        if appearance is not None:
+            appearance.set_mode(mode)
+
+    def _sync_appearance_actions(self, mode: str) -> None:
+        action = self._appearance_actions.get(mode)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+
     def _build_splitter(self) -> PaneSplitter:
         splitter = PaneSplitter()
         splitter.addWidget(self._input_pane)
@@ -345,26 +422,39 @@ class MainWindow(QMainWindow):
         return splitter
 
     def _build_caption(self) -> QLabel:
-        caption = QLabel("Editing <b>Input 1</b>")
+        caption = QLabel(_editing_text(self._input_pane.title))
         caption.setObjectName("editingCaption")
         caption.setTextFormat(Qt.TextFormat.RichText)
         caption.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        caption.setStyleSheet(muted_text_style() + " font-size: 11px;")
+        caption.setStyleSheet(muted_text_style())
+        font = ui_font()
+        font.setPixelSize(11)
+        caption.setFont(font)
+        width = max(
+            caption.fontMetrics().horizontalAdvance(f"Editing {pane.title}")
+            for pane in (self._input_pane, self._output_pane)
+        )
+        caption.setMinimumWidth(width + 8)
+        caption.setMinimumHeight(caption.fontMetrics().height() + 2)
         return caption
 
     def _build_format_button(self) -> QPushButton:
-        button = QPushButton()
+        button = _FormatButton()
         button.setObjectName("formatButton")
-        button.setAccessibleName("Format")
+        button.setAccessibleName(FORMAT_ACCESSIBLE_NAME)
+        button.setIcon(toolbar_icon("Format", pad=True))
         button.setStyleSheet(primary_button_style())
         button.setMinimumHeight(28)
         hint = self._actions.format.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText
         )
         self._format_idle_text = f"{{·}} Format {hint}".rstrip()
+        self._format_idle_tooltip = f"Format ({hint})" if hint else "Format"
         button.setText(self._format_idle_text)
+        button.setToolTip(self._format_idle_tooltip)
+        button.set_labels((self._format_idle_text, FORMATTING_MESSAGE))
         self._format_button = button
         self._actions.format.enabledChanged.connect(self._on_format_action_enabled)
         button.setEnabled(self._actions.format.isEnabled())
@@ -372,102 +462,13 @@ class MainWindow(QMainWindow):
         return button
 
     def _build_toolbar(self) -> QWidget:
-        actions = self._actions
-        toolbar = QWidget()
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMinimumHeight(56)
-        toolbar.setAutoFillBackground(True)
+        return MainToolbar(self._actions, self._format_button, self._editing)
 
-        indent = QComboBox()
-        indent.setObjectName("indentSize")
-        indent.setAccessibleName("Indent size")
-        indent.setToolTip("Indent size")
-        indent.addItems(["2 spaces", "4 spaces", "Tab"])
-
-        tray = QFrame()
-        tray.setObjectName("undoRedoTray")
-        tray.setStyleSheet(
-            f"QFrame#undoRedoTray {{ background: {GUTTER_BG}; border-radius: 4px; }}"
-        )
-        tray_row = QHBoxLayout(tray)
-        tray_row.setContentsMargins(2, 2, 2, 2)
-        tray_row.setSpacing(0)
-        tray_row.addWidget(_tool_button(actions.undo))
-        tray_row.addWidget(_tool_button(actions.redo))
-
-        format_column = QWidget()
-        format_layout = QVBoxLayout(format_column)
-        format_layout.setContentsMargins(0, 2, 0, 2)
-        format_layout.setSpacing(0)
-        format_layout.addWidget(self._format_button)
-        format_layout.addWidget(self._editing)
-
-        row = QHBoxLayout(toolbar)
-        row.setContentsMargins(12, 4, 12, 4)
-        row.setSpacing(4)
-        row.addWidget(_tool_button(actions.paste))
-        row.addWidget(_tool_button(actions.copy))
-        row.addSpacing(16)
-        row.addWidget(tray)
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.outdent))
-        row.addWidget(_tool_button(actions.indent))
-        row.addWidget(indent)
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.sort_keys))
-        row.addWidget(_tool_button(actions.minify))
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.expand_all))
-        row.addWidget(_tool_button(actions.collapse_all))
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.validate))
-        row.addWidget(_tool_button(actions.convert_python))
-        row.addStretch(1)
-        row.addWidget(_tool_button(actions.find))
-        row.addSpacing(8)
-        row.addWidget(format_column)
-        return toolbar
-
-    def _build_status_bar(self) -> tuple[StatusMessage, QLabel]:
-        status = self.statusBar()
-        status.setStyleSheet(status_bar_style())
-        status.setSizeGripEnabled(True)
-        message = StatusMessage("Ready")
-        message.setObjectName("statusMessage")
-        message.setStyleSheet(muted_text_style())
-        message.clicked.connect(self._on_status_clicked)
-        self._format_spinner = QProgressBar()
-        self._format_spinner.setObjectName("formatSpinner")
-        self._format_spinner.setAccessibleName("Formatting")
-        self._format_spinner.setRange(0, 0)
-        self._format_spinner.setTextVisible(False)
-        self._format_spinner.setFixedWidth(SPINNER_WIDTH_PX)
-        self._format_spinner.setStyleSheet(progress_style())
-        self._format_spinner.hide()
-        self._write_progress = QProgressBar()
-        self._write_progress.setObjectName("writeProgress")
-        self._write_progress.setAccessibleName("Formatting")
-        self._write_progress.setRange(0, 0)
-        self._write_progress.setTextVisible(False)
-        self._write_progress.setFixedWidth(PROGRESS_WIDTH_PX)
-        self._write_progress.setStyleSheet(progress_style())
-        self._write_progress.hide()
-        self._cancel_button = QPushButton("Cancel")
-        self._cancel_button.setObjectName("cancelButton")
-        self._cancel_button.setAccessibleName("Cancel")
-        self._cancel_button.hide()
-        direction = QLabel("JSON → JSON")
-        direction.setObjectName("directionLabel")
-        direction.setStyleSheet(muted_text_style())
-        status.addWidget(self._format_spinner)
-        status.addWidget(message, 1)
-        status.addWidget(self._write_progress)
-        status.addWidget(self._cancel_button)
-        status.addPermanentWidget(direction)
-        layout = status.layout()
-        if layout is not None:
-            layout.setContentsMargins(8, 0, 8, 0)
-        return message, direction
+    def _build_status_bar(self) -> StatusBar:
+        status = StatusBar()
+        self.setStatusBar(status)
+        status.state_clicked.connect(self._on_status_clicked)
+        return status
 
     def _assemble(self, toolbar: QWidget) -> None:
         central = QWidget()
@@ -507,7 +508,7 @@ class MainWindow(QMainWindow):
         actions.convert_python.triggered.connect(self._convert_python)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
-        self._cancel_button.clicked.connect(self._cancel_format)
+        self._status.cancel_clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
@@ -525,6 +526,10 @@ class MainWindow(QMainWindow):
         self._output_pane.format_changed.connect(self._sync_direction)
         self._bind_pane(self._input_pane)
         self._bind_pane(self._output_pane)
+        for editor in self._editors():
+            editor.undoAvailable.connect(self._sync_undo_actions)
+            editor.redoAvailable.connect(self._sync_undo_actions)
+        self._sync_undo_actions()
 
         input_paste = self._input_pane.paste_button
         footer_paste = self._input_pane.footer_paste_button
@@ -545,10 +550,6 @@ class MainWindow(QMainWindow):
             options.clicked.connect(self._not_yet)
         if copy_output is not None:
             copy_output.clicked.connect(self._copy_output)
-
-        rail = self._splitter.rail
-        if rail is not None:
-            rail.swap_button.clicked.connect(self._not_yet)
 
         self._shield_unbuilt_controls()
         application = QApplication.instance()
@@ -662,7 +663,7 @@ class MainWindow(QMainWindow):
         self._formatting = True
         self._format_started_s = _monotonic()
         self._reveal_timer.stop()
-        self._status_before_format = self._status_message.text()
+        self._status_before_format = self._status.state_text()
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         self._format_target = self._output_pane.format_name()
@@ -671,9 +672,7 @@ class MainWindow(QMainWindow):
         self._size_forces_busy = size >= busy
         self._size_forces_progress = size >= progress
         self._set_editors_locked(True)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
         self._apply_deferred_reveal()
         self._accepted_job_id = None
@@ -692,27 +691,25 @@ class MainWindow(QMainWindow):
             return
         result = convert_python(text, self._output_pane.format_name())
         if isinstance(result, ConvertError):
-            self._status_message.show_text(result.message)
+            self._status.set_state(result.message)
             return
         self._output_pane.editor.setPlainText(result.text)
         if result.notices:
-            self._status_message.show_text(
+            self._status.set_state(
                 " ".join(notice.message for notice in result.notices)
             )
             return
         target = self._output_pane.format_name()
-        self._status_message.show_text(f"Converted to {target}.")
+        self._status.set_state(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker."""
         if not self._formatting:
             return
         self._restore_output()
-        self._status_message.show_text(CANCELLED_MESSAGE)
+        self._status.set_state(CANCELLED_MESSAGE)
         self._cancel_status_timer.start(CANCELED_STATUS_MS)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_busy(Busy.IDLE)
         self._formatting = False
         self._size_forces_busy = False
         self._size_forces_progress = False
@@ -722,14 +719,14 @@ class MainWindow(QMainWindow):
         self._session.cancel()
 
     def _clear_canceled_status(self) -> None:
-        if self._formatting or self._status_message.text() != CANCELLED_MESSAGE:
+        if self._formatting or self._status.state_text() != CANCELLED_MESSAGE:
             return
         restored = self._status_before_format
         count = self._problems_pane.count()
         if count and restored == problem_count_text(count):
-            self._status_message.show_problem_count(count)
+            self._status.set_problem_count(count)
             return
-        self._status_message.show_text(restored)
+        self._status.set_state(restored)
 
     def _on_write_progress(self, _written: int, _total: int) -> None:
         if not self._formatting:
@@ -748,15 +745,11 @@ class MainWindow(QMainWindow):
             SPINNER_REVEAL_MS, self._format_started_s
         )
         if progress_due:
-            self._write_progress.show()
-            self._format_spinner.hide()
-            self._cancel_button.show()
-            self._status_message.show_text(_formatting_status(elapsed))
+            self._status.set_busy(Busy.PROGRESS)
+            self._status.set_state(_formatting_status(elapsed))
         elif busy_due:
-            self._format_spinner.show()
-            self._write_progress.hide()
-            self._cancel_button.hide()
-            self._status_message.show_text(FORMATTING_MESSAGE)
+            self._status.set_busy(Busy.SPINNER)
+            self._status.set_state(FORMATTING_MESSAGE)
         self._arm_reveal_timer()
 
     def _arm_reveal_timer(self) -> None:
@@ -776,7 +769,7 @@ class MainWindow(QMainWindow):
             remaining.append(PROGRESS_BAR_REVEAL_MS - elapsed)
         if elapsed < ELAPSED_STATUS_MS:
             remaining.append(ELAPSED_STATUS_MS - elapsed)
-        elif self._write_progress.isVisible():
+        elif self._status.progress_visible():
             next_second = (int(elapsed // 1000) + 1) * 1000
             remaining.append(next_second - elapsed)
         if not remaining:
@@ -801,7 +794,7 @@ class MainWindow(QMainWindow):
         # and still owns this format, so a later success can replace the banner.
         if self._session.has_pending_job:
             self._reveal_timer.stop()
-            self._status_message.show_text(message)
+            self._status.set_state(message)
             return
         self._finish_format(message)
 
@@ -824,10 +817,8 @@ class MainWindow(QMainWindow):
         self._size_forces_busy = False
         self._size_forces_progress = False
         self._reveal_timer.stop()
-        self._status_message.show_text(status)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_state(status)
+        self._status.set_busy(Busy.IDLE)
         self._set_editors_locked(False)
         self._sync_format_button()
 
@@ -845,7 +836,7 @@ class MainWindow(QMainWindow):
         self._problems_pane.set_problems(rows)
         self._input_pane.editor.set_problem_lines({row.lineno for row in rows})
         self._layout_problems()
-        self._status_message.show_problem_count(len(rows))
+        self._status.set_problem_count(len(rows))
 
     def _clear_problems(self) -> None:
         self._problems_pane.set_problems(())
@@ -1012,14 +1003,15 @@ class MainWindow(QMainWindow):
         if editor is not None:
             self._active_editor = editor
             self._update_caption()
+            self._sync_undo_actions()
         self._update_focus_ring()
 
     def _update_caption(self) -> None:
         if self._active_editor is self._output_pane.editor:
-            name = "Output 1"
+            pane = self._output_pane
         else:
-            name = "Input 1"
-        self._editing.setText(f"Editing <b>{name}</b>")
+            pane = self._input_pane
+        self._editing.setText(_editing_text(pane.title))
 
     def _update_focus_ring(self) -> None:
         focused = QApplication.focusWidget()
@@ -1034,6 +1026,12 @@ class MainWindow(QMainWindow):
 
     def _editors(self) -> tuple[CodeEditor, CodeEditor]:
         return self._input_pane.editor, self._output_pane.editor
+
+    def _sync_undo_actions(self, _available: bool = False) -> None:
+        """Enable Undo and Redo from the focused editor's own undo stack."""
+        document = self._target_editor().document()
+        self._actions.undo.setEnabled(document.isUndoAvailable())
+        self._actions.redo.setEnabled(document.isRedoAvailable())
 
     def _undo(self) -> None:
         self._target_editor().undo()
@@ -1253,13 +1251,30 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format and Convert disabled for the whole job."""
+        """Block Format and Convert for the whole job.
+
+        The button keeps its full accent face while working and reads
+        ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        """
         has_input = self._input_pane.editor.toPlainText() != ""
         available = has_input and not self._formatting
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
-        self._format_button.setEnabled(available)
+        button = self._format_button
+        button.setEnabled(has_input or self._formatting)
+        if self._formatting:
+            button.setText(FORMATTING_MESSAGE)
+            button.setAccessibleName(FORMATTING_MESSAGE)
+            button.setAccessibleDescription(FORMAT_BUSY_DESCRIPTION)
+            button.setToolTip(FORMAT_BUSY_TOOLTIP)
+            button.setCursor(Qt.CursorShape.BusyCursor)
+        else:
+            button.setText(self._format_idle_text)
+            button.setAccessibleName(FORMAT_ACCESSIBLE_NAME)
+            button.setAccessibleDescription("")
+            button.setToolTip(self._format_idle_tooltip)
+            button.unsetCursor()
         self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:
@@ -1296,21 +1311,13 @@ class MainWindow(QMainWindow):
     def _sync_direction(self) -> None:
         left = self._input_pane.format_name()
         right = self._output_pane.format_name()
-        self._direction.setText(f"{left} → {right}")
+        self._status.set_info(f"{left} → {right}")
 
 
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:
     menu = bar.addMenu(title)
     menu.setObjectName("menu" + title.replace(" ", ""))
     return menu
-
-
-def _tool_button(action: QAction) -> QWidget:
-    button = QToolButton()
-    button.setDefaultAction(action)
-    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-    button.setAutoRaise(True)
-    return coming_soon_wrapper(button, action)
 
 
 def _monotonic() -> float:
@@ -1399,6 +1406,10 @@ def _restore_editor(editor: CodeEditor, view: _EditorView) -> None:
     editor.setTextCursor(cursor)
     editor.verticalScrollBar().setValue(view.vertical)
     editor.horizontalScrollBar().setValue(view.horizontal)
+
+
+def _editing_text(title: str) -> str:
+    return f"Editing <b>{html.escape(title)}</b>"
 
 
 def _editor_from(widget: QWidget | None) -> CodeEditor | None:

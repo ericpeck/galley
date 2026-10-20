@@ -4,11 +4,14 @@ import ast
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QLabel,
     QMenu,
@@ -20,6 +23,8 @@ from PySide6.QtWidgets import (
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.main_window import (
+    FORMAT_BUSY_DESCRIPTION,
+    FORMAT_BUSY_TOOLTIP,
     FORMATTING_MESSAGE,
     NOT_YET_MESSAGE,
     PROGRESS_BAR_REVEAL_MS,
@@ -27,16 +32,9 @@ from galley.app.main_window import (
     SPINNER_REVEAL_MS,
     SPINNER_WIDTH_PX,
 )
+from galley.app.pane import PaneRole
 from galley.app.parse_session import ParseSession
-from galley.app.theme import (
-    ACCENT,
-    ACCENT_DISABLED,
-    EDITOR_BG,
-    GUTTER_BG,
-    TEXT_MUTED,
-    TEXT_ON_ACCENT,
-    WINDOW_BG,
-)
+from galley.app.theme import ACCENT, ACCENT_DISABLED
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 
@@ -135,7 +133,9 @@ def test_main_window_opens(qtbot) -> None:
     assert window.isVisible()
     assert window.windowTitle() == "Galley"
     assert window.centralWidget() is not None
-    assert window.palette().color(QPalette.ColorRole.Window).name() == WINDOW_BG.lower()
+    window_color = window.palette().color(QPalette.ColorRole.Window)
+    app_color = QApplication.palette().color(QPalette.ColorRole.Window)
+    assert window_color.name() == app_color.name()
 
 
 def test_menu_bar_matches_spec(qtbot) -> None:
@@ -181,13 +181,16 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Stack Panes",
         "|",
+        "Appearance",
+        "|",
         "Enter Full Screen",
     ]
     assert _submenu(view, "Font").actions() == []
+    assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
     assert _labels(_submenu(view, "Indent Guides")) == [
         "Off",
         "Lines",
-        "Coloured by depth",
+        "Colored by depth",
     ]
     assert _labels(_menu(window, "Window")) == [
         "Pop out into window",
@@ -209,7 +212,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
 def test_view_defaults_match_spec(qtbot) -> None:
     window = _show(qtbot)
     assert _action(window, "Word Wrap").isChecked()
-    assert _action(window, "Coloured by depth").isChecked()
+    assert _action(window, "Colored by depth").isChecked()
     assert not _action(window, "Off").isChecked()
     assert not _action(window, "Lines").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()
@@ -307,8 +310,10 @@ def test_empty_state(qtbot) -> None:
     assert "Format  " not in format_button.text()
     sheet = format_button.styleSheet()
     assert ACCENT in sheet
-    assert ACCENT_DISABLED in sheet
-    assert TEXT_ON_ACCENT in sheet
+    assert "palette(highlighted-text)" in sheet
+    assert "palette(light)" in sheet
+    light = QApplication.palette().color(QPalette.ColorRole.Light).name()
+    assert light == ACCENT_DISABLED.lower()
     assert isinstance(editor, CodeEditor)
     assert isinstance(output, CodeEditor)
     qtbot.waitUntil(lambda: editor.hasFocus())
@@ -319,11 +324,18 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
     for name in ("inputEditor", "outputEditor"):
         editor = window.findChild(CodeEditor, name)
         assert isinstance(editor, CodeEditor)
-        assert editor.line_number_color().name() == TEXT_MUTED.lower()
-        assert editor.gutter_color().name() == GUTTER_BG.lower()
+        assert (
+            editor.line_number_color().name()
+            == editor.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        )
+        assert (
+            editor.gutter_color().name()
+            == editor.palette().color(QPalette.ColorRole.AlternateBase).name()
+        )
         assert editor.viewportMargins().left() >= 48
-        base = editor.palette().color(QPalette.ColorRole.Base).name()
-        assert base == EDITOR_BG.lower()
+        base = editor.palette().color(QPalette.ColorRole.Base)
+        app_base = QApplication.palette().color(QPalette.ColorRole.Base)
+        assert base.name() == app_base.name()
 
 
 def test_stub_action_reports_not_yet(qtbot) -> None:
@@ -404,6 +416,19 @@ def test_focus_caption_follows_the_editor(qtbot) -> None:
     qtbot.waitUntil(lambda: "Input 1" in caption.text())
 
 
+def test_focus_caption_reads_the_pane_titles(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(PaneRole, "INPUT", replace(PaneRole.INPUT, title="Original 1"))
+    monkeypatch.setattr(PaneRole, "OUTPUT", replace(PaneRole.OUTPUT, title="Changed 1"))
+    window = _show(qtbot)
+    caption = window.findChild(QLabel, "editingCaption")
+    assert caption is not None
+    assert caption.text() == "Editing <b>Original 1</b>"
+    window.findChild(CodeEditor, "outputEditor").setFocus()
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Changed 1</b>")
+    window.findChild(CodeEditor, "inputEditor").setFocus()
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Original 1</b>")
+
+
 def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
     window = _show(qtbot)
     editor = window.findChild(CodeEditor, "inputEditor")
@@ -426,8 +451,8 @@ def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:
     assert not bar.isVisible()
     assert not spinner.isVisible()
     assert not cancel.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
 
     def _done() -> bool:
         assert not bar.isVisible()
@@ -474,14 +499,13 @@ def test_quick_format_hides_the_spinner_and_cancel(qtbot, monkeypatch) -> None:
     assert not spinner.isVisible()
     assert not cancel.isVisible()
     assert not bar.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
 
     def _done() -> bool:
         assert not spinner.isVisible()
         assert not cancel.isVisible()
         assert not bar.isVisible()
-        assert button.text() == idle_text
         assert status.text() != FORMATTING_MESSAGE
         assert not status.text().startswith(f"{FORMATTING_MESSAGE} ")
         return output.toPlainText() != ""
@@ -509,7 +533,6 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     assert isinstance(cancel, QPushButton)
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
-    idle_text = button.text()
     monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     started = 1_000.0
@@ -517,8 +540,8 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     _action(window, "Format").trigger()
     assert not spinner.isVisible()
     assert not cancel.isVisible()
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
     clock["now"] = started + (SPINNER_REVEAL_MS - 1) / 1000
     window._apply_deferred_reveal()
     assert not spinner.isVisible()
@@ -535,8 +558,8 @@ def test_busy_indicator_appears_at_the_spinner_delay(qtbot, monkeypatch) -> None
     assert spinner.maximum() == 0
     assert not spinner.isTextVisible()
     assert status.text() == FORMATTING_MESSAGE
-    assert button.text() == idle_text
-    assert not button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.isEnabled()
     assert not _action(window, "Format").isEnabled()
     assert editor.isReadOnly()
 
@@ -565,7 +588,6 @@ def test_write_bar_appears_after_the_progress_delay(
     assert isinstance(cancel, QPushButton)
     assert isinstance(button, QPushButton)
     editor.setPlainText('{"a": 1}')
-    idle_text = button.text()
     assert _action(window, "Format").isEnabled()
     started = 2_000.0
     clock["now"] = started
@@ -606,14 +628,14 @@ def test_write_bar_appears_after_the_progress_delay(
         assert not spinner.isVisible()
         assert cancel.isVisible()
         assert bar.width() == PROGRESS_WIDTH_PX
-        assert bar.accessibleName() == "Formatting"
+        assert bar.accessibleName() == "Formatting progress"
         assert bar.minimum() == 0
         assert bar.maximum() == 0
         assert not bar.isTextVisible()
         assert status.text() == FORMATTING_MESSAGE
         assert "%" not in status.text()
-        assert button.text() == idle_text
-        assert not button.isEnabled()
+        assert button.text() == FORMATTING_MESSAGE
+        assert button.isEnabled()
     finally:
         window.shutdown_parse_worker()
 
@@ -694,3 +716,108 @@ def test_entry_point_uses_freeze_support_without_global_start_method() -> None:
     assert isinstance(first_statement, ast.Expr)
     assert isinstance(first_statement.value, ast.Call)
     assert _call_name(first_statement.value) == "configure_runtime"
+
+
+def test_format_click_while_working_does_not_start_another_job(
+    qtbot, monkeypatch
+) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(button, QPushButton)
+    submitted: list[str] = []
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = (  # type: ignore[method-assign]
+        lambda text, *_args, **_kwargs: submitted.append(text)
+    )
+    editor.setPlainText('{"a": 1}')
+    idle_text = button.text()
+    button.click()
+    assert submitted == ['{"a": 1}']
+    assert button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    button.click()
+    _action(window, "Format").trigger()
+    assert submitted == ['{"a": 1}']
+    window._cancel_format()
+    assert button.text() == idle_text
+    assert button.isEnabled()
+
+
+def _held_format(qtbot, monkeypatch):
+    """A window whose Format job never finishes on its own."""
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(button, QPushButton)
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    editor.setPlainText('{"a": 1}')
+    return window, button
+
+
+def _assert_format_idle(window, button, idle_text: str) -> None:
+    hint = (
+        _action(window, "Format")
+        .shortcut()
+        .toString(QKeySequence.SequenceFormat.NativeText)
+    )
+    assert hint
+    assert button.text() == idle_text
+    assert button.accessibleName() == "Format"
+    assert button.accessibleDescription() == ""
+    assert button.toolTip() == f"Format ({hint})"
+    assert not button.testAttribute(Qt.WidgetAttribute.WA_SetCursor)
+    assert button.cursor().shape() != Qt.CursorShape.BusyCursor
+
+
+def _assert_format_busy(button) -> None:
+    assert button.isEnabled()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.accessibleName() == FORMATTING_MESSAGE
+    assert button.accessibleDescription() == FORMAT_BUSY_DESCRIPTION
+    assert button.toolTip() == FORMAT_BUSY_TOOLTIP
+    assert button.testAttribute(Qt.WidgetAttribute.WA_SetCursor)
+    assert button.cursor().shape() == Qt.CursorShape.BusyCursor
+
+
+def _succeed(window) -> None:
+    window._session.finished_job_id = window._accepted_job_id
+    window._on_format_succeeded('{\n  "a": 1\n}\n')
+
+
+def _fail(window) -> None:
+    window._on_format_failed("The formatter stopped.")
+
+
+def _cancel(window) -> None:
+    window._cancel_format()
+
+
+@pytest.mark.parametrize("finish", [_succeed, _fail, _cancel])
+def test_format_busy_state_and_its_reset(qtbot, monkeypatch, finish) -> None:
+    window, button = _held_format(qtbot, monkeypatch)
+    idle_text = button.text()
+    _assert_format_idle(window, button, idle_text)
+    _action(window, "Format").trigger()
+    assert window._formatting
+    _assert_format_busy(button)
+    finish(window)
+    assert not window._formatting
+    _assert_format_idle(window, button, idle_text)
+    assert button.isEnabled()
+
+
+def test_format_keeps_its_width_while_working(qtbot, monkeypatch) -> None:
+    window, button = _held_format(qtbot, monkeypatch)
+    idle_width = button.sizeHint().width()
+    _action(window, "Format").trigger()
+    assert button.text() == FORMATTING_MESSAGE
+    assert button.sizeHint().width() == idle_width
+    window.resize(window.width() - 200, window.height())
+    qtbot.wait(10)
+    assert button.sizeHint().width() == idle_width
+    window._cancel_format()
+    assert button.sizeHint().width() == idle_width

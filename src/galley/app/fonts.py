@@ -1,20 +1,19 @@
 """UI and code fonts for the shell.
 
-The spec leaves the exact families open, so these are Qt's generic serif
-and monospace. A later licensing choice can replace the family names here.
+The UI font is the platform system font from
+``QFontDatabase.systemFont(GeneralFont)``. The family is not named and
+no font file is bundled. Editor text stays monospace.
 """
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontDatabase
 
 UI_POINT_SIZE = 12
 CODE_POINT_SIZE = 12
 
 
 def ui_font(point_size: int = UI_POINT_SIZE) -> QFont:
-    """Return the serif font used for chrome, menus, and status text."""
-    font = QFont()
-    font.setFamilies(["serif"])
-    font.setStyleHint(QFont.StyleHint.Serif)
+    """Return the platform system font used for chrome, menus, and status."""
+    font = QFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
     font.setPointSize(point_size)
     return font
 

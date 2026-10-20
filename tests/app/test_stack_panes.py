@@ -6,12 +6,11 @@ from PySide6.QtWidgets import QLabel, QMenu, QSplitter, QToolButton, QWidget
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.main_window import NOT_YET_MESSAGE
 from galley.app.problem_text import display_problem
 from galley.app.problems_pane import ProblemsPane
 from galley.app.problems_settings import load_stacked_panes, problems_settings
 from galley.app.shortcuts import STACK_PANES
-from galley.app.theme import GUTTER_BG
+from galley.app.splitter import RESET_NAME
 from galley.core.problems import Problem
 
 
@@ -96,19 +95,28 @@ def test_divider_keeps_the_even_split_and_drops_the_layout_button(qtbot) -> None
     rail = _rail(splitter)
     assert window.findChild(QToolButton, "layoutButton") is None
     assert rail.findChild(QToolButton, "layoutButton") is None
+    assert window.findChild(QToolButton, "swapButton") is None
     names = [button.accessibleName() for button in window.findChildren(QToolButton)]
     assert "Layout" not in names
+    assert "Swap" not in names
 
-    swap = rail.findChild(QToolButton, "swapButton")
-    assert isinstance(swap, QToolButton)
-    assert swap.accessibleName() == "Swap"
-    assert GUTTER_BG in swap.styleSheet()
-    qtbot.mouseClick(swap, Qt.MouseButton.LeftButton)
-    assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
+    reset = rail.findChild(QToolButton, "resetSplitButton")
+    assert isinstance(reset, QToolButton)
+    assert reset.accessibleName() == RESET_NAME
+    assert reset.toolTip() == RESET_NAME
+    assert reset.width() == 24 and reset.height() == 24
 
     ratio = rail.findChild(QLabel, "splitRatio")
     assert isinstance(ratio, QLabel)
     assert ratio.text().split() == ["50", "50"]
+    assert not reset.isEnabled()
+    assert ratio.font().pixelSize() == 11
+    _set_share(splitter, 0.49)
+    qtbot.waitUntil(lambda: ratio.text().split()[0] != "50")
+    assert reset.isEnabled()
+    qtbot.mouseClick(reset, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: abs(_ratio(splitter) - 0.5) < 0.05)
+    assert not reset.isEnabled() or ratio.text().split() != ["50", "50"]
     _set_share(splitter, 0.8)
     qtbot.waitUntil(lambda: _ratio(splitter) > 0.7)
     qtbot.mouseDClick(ratio, Qt.MouseButton.LeftButton)

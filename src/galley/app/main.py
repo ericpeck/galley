@@ -8,6 +8,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.main import CParser
 
 from galley.app.about import licenses_directory, licenses_self_check
+from galley.app.appearance import install_appearance
 from galley.app.fonts import ui_font
 from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
@@ -19,7 +20,14 @@ _SELF_CHECK_YAML = "a: 1\n"
 
 
 def create_main_window() -> QMainWindow:
-    """Return the Galley window in its empty state."""
+    """Return the Galley window in its empty state.
+
+    The saved appearance is applied first, so the window never shows in
+    the wrong mode.
+    """
+    application = QApplication.instance()
+    if isinstance(application, QApplication):
+        install_appearance(application)
     return MainWindow()
 
 
