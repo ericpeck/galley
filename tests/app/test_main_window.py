@@ -4,6 +4,7 @@ import ast
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,7 @@ from galley.app.main_window import (
     SPINNER_REVEAL_MS,
     SPINNER_WIDTH_PX,
 )
+from galley.app.pane import PaneRole
 from galley.app.parse_session import ParseSession
 from galley.app.theme import ACCENT, ACCENT_DISABLED
 
@@ -412,6 +414,19 @@ def test_focus_caption_follows_the_editor(qtbot) -> None:
     qtbot.waitUntil(lambda: "Output 1" in caption.text())
     window.findChild(CodeEditor, "inputEditor").setFocus()
     qtbot.waitUntil(lambda: "Input 1" in caption.text())
+
+
+def test_focus_caption_reads_the_pane_titles(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(PaneRole, "INPUT", replace(PaneRole.INPUT, title="Original 1"))
+    monkeypatch.setattr(PaneRole, "OUTPUT", replace(PaneRole.OUTPUT, title="Changed 1"))
+    window = _show(qtbot)
+    caption = window.findChild(QLabel, "editingCaption")
+    assert caption is not None
+    assert caption.text() == "Editing <b>Original 1</b>"
+    window.findChild(CodeEditor, "outputEditor").setFocus()
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Changed 1</b>")
+    window.findChild(CodeEditor, "inputEditor").setFocus()
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Original 1</b>")
 
 
 def test_format_uses_the_worker_without_a_progress_bar(qtbot) -> None:

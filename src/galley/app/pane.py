@@ -1,5 +1,6 @@
-"""One Input or Output pane: tab strip, editor, footer, empty state."""
+"""One editor pane: tab strip, editor, footer, empty state."""
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Never
 
@@ -27,22 +28,32 @@ from galley.app.style import (
 )
 
 
-class PaneRole(Enum):
-    """Which side of the splitter a pane occupies."""
+class PaneKind(Enum):
+    """Which empty state and footer links a pane shows."""
 
-    INPUT = "input"
-    OUTPUT = "output"
+    SOURCE = "source"
+    RESULT = "result"
 
 
-def _tab_and_format_label(role: PaneRole) -> tuple[str, str]:
-    match role:
-        case PaneRole.INPUT:
-            return "Input 1", "Input as"
-        case PaneRole.OUTPUT:
-            return "Output 1", "Output as"
-        case _:
-            _never: Never = role
-            raise AssertionError(_never)
+@dataclass(frozen=True)
+class PaneSpec:
+    """Everything that tells one pane apart from another.
+
+    ``name`` prefixes the object names (``inputPane``, ``inputEditor``,
+    ``inputFormat``, …), so tests and features can find the pane's parts.
+    """
+
+    name: str
+    title: str
+    format_label: str
+    kind: PaneKind
+
+
+class PaneRole:
+    """The two panes the main window shows today."""
+
+    INPUT = PaneSpec("input", "Input 1", "Input as", PaneKind.SOURCE)
+    OUTPUT = PaneSpec("output", "Output 1", "Output as", PaneKind.RESULT)
 
 
 class PaneWidget(QWidget):
@@ -50,11 +61,10 @@ class PaneWidget(QWidget):
 
     format_changed = Signal(str)
 
-    def __init__(self, role: PaneRole, parent: QWidget | None = None) -> None:
+    def __init__(self, spec: PaneSpec, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.role = role
-        title, format_label = _tab_and_format_label(role)
-        self.setObjectName(f"{role.value}Pane")
+        self.spec = spec
+        self.setObjectName(f"{spec.name}Pane")
         self.setMinimumWidth(240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         # A QWidget subclass skips stylesheet borders unless this is set.
@@ -63,18 +73,18 @@ class PaneWidget(QWidget):
         self.setAutoFillBackground(True)
 
         self.editor = CodeEditor()
-        self.editor.setObjectName(f"{role.value}Editor")
-        self.editor.setAccessibleName(f"{title} editor")
+        self.editor.setObjectName(f"{spec.name}Editor")
+        self.editor.setAccessibleName(f"{spec.title} editor")
 
         self.tab_strip = QWidget()
-        self.tab_strip.setObjectName(f"{role.value}TabStrip")
-        self._build_tab_strip(title, format_label)
+        self.tab_strip.setObjectName(f"{spec.name}TabStrip")
+        self._build_tab_strip()
 
         self.empty_overlay = self._build_empty_state()
         self.editor.attach_overlay(self.empty_overlay)
 
-        self.count_label = QLabel("Empty" if role is PaneRole.INPUT else "")
-        self.count_label.setObjectName(f"{role.value}Count")
+        self.count_label = QLabel("Empty" if spec.kind is PaneKind.SOURCE else "")
+        self.count_label.setObjectName(f"{spec.name}Count")
         self.count_label.setStyleSheet(muted_text_style())
 
         footer = self._build_footer()
@@ -85,6 +95,10 @@ class PaneWidget(QWidget):
         layout.addWidget(self.tab_strip)
         layout.addWidget(self.editor, 1)
         layout.addWidget(footer)
+
+    @property
+    def title(self) -> str:
+        return self.spec.title
 
     def sizeHint(self) -> QSize:
         return QSize(480, 520)
@@ -102,9 +116,9 @@ class PaneWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
 
-    def _build_tab_strip(self, title: str, format_label: str) -> None:
-        tab = QLabel(title)
-        tab.setObjectName(f"{self.role.value}TabTitle")
+    def _build_tab_strip(self) -> None:
+        tab = QLabel(self.spec.title)
+        tab.setObjectName(f"{self.spec.name}TabTitle")
         tab.setStyleSheet("padding: 4px 8px;")
         tab_font = ui_font()
         tab_font.setBold(True)
@@ -124,9 +138,9 @@ class PaneWidget(QWidget):
         self.new_tab_button.setFixedWidth(24)
         self.new_tab_button.setStyleSheet(muted_text_style())
 
-        format_caption = QLabel(format_label)
+        format_caption = QLabel(self.spec.format_label)
         format_caption.setStyleSheet(muted_text_style())
-        self.format_combo = self._format_combo(format_label)
+        self.format_combo = self._format_combo(self.spec.format_label)
         format_caption.setBuddy(self.format_combo)
 
         self.pop_out_button = PopOutButton()
@@ -146,33 +160,33 @@ class PaneWidget(QWidget):
 
     def _format_combo(self, accessible_name: str) -> QComboBox:
         self.format_combo = FormatComboBox()
-        self.format_combo.setObjectName(f"{self.role.value}Format")
+        self.format_combo.setObjectName(f"{self.spec.name}Format")
         self.format_combo.setAccessibleName(accessible_name)
         self.format_combo.addItems(["JSON", "YAML"])
         self.format_combo.currentTextChanged.connect(self.format_changed.emit)
         return self.format_combo
 
     def _build_empty_state(self) -> QWidget:
-        match self.role:
-            case PaneRole.INPUT:
-                return self._input_empty_state()
-            case PaneRole.OUTPUT:
-                return self._output_empty_state()
+        match self.spec.kind:
+            case PaneKind.SOURCE:
+                return self._source_empty_state()
+            case PaneKind.RESULT:
+                return self._result_empty_state()
             case _:
-                _never: Never = self.role
+                _never: Never = self.spec.kind
                 raise AssertionError(_never)
 
-    def _input_empty_state(self) -> QWidget:
+    def _source_empty_state(self) -> QWidget:
         overlay = QWidget()
-        overlay.setObjectName("emptyInput")
+        overlay.setObjectName(f"empty{self.spec.name.capitalize()}")
         overlay.setStyleSheet("background: transparent;")
         heading = QLabel("Paste JSON or YAML, or drop a file here")
-        heading.setObjectName("inputEmptyTitle")
+        heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _style_empty_heading(heading)
         hint = QLabel("⌨ ⌘V to paste · Ctrl+V on Windows")
-        hint.setObjectName("inputEmptyHint")
+        hint.setObjectName(f"{self.spec.name}EmptyHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet(muted_text_style())
 
@@ -198,13 +212,13 @@ class PaneWidget(QWidget):
         layout.addLayout(buttons)
         return overlay
 
-    def _output_empty_state(self) -> QWidget:
+    def _result_empty_state(self) -> QWidget:
         overlay = QWidget()
-        overlay.setObjectName("emptyOutput")
+        overlay.setObjectName(f"empty{self.spec.name.capitalize()}")
         overlay.setStyleSheet("background: transparent;")
         overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         heading = QLabel("Formatted output will appear here.")
-        heading.setObjectName("outputEmptyTitle")
+        heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _style_empty_heading(heading)
@@ -216,21 +230,21 @@ class PaneWidget(QWidget):
 
     def _build_footer(self) -> QWidget:
         footer = QWidget()
-        footer.setObjectName(f"{self.role.value}Footer")
+        footer.setObjectName(f"{self.spec.name}Footer")
         row = QHBoxLayout(footer)
         row.setContentsMargins(8, 2, 8, 2)
         row.setSpacing(8)
-        match self.role:
-            case PaneRole.INPUT:
-                self._add_input_footer(row)
-            case PaneRole.OUTPUT:
-                self._add_output_footer(row)
+        match self.spec.kind:
+            case PaneKind.SOURCE:
+                self._add_source_footer(row)
+            case PaneKind.RESULT:
+                self._add_result_footer(row)
             case _:
-                _never: Never = self.role
+                _never: Never = self.spec.kind
                 raise AssertionError(_never)
         return footer
 
-    def _add_input_footer(self, row: QHBoxLayout) -> None:
+    def _add_source_footer(self, row: QHBoxLayout) -> None:
         self.footer_paste_button = _link("Paste", "footerPasteButton")
         self.clear_button = _link("Clear", "clearButton")
         self.clear_button.setEnabled(False)
@@ -241,11 +255,11 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(self.count_label)
 
-    def _add_output_footer(self, row: QHBoxLayout) -> None:
+    def _add_result_footer(self, row: QHBoxLayout) -> None:
         self.footer_paste_button = None
         self.clear_button = None
-        self.options_button = _link("Options", "outputOptionsButton")
-        self.copy_button = _link("Copy", "outputCopyButton")
+        self.options_button = _link("Options", f"{self.spec.name}OptionsButton")
+        self.copy_button = _link("Copy", f"{self.spec.name}CopyButton")
         self.copy_button.setEnabled(False)
         row.addWidget(self.options_button)
         row.addStretch(1)
