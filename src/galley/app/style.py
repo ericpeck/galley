@@ -45,11 +45,14 @@ def secondary_button_style() -> str:
 
 
 def link_button_style() -> str:
-    """Footer link. Disabled links use the faded accent."""
+    """Footer link. ``accent.strong`` clears 4.5:1 on the window surface.
+
+    Disabled links use the faded accent.
+    """
     return f"""
         QPushButton {{
             background: transparent;
-            color: {ACCENT};
+            color: {ACCENT_STRONG};
             border: none;
             padding: 0 4px;
         }}

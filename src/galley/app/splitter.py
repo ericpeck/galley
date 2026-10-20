@@ -1,7 +1,7 @@
 """Input / Output splitter with a rail that reads the split ratio."""
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QBoxLayout,
     QLabel,
@@ -12,30 +12,39 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.style import muted_text_style
-from galley.app.theme import GUTTER_BG, WINDOW_BG
+from galley.app.theme import TEXT_MUTED, WINDOW_BG
 
 RAIL_WIDTH = 32
+RESET_NAME = "Reset to 50 | 50"
 
 
 class SplitterRail(QSplitterHandle):
-    """Swap and the live percent readout. Dragging still moves the split."""
+    """Reset control and the live percent readout. Dragging still moves the split."""
 
     def __init__(self, orientation: Qt.Orientation, splitter: QSplitter) -> None:
         super().__init__(orientation, splitter)
-        self.setStyleSheet(f"background: {WINDOW_BG};")
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
 
-        self.swap_button = _rail_button("⇆", "Swap", "swapButton")
+        self.reset_button = _rail_button("↔", RESET_NAME, "resetSplitButton")
+        self.reset_button.setEnabled(False)
+        self.reset_button.clicked.connect(self._reset_even)
         self.ratio_label = QLabel("50\n50")
         self.ratio_label.setObjectName("splitRatio")
         self.ratio_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ratio_label.setAccessibleName("50 / 50")
-        self.ratio_label.setStyleSheet(muted_text_style() + " font-size: 9px;")
+        self.ratio_label.setStyleSheet(muted_text_style())
+        ratio_font = self.ratio_label.font()
+        ratio_font.setPixelSize(11)
+        self.ratio_label.setFont(ratio_font)
         self.ratio_label.installEventFilter(self)
 
         self._box = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
         self._box.setSpacing(4)
         self._box.addStretch(1)
-        self._box.addWidget(self.swap_button, 0, Qt.AlignmentFlag.AlignCenter)
+        self._box.addWidget(self.reset_button, 0, Qt.AlignmentFlag.AlignCenter)
         self._box.addWidget(self.ratio_label, 0, Qt.AlignmentFlag.AlignCenter)
         self._box.addStretch(1)
         self.adapt_to_orientation()
@@ -62,6 +71,7 @@ class SplitterRail(QSplitterHandle):
         right = 100 - left
         self.ratio_label.setText(f"{left}\n{right}")
         self.ratio_label.setAccessibleName(f"{left} / {right}")
+        self.reset_button.setEnabled(left != 50)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """Reset to an even split. The spec marks this as optional."""
@@ -112,11 +122,15 @@ class PaneSplitter(QSplitter):
         if self.rail is not None:
             self.rail.refresh_ratio()
 
+    def setSizes(self, sizes: list[int]) -> None:
+        """Apply ``sizes`` and refresh the readout. ``setSizes`` emits no move."""
+        super().setSizes(sizes)
+        if self.rail is not None:
+            self.rail.refresh_ratio()
+
     def apply_even_split(self) -> None:
         """Give Input and Output the same share of the splitter."""
         self.setSizes([1, 1])
-        if self.rail is not None:
-            self.rail.refresh_ratio()
 
 
 def _rail_button(text: str, name: str, object_name: str) -> QToolButton:
@@ -127,7 +141,10 @@ def _rail_button(text: str, name: str, object_name: str) -> QToolButton:
     button.setObjectName(object_name)
     button.setAutoRaise(True)
     button.setFixedSize(24, 24)
-    button.setStyleSheet(
-        f"QToolButton {{ background: {GUTTER_BG}; border-radius: 4px; }}"
-    )
+    palette = button.palette()
+    color = QColor(TEXT_MUTED)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.ButtonText, color)
+        palette.setColor(group, QPalette.ColorRole.WindowText, color)
+    button.setPalette(palette)
     return button

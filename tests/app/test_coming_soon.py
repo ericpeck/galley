@@ -255,14 +255,19 @@ def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
 
 def test_built_actions_are_unaffected(qtbot) -> None:
     window = _show(qtbot)
-    for text in ("Show Problems", "Stack Panes", "Paste", "Undo"):
+    for text in ("Show Problems", "Stack Panes", "Paste"):
         action = _action(window, text)
         assert action.isEnabled()
         assert action.toolTip() != COMING_SOON
         assert not is_unbuilt(action)
+    undo = _action(window, "Undo")
+    assert undo.toolTip() != COMING_SOON
+    assert not is_unbuilt(undo)
+    assert not undo.isEnabled()
     editor = window.findChild(CodeEditor, "inputEditor")
     assert isinstance(editor, CodeEditor)
     qtbot.keyClicks(editor, "{}")
+    assert undo.isEnabled()
     for text in ("Format", "Convert from Python"):
         action = _action(window, text)
         assert action.isEnabled()

@@ -45,7 +45,7 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    """Editor surface: grey page, current-line band, muted line numbers."""
+    """Editor surface: white page, current-line band, muted line numbers."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,6 +65,8 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self._update_line_number_width(0)
         self._highlight_current_line()
+        # setDocumentMargin records an edit. Drop it so Undo starts disabled.
+        self.document().clearUndoRedoStacks()
 
     def line_number_color(self) -> QColor:
         """Color used for gutter numerals. This is ``text.muted``."""

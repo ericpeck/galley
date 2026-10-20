@@ -8,8 +8,9 @@ colors belong to platform chrome and are not roles here.
 from typing import Final
 
 WINDOW_BG: Final = "#F3F2F2"
-EDITOR_BG: Final = "#EAE7E7"
-GUTTER_BG: Final = "#D7D3D3"
+# White page. The gutter is one step darker so the two surfaces separate.
+EDITOR_BG: Final = "#FFFFFF"
+GUTTER_BG: Final = "#EAE7E7"
 PANE_EDGE: Final = "#7D7979"
 LINE_CURRENT: Final = "#DEDBDB"
 DIALOG_BG: Final = "#EAE9E9"
