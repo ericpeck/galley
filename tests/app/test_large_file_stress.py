@@ -191,14 +191,17 @@ def test_large_documents_are_timed(qtbot) -> None:
             _record(samples, "compare-markers", label, _elapsed(mark))
             assert len(editor.line_markers(CHANGE_MARKERS)) == editor.blockCount()
 
-        diff = _public_diff()
-        if diff is not None:
+        engine = _public_diff()
+        if engine is not None:
+            diff, load_document = engine
             compare_note = ""
             for label in _BYTES:
                 text = _document(label)
-                left = json.loads(text)
-                right = json.loads(text)
-                right["items"].insert(0, {"id": -1, "title": "inserted"})
+                edited = json.loads(text)
+                edited["items"].insert(0, {"id": -1, "title": "inserted"})
+                # Only the diff is timed; both documents are loaded first.
+                left = load_document(text, "json")
+                right = load_document(json.dumps(edited), "json")
                 _record(samples, "compare", label, _elapsed(lambda: diff(left, right)))
     finally:
         _print_timings(samples, compare_note)
@@ -483,13 +486,17 @@ def _first_block_is_colored(editor: CodeEditor) -> bool:
 
 
 def _public_diff():
-    """Return the public tree diff, or None when Compare has no engine yet."""
+    """Return ``(diff, load_document)``, or None when Compare has no engine yet.
+
+    ``diff`` compares two documents that ``load_document`` parsed and located.
+    """
     if importlib.util.find_spec("galley.core.diff") is None:
         return None
     module = importlib.import_module("galley.core.diff")
     diff = getattr(module, "diff", None)
-    if callable(diff):
-        return diff
+    load_document = getattr(module, "load_document", None)
+    if callable(diff) and callable(load_document):
+        return diff, load_document
     return None
 
 
