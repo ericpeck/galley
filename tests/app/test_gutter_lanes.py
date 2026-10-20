@@ -8,6 +8,7 @@ from galley.app.editor import (
     CHANGE_MARKERS,
     FOLD_MARKERS,
     GUTTER_LANES,
+    GUTTER_MIN_WIDTH,
     PROBLEM_MARKER,
     PROBLEM_MARKERS,
     CodeEditor,
@@ -19,7 +20,7 @@ _TEXT = "one\ntwo\nthree\nfour\nfive\n"
 
 
 class _Box(LineMarker):
-    """Fills its column with the palette's Highlight color, which is opaque."""
+    """Fills its lane with the palette's Highlight color, which is opaque."""
 
     def __init__(self) -> None:
         self.painted: list[int] = []
@@ -68,10 +69,8 @@ def _line_top(editor: CodeEditor, lineno: int) -> int:
     return int(geometry.top())
 
 
-def _column_pixels(
-    editor: CodeEditor, image: QImage, kind: str, lineno: int
-) -> set[int]:
-    left, width = editor.gutter_layout().columns[kind]
+def _lane_pixels(editor: CodeEditor, image: QImage, lane: str, lineno: int) -> set[int]:
+    left, width = editor.gutter_layout().lanes[lane]
     top = _line_top(editor, lineno)
     height = editor.fontMetrics().height()
     return {
@@ -81,64 +80,86 @@ def _column_pixels(
     }
 
 
+def _text_x(editor: CodeEditor) -> tuple[int, int, int]:
+    """Gutter width, numbers-lane left edge, and the text viewport's x."""
+    return (
+        editor.line_number_area().width(),
+        editor.gutter_layout().lanes["numbers"][0],
+        editor.viewport().geometry().x(),
+    )
+
+
 def test_lanes_are_listed_once_left_to_right() -> None:
     assert [lane.name for lane in GUTTER_LANES] == ["markers", "numbers", "fold"]
     kinds = [kind for lane in GUTTER_LANES for kind in lane.kinds]
     assert kinds == [PROBLEM_MARKERS, CHANGE_MARKERS, FOLD_MARKERS]
+    assert [lane.name for lane in GUTTER_LANES if lane.reserve] == ["markers"]
 
 
-def test_fold_and_marker_lanes_take_no_width_until_used(qtbot) -> None:
+def test_the_markers_lane_keeps_its_width_with_no_markers(qtbot) -> None:
     editor = _editor(qtbot)
     width = editor.line_number_area_width()
     layout = editor.gutter_layout()
 
-    assert layout.lanes["markers"] == (0, 0)
+    assert layout.lanes["markers"] == (0, 16)
+    assert layout.lanes["numbers"] == (16, width - 16 - 8)
     assert layout.lanes["fold"][1] == 0
-    assert layout.columns == {}
-    assert layout.lanes["numbers"] == (0, width - 8)
 
+
+def test_the_text_does_not_move_when_the_first_problem_appears(qtbot) -> None:
+    editor = _editor(qtbot)
+    clean = _text_x(editor)
+    # The digits and reserved column, not the 50 px minimum, set the width.
+    assert clean[0] > GUTTER_MIN_WIDTH
+
+    editor.set_problem_lines({1})
+    assert _text_x(editor) == clean
+
+    editor.set_problem_lines(set())
+    assert _text_x(editor) == clean
+
+
+def test_the_fold_lane_takes_no_width_until_used(qtbot) -> None:
+    editor = _editor(qtbot)
+    width = editor.line_number_area_width()
     editor.set_problem_lines({2})
-
+    editor.set_line_markers(CHANGE_MARKERS, {3: _Box()})
     assert editor.gutter_layout().lanes["fold"][1] == 0
+    assert editor.line_number_area_width() == width
+
+    editor.set_line_markers(FOLD_MARKERS, {1: _Box()})
+    assert editor.gutter_layout().lanes["fold"][1] == 16
+    assert editor.line_number_area_width() == width + 16
+
+    editor.clear_line_markers(FOLD_MARKERS)
+    assert editor.gutter_layout().lanes["fold"][1] == 0
+    assert editor.line_number_area_width() == width
 
 
-def test_a_second_marker_kind_widens_the_gutter_and_clearing_restores_it(
+def test_change_markers_share_the_column_and_draw_on_their_line(
     qtbot, scheme_palette: QPalette
 ) -> None:
     editor = _editor(qtbot)
     editor.set_problem_lines({2})
-    before = editor.line_number_area_width()
-    assert editor.line_number_area().width() == before
+    before = _text_x(editor)
     before_image = _gutter(editor)
 
     box = _Box()
     editor.set_line_markers(CHANGE_MARKERS, {4: box})
 
-    after = editor.line_number_area_width()
-    assert after > before
-    assert editor.line_number_area().width() == after
-    assert editor.viewportMargins().left() == after
-    layout = editor.gutter_layout()
-    problem_left, problem_width = layout.columns[PROBLEM_MARKERS]
-    change_left, change_width = layout.columns[CHANGE_MARKERS]
-    assert problem_left == 0
-    assert change_left == problem_left + problem_width
-    assert layout.lanes["markers"] == (0, problem_width + change_width)
-    assert layout.lanes["numbers"][0] == change_left + change_width
-
+    assert _text_x(editor) == before
+    assert editor.viewportMargins().left() == before[0]
     image = _gutter(editor)
     fill = scheme_palette.color(QPalette.ColorRole.Highlight).rgb()
     gutter = editor.gutter_color().rgb()
-    assert _column_pixels(editor, image, CHANGE_MARKERS, 4) == {fill}
-    assert _column_pixels(editor, image, CHANGE_MARKERS, 3) == {gutter}
+    assert _lane_pixels(editor, image, "markers", 4) == {fill}
+    assert _lane_pixels(editor, image, "markers", 3) == {gutter}
     assert len(box.painted) == 1
 
     editor.clear_line_markers(CHANGE_MARKERS)
 
-    assert editor.line_number_area_width() == before
-    assert editor.line_number_area().width() == before
+    assert _text_x(editor) == before
     assert editor.line_markers(CHANGE_MARKERS) == {}
-    assert CHANGE_MARKERS not in editor.gutter_layout().columns
     assert _gutter(editor) == before_image
 
 
@@ -154,27 +175,38 @@ def test_problem_markers_draw_on_their_lines(qtbot, scheme_palette: QPalette) ->
     image = _gutter(editor)
     error = error_color(scheme_palette).rgb()
     for lineno in (2, 4):
-        assert error in _column_pixels(editor, image, PROBLEM_MARKERS, lineno)
+        assert error in _lane_pixels(editor, image, "markers", lineno)
     for lineno in (1, 3, 5):
-        assert error not in _column_pixels(editor, image, PROBLEM_MARKERS, lineno)
+        assert error not in _lane_pixels(editor, image, "markers", lineno)
 
     editor.set_problem_lines(set())
 
     assert editor.problem_lines() == set()
-    assert editor.gutter_layout().lanes["markers"] == (0, 0)
+    assert editor.gutter_layout().lanes["markers"] == (0, 16)
 
 
-def test_the_first_kind_listed_wins_the_line_tint(qtbot) -> None:
+def test_a_problem_outranks_a_change_on_the_same_line(
+    qtbot, scheme_palette: QPalette
+) -> None:
     editor = _editor(qtbot)
+    width = editor.line_number_area_width()
     editor.set_problem_lines({3})
-    problems_only = editor.line_number_area_width()
-    editor.set_line_markers(CHANGE_MARKERS, {3: _Tinted(), 4: _Tinted()})
+    change = _Tinted()
+    editor.set_line_markers(CHANGE_MARKERS, {3: change, 4: change})
 
-    assert editor.line_number_area_width() == problems_only + 16
+    assert editor.line_number_area_width() == width
+    image = _gutter(editor)
+    error = error_color(scheme_palette).rgb()
+    fill = scheme_palette.color(QPalette.ColorRole.Highlight).rgb()
+    on_both = _lane_pixels(editor, image, "markers", 3)
+    assert error in on_both
+    assert fill not in on_both
+    assert _lane_pixels(editor, image, "markers", 4) == {fill}
+    assert change.painted == [_line_top(editor, 4)]
     palette = editor.palette()
     assert _tints(editor) == {
         3: PROBLEM_MARKER.line_tint(palette).rgb(),
-        4: palette.color(QPalette.ColorRole.Highlight).rgb(),
+        4: fill,
     }
 
 

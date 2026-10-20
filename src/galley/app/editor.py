@@ -32,21 +32,28 @@ FOLD_MARKERS = "fold"
 
 @dataclass(frozen=True)
 class GutterLane:
-    """One lane of the gutter. Each marker kind in ``kinds`` that has
-    markers takes one ``column_width`` column, so an empty lane takes no
-    width. The numbers lane has no kinds and gets the rest of the gutter.
+    """One lane of the gutter, one ``width`` column wide.
+
+    The kinds in ``kinds`` share the column. On each line, the first kind
+    listed that has a marker there is the one drawn. A ``reserve`` lane
+    keeps its width while it is empty, so the text does not move when the
+    first marker appears. Any other lane takes no width until one of its
+    kinds has markers. The numbers lane has no kinds and gets the rest of
+    the gutter.
     """
 
     name: str
     kinds: tuple[str, ...] = ()
-    column_width: int = _MARKER_SLOT
+    width: int = _MARKER_SLOT
+    reserve: bool = False
 
 
 # Gutter lanes, left to right, ahead of the right padding. This order is
 # also the marker priority: where kinds share a line, the first one listed
-# picks the line-number color and the line tint.
+# is drawn and picks the line-number color and the line tint. A problem
+# outranks a change, and the Changes pane still lists the change.
 GUTTER_LANES: tuple[GutterLane, ...] = (
-    GutterLane("markers", (PROBLEM_MARKERS, CHANGE_MARKERS)),
+    GutterLane("markers", (PROBLEM_MARKERS, CHANGE_MARKERS), reserve=True),
     GutterLane("numbers"),
     # Reserved for the collapse arrows in #64.
     GutterLane("fold", (FOLD_MARKERS,)),
@@ -60,7 +67,7 @@ class LineMarker:
     """What one marker kind shows on one line of the gutter."""
 
     def paint(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
-        """Draw in ``rect``, one column of this marker's lane on one line."""
+        """Draw in ``rect``, this marker's lane on one line."""
         raise NotImplementedError
 
     def number_color(self, palette: QPalette) -> QColor | None:
@@ -106,10 +113,9 @@ PROBLEM_MARKER = ProblemMarker()
 
 @dataclass(frozen=True)
 class GutterLayout:
-    """Where each lane and marker column sits, as ``(left, width)``."""
+    """Where each lane sits, as ``(left, width)``."""
 
     lanes: dict[str, tuple[int, int]]
-    columns: dict[str, tuple[int, int]]
 
 
 class LineNumberArea(QWidget):
@@ -210,7 +216,7 @@ class CodeEditor(QPlainTextEdit):
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
         measured = _GUTTER_PAD + self.fontMetrics().horizontalAdvance("9") * digits
-        measured += sum(width for _, width in self._marker_columns())
+        measured += sum(self._marker_lane_widths().values())
         return max(GUTTER_MIN_WIDTH, measured)
 
     def line_number_area(self) -> QWidget:
@@ -218,32 +224,22 @@ class CodeEditor(QPlainTextEdit):
         return self._line_numbers
 
     def gutter_layout(self, width: int | None = None) -> GutterLayout:
-        """Lanes and marker columns for a gutter ``width`` pixels wide.
+        """Lanes for a gutter ``width`` pixels wide.
 
-        Marker lanes are as wide as their columns. The numbers lane takes
-        what is left before the right padding. ``width`` defaults to the
-        gutter's current width.
+        Marker lanes take their own width, or none while unused. The
+        numbers lane takes what is left before the right padding. ``width``
+        defaults to the gutter's current width.
         """
         if width is None:
             width = self._line_numbers.width()
-        columns = dict(self._marker_columns())
-        lane_widths = {
-            lane.name: sum(columns.get(kind, 0) for kind in lane.kinds)
-            for lane in GUTTER_LANES
-        }
+        lane_widths = self._marker_lane_widths()
         lane_widths["numbers"] = max(0, width - _GUTTER_PAD - sum(lane_widths.values()))
         lanes: dict[str, tuple[int, int]] = {}
-        placed: dict[str, tuple[int, int]] = {}
         left = 0
         for lane in GUTTER_LANES:
             lanes[lane.name] = (left, lane_widths[lane.name])
-            column_left = left
-            for kind in lane.kinds:
-                if kind in columns:
-                    placed[kind] = (column_left, columns[kind])
-                    column_left += columns[kind]
             left += lane_widths[lane.name]
-        return GutterLayout(lanes, placed)
+        return GutterLayout(lanes)
 
     def line_markers(self, kind: str) -> dict[int, LineMarker]:
         """1-based lines and their ``kind`` markers."""
@@ -253,7 +249,8 @@ class CodeEditor(QPlainTextEdit):
         """Show ``markers`` (1-based line to marker) as this kind's markers.
 
         They replace the kind's previous markers. An empty mapping clears
-        the kind, and its column takes no width again.
+        the kind. A lane that is not reserved takes no width again once
+        none of its kinds has markers.
         """
         kind = _known_kind(kind)
         if markers:
@@ -349,11 +346,15 @@ class CodeEditor(QPlainTextEdit):
         numbers_left, numbers_width = layout.lanes["numbers"]
         line_height = self.fontMetrics().height()
         # Kinds in priority order, so the first marker found on a line wins.
-        active = [
-            (self._markers[kind], layout.columns[kind])
-            for kind in MARKER_KINDS
-            if kind in self._markers
+        lanes = [
+            (
+                layout.lanes[lane.name],
+                [self._markers[kind] for kind in lane.kinds if kind in self._markers],
+            )
+            for lane in GUTTER_LANES
+            if lane.kinds and layout.lanes[lane.name][1]
         ]
+        ranked = [self._markers[kind] for kind in MARKER_KINDS if kind in self._markers]
         block = self.firstVisibleBlock()
         number = block.blockNumber()
         top = int(
@@ -363,20 +364,21 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 lineno = number + 1
-                number_color = None
-                for markers, (column_left, column_width) in active:
-                    marker = markers.get(lineno)
+                for (lane_left, lane_width), kinds in lanes:
+                    marker = _first_marker(kinds, lineno)
                     if marker is None:
                         continue
                     painter.save()
                     marker.paint(
                         painter,
-                        QRect(column_left, top, column_width, line_height),
+                        QRect(lane_left, top, lane_width, line_height),
                         palette,
                     )
                     painter.restore()
-                    if number_color is None:
-                        number_color = marker.number_color(palette)
+                number_color = None
+                marker = _first_marker(ranked, lineno)
+                if marker is not None:
+                    number_color = marker.number_color(palette)
                 if number_color is None:
                     number_color = self.line_number_color()
                 painter.setPen(number_color)
@@ -453,14 +455,15 @@ class CodeEditor(QPlainTextEdit):
                     tints[lineno] = tint
         return tints
 
-    def _marker_columns(self) -> list[tuple[str, int]]:
-        """Kinds that have markers, in lane order, with their column widths."""
-        return [
-            (kind, lane.column_width)
+    def _marker_lane_widths(self) -> dict[str, int]:
+        """Width of each marker lane: reserved, in use, or 0."""
+        return {
+            lane.name: lane.width
+            if lane.reserve or any(kind in self._markers for kind in lane.kinds)
+            else 0
             for lane in GUTTER_LANES
-            for kind in lane.kinds
-            if kind in self._markers
-        ]
+            if lane.kinds
+        }
 
     def _line_band(
         self, cursor: QTextCursor, color: QColor
@@ -471,6 +474,16 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor = cursor
         selection.cursor.clearSelection()
         return selection
+
+
+def _first_marker(
+    ranked: list[dict[int, LineMarker]], lineno: int
+) -> LineMarker | None:
+    for markers in ranked:
+        marker = markers.get(lineno)
+        if marker is not None:
+            return marker
+    return None
 
 
 def _known_kind(kind: str) -> str:
