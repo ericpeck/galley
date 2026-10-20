@@ -256,13 +256,15 @@ def test_icon_only_toolbar_buttons_have_tooltips(qtbot) -> None:
         assert len(buttons) == 1, name
         button = buttons[0]
         assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-        assert button.accessibleName() == name
         assert not button.icon().isNull()
         action = button.defaultAction()
         assert isinstance(action, QAction)
         if is_unbuilt(action):
-            assert button.toolTip() == COMING_SOON
+            label = f"{name} — coming soon"
+            assert button.toolTip() == label
+            assert button.accessibleName() == label
         else:
+            assert button.accessibleName() == name
             assert button.toolTip()
             assert button.toolTip() != COMING_SOON
 

@@ -2,9 +2,11 @@
 
 Secondary buttons give up their labels before any of them leave the row.
 A label that does not fit becomes icon-only: the accessible name and the
-tooltip stay the action text. If the row is still too narrow, trailing
-buttons move into the » menu and keep the same actions. Format stays at
-the right edge, outside that menu.
+tooltip stay the action text. An unbuilt icon-only button keeps its name
+in both, as "Name — coming soon". If the row is still too narrow, trailing
+controls move into the » menu and keep the same actions. The indent size
+picker becomes an Indent size submenu there. Format stays at the right
+edge, outside that menu.
 """
 
 from dataclasses import dataclass
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QKeySequence,
     QPainter,
     QPaintEvent,
@@ -48,6 +51,10 @@ _CLUSTER_GAP = 8
 _OVERFLOW_GAP = 4
 _FORMAT_GAP = 12
 _OVERFLOW_TEXT = "»"
+_MENU_INDICATOR_STYLE = (
+    "QToolButton::menu-indicator { image: none; width: 0px; height: 0px; }"
+)
+_INDENT_CHOICES = ("2 spaces", "4 spaces", "Tab")
 
 
 @dataclass
@@ -94,8 +101,10 @@ class MainToolbar(QWidget):
         self._overflow.setAccessibleName("More actions")
         self._overflow.setToolTip("More actions")
         self._overflow.setAutoRaise(True)
+        self._overflow.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self._overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._overflow.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._overflow.setStyleSheet(_MENU_INDICATOR_STYLE)
         self._menu = QMenu(self._overflow)
         self._menu.setObjectName("toolbarOverflowMenu")
         self._menu.setStyleSheet(menu_style())
@@ -105,7 +114,9 @@ class MainToolbar(QWidget):
         indent.setObjectName("indentSize")
         indent.setAccessibleName("Indent size")
         indent.setToolTip("Indent size")
-        indent.addItems(["2 spaces", "4 spaces", "Tab"])
+        indent.addItems(list(_INDENT_CHOICES))
+        self._indent = indent
+        self._indent_menu = self._build_indent_menu()
 
         tray = _UndoRedoTray()
         tray_row = QHBoxLayout(tray)
@@ -272,6 +283,10 @@ class MainToolbar(QWidget):
         self._overflow.setVisible(overflow_shown)
         if overflow_shown:
             self._overflow.setFixedWidth(self._overflow_width)
+            previous = self._tab_before_overflow(shown)
+            if previous is not None:
+                QWidget.setTabOrder(previous, self._overflow)
+            QWidget.setTabOrder(self._overflow, self._format_button)
         self._column.setFixedWidth(self._format_width)
         self._sync_menu(hidden_ids)
 
@@ -282,8 +297,45 @@ class MainToolbar(QWidget):
         for control in self._controls:
             if id(control) not in hidden_ids:
                 continue
+            if control.widget is self._indent:
+                menu.addMenu(self._indent_menu)
+                continue
             for action in control.actions:
                 menu.addAction(action)
+
+    def _build_indent_menu(self) -> QMenu:
+        menu = QMenu("Indent size", self)
+        menu.setObjectName("indentSizeMenu")
+        menu.setStyleSheet(menu_style())
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for label in _INDENT_CHOICES:
+            choice = menu.addAction(label)
+            choice.setCheckable(True)
+            group.addAction(choice)
+            choice.triggered.connect(
+                lambda checked=False, text=label: self._choose_indent(text)
+            )
+        self._indent_menu = menu
+        self._indent.currentTextChanged.connect(self._sync_indent_checks)
+        self._sync_indent_checks(self._indent.currentText())
+        return menu
+
+    def _choose_indent(self, text: str) -> None:
+        self._indent.setCurrentText(text)
+
+    def _sync_indent_checks(self, text: str) -> None:
+        for action in self._indent_menu.actions():
+            action.setChecked(action.text() == text)
+
+    def _tab_before_overflow(self, shown: dict[int, bool]) -> QWidget | None:
+        for control in reversed(self._controls):
+            if not shown[id(control)]:
+                continue
+            found = _last_tab_stop(control.widget)
+            if found is not None:
+                return found
+        return None
 
     def _hidden_ids(self, hidden: int) -> set[int]:
         if hidden <= 0:
@@ -331,6 +383,17 @@ def _buttons(widget: QWidget) -> tuple[tuple[QToolButton, QAction], ...]:
     return tuple(paired)
 
 
+def _unbuilt_icon_label(action: QAction) -> str:
+    return f"{action.text()} — coming soon"
+
+
+def _coming_soon_host(button: QToolButton) -> QWidget | None:
+    host = button.parentWidget()
+    if host is not None and host.property("comingSoonHost") is True:
+        return host
+    return None
+
+
 def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
     icon = toolbar_icon(action.text(), pad=not icon_only)
     if not icon.isNull():
@@ -338,13 +401,25 @@ def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
         button.setIcon(icon)
     if icon_only:
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        button.setAccessibleName(action.text())
     elif not icon.isNull():
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     else:
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    host = _coming_soon_host(button)
+    if is_unbuilt(action) and icon_only:
+        label = _unbuilt_icon_label(action)
+        button.setAccessibleName(label)
+        button.setToolTip(label)
+        if host is not None:
+            host.setToolTip(label)
+            host.setAccessibleName(label)
+        return
+    button.setAccessibleName(action.text() if icon_only else "")
     if is_unbuilt(action):
         button.setToolTip(COMING_SOON)
+        if host is not None:
+            host.setToolTip(COMING_SOON)
+            host.setAccessibleName("")
     elif icon_only and action.text() not in _ICON_ONLY:
         button.setToolTip(action.text())
     elif icon_only:
@@ -353,6 +428,30 @@ def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
         button.setToolTip(tip)
     else:
         button.setToolTip("")
+
+
+def _takes_tab(widget: QWidget) -> bool:
+    return (
+        widget.isVisible()
+        and widget.isEnabled()
+        and bool(widget.focusPolicy() & Qt.FocusPolicy.TabFocus)
+    )
+
+
+def _last_tab_stop(widget: QWidget) -> QWidget | None:
+    candidate = widget if _takes_tab(widget) else None
+    layout = widget.layout()
+    if layout is None:
+        return candidate
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        child = item.widget() if item is not None else None
+        if child is None or not child.isVisible():
+            continue
+        nested = _last_tab_stop(child)
+        if nested is not None:
+            candidate = nested
+    return candidate
 
 
 def _natural_width(widget: QWidget) -> int:
