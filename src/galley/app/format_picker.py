@@ -17,14 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.theme import contrast_ratio
+
 _MIN_CONTRAST = 4.5
-
-
-def contrast_ratio(foreground: QColor, background: QColor) -> float:
-    """WCAG relative-luminance contrast of two opaque colors."""
-    lighter = max(_luminance(foreground), _luminance(background))
-    darker = min(_luminance(foreground), _luminance(background))
-    return (lighter + 0.05) / (darker + 0.05)
 
 
 def closed_field_colors(picker: QComboBox) -> tuple[QColor, QColor]:
@@ -214,18 +209,3 @@ def _group(widget: QWidget) -> QPalette.ColorGroup:
     if not widget.isEnabled():
         return QPalette.ColorGroup.Disabled
     return widget.palette().currentColorGroup()
-
-
-def _luminance(color: QColor) -> float:
-    return (
-        0.2126 * _channel(color.red())
-        + 0.7152 * _channel(color.green())
-        + 0.0722 * _channel(color.blue())
-    )
-
-
-def _channel(value: int) -> float:
-    srgb = value / 255
-    if srgb <= 0.04045:
-        return srgb / 12.92
-    return ((srgb + 0.055) / 1.055) ** 2.4

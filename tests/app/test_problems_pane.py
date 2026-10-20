@@ -1,17 +1,33 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
 from PySide6.QtCore import QPoint, Qt, QtMsgType, qInstallMessageHandler
-from PySide6.QtGui import QAction, QColor, QKeySequence
-from PySide6.QtWidgets import QComboBox, QListWidget, QPushButton, QSplitter
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QImage,
+    QKeySequence,
+    QPalette,
+    QPixmap,
+    QRegion,
+)
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QSplitter,
+    QWidget,
+)
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
-from galley.app.problem_text import display_problem
+from galley.app.problem_text import DisplayProblem, display_problem
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import problems_settings
 from galley.app.status_message import StatusMessage
+from galley.app.style import muted_text_style
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import ERROR
+from galley.app.theme import ERROR, selected_problem_palette
 from galley.core.problems import Problem
 
 _MISSING = '{\n  "price": 4.5\n  "qty": 3\n}\n'
@@ -292,15 +308,281 @@ def test_pane_hides_once_the_input_is_fixed(qtbot) -> None:
     assert '"price"' in output.toPlainText()
 
 
-def _has_error_pixel(image) -> bool:
-    target = QColor(ERROR)
+def _show_pane_alone(qtbot) -> ProblemsPane:
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.resize(320, 300)
+    pane.set_problems(
+        (
+            display_problem(Problem("yaml_tab", 3)),
+            display_problem(Problem("yaml_tab", 5)),
+        )
+    )
+    pane.show()
+    qtbot.waitExposed(pane)
+    return pane
+
+
+def test_list_items_paint_no_text_under_the_rows(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    item = problems.item(0)
+    assert item.isSelected()
+    assert item.text() == "Line 3: Starts with a tab. YAML needs spaces for indenting."
+    rect = problems.visualItemRect(item)
+    viewport = problems.viewport()
+    pixmap = QPixmap(viewport.size())
+    pixmap.fill(QColor("#123456"))
+    # Leave out the row widgets so only the list's own painting shows.
+    viewport.render(pixmap, QPoint(), QRegion(), QWidget.RenderFlag(0))
+    image = pixmap.toImage().copy(rect)
+    assert _colors(image) == {QColor("#123456").rgb()}
+
+
+def test_selection_bar_stays_on_the_row_not_its_labels(qtbot, scheme_palette) -> None:
+    pane = _show_pane_alone(qtbot)
+    window = scheme_palette.color(QPalette.ColorRole.Window)
+    problems = pane.list_widget()
+    selected = problems.itemWidget(problems.item(0))
+    other = problems.itemWidget(problems.item(1))
+    assert selected is not None and other is not None
+
+    image = selected.grab().toImage()
+    bar = image.pixelColor(0, image.height() // 2)
+    assert _contrast(_seen(bar, window), window) >= 3
+    other_image = other.grab().toImage()
+    other_bar = other_image.pixelColor(0, other_image.height() // 2)
+    assert _contrast(_seen(other_bar, window), window) < 3
+
+    labels = selected.findChildren(QLabel)
+    assert len(labels) == 3
+    assert "problemMarker" in {label.objectName() for label in labels}
+    for label in labels:
+        assert label.contentsMargins().left() == 0
+        assert not _has_pixel(image.copy(label.geometry()), bar, 4)
+
+
+def test_the_selected_row_reads_in_light_and_dark(qtbot, scheme_palette) -> None:
+    pane = _show_pane_alone(qtbot)
+    window = scheme_palette.color(QPalette.ColorRole.Window)
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    _tab_into(qtbot, pane)
+
+    # The row grab is what users see: alpha text already blended on the fill.
+    image = row.grab().toImage()
+    fill = image.pixelColor(image.width() - 4, image.height() - 4)
+    tint = selected_problem_palette(row.palette()).color(QPalette.ColorRole.Highlight)
+    assert _near(fill, tint)
+    outline = image.pixelColor(image.width() // 2, 0)
+    bar = image.pixelColor(0, image.height() // 2)
+    for edge in (outline, bar):
+        assert _contrast(edge, window) >= 3
+        assert _contrast(edge, fill) >= 3
+    texts = [
+        label
+        for label in row.findChildren(QLabel)
+        if label.objectName() != "problemMarker"
+    ]
+    assert len(texts) == 2
+    for label in texts:
+        glyphs = image.copy(label.geometry())
+        assert _strongest_contrast(glyphs, fill) >= 4.5
+
+
+def test_unselected_rows_keep_the_muted_message_color(qtbot, scheme_palette) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    other = problems.itemWidget(problems.item(1))
+    assert other is not None
+    message = [label for label in other.findChildren(QLabel) if label.wordWrap()]
+    assert len(message) == 1
+    assert message[0].styleSheet() == muted_text_style()
+
+
+def test_the_minimized_strip_stylesheet_parses(qtbot, qtlog) -> None:
+    pane = _show_pane_alone(qtbot)
+    pane.set_minimized(True)
+    strip = pane.findChild(QPushButton, "problemsStrip")
+    assert isinstance(strip, QPushButton)
+    strip.resize(28, 200)
+    qtbot.waitUntil(strip.isVisible)
+    image = strip.grab().toImage()
+    assert _near(image.pixelColor(2, 2), QColor(ERROR))
+    assert not [
+        record
+        for record in qtlog.records
+        if "Could not parse stylesheet" in record.message
+    ]
+
+
+def test_the_focused_list_outlines_the_current_row(qtbot, scheme_palette) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    first = problems.itemWidget(problems.item(0))
+    second = problems.itemWidget(problems.item(1))
+    assert first is not None and second is not None
+    assert not _outlined(first)
+
+    _tab_into(qtbot, pane)
+    assert _outlined(first)
+    assert not _outlined(second)
+
+    qtbot.keyClick(problems, Qt.Key.Key_Down)
+    assert not _outlined(first)
+    assert _outlined(second)
+
+    pane.minimize_button().setFocus()
+    qtbot.waitUntil(lambda: not problems.hasFocus())
+    assert not _outlined(first)
+    assert not _outlined(second)
+
+
+def test_the_outline_shows_for_keyboard_focus_only(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    first = problems.itemWidget(problems.item(0))
+    second = problems.itemWidget(problems.item(1))
+    assert first is not None and second is not None
+
+    _tab_into(qtbot, pane)
+    assert _outlined(first)
+
+    # A click on the focused list hides it.
+    qtbot.mouseClick(second, Qt.MouseButton.LeftButton)
+    assert problems.currentItem() is problems.item(1)
+    assert not _outlined(first) and not _outlined(second)
+
+    # So does a click that moves focus into the list.
+    pane.close_button().setFocus()
+    qtbot.waitUntil(lambda: not problems.hasFocus())
+    qtbot.mouseClick(first, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(problems.hasFocus)
+    assert not _outlined(first) and not _outlined(second)
+
+    # Tab after a click brings it back.
+    _tab_into(qtbot, pane)
+    assert _outlined(first)
+
+
+def _tab_into(qtbot, pane: ProblemsPane) -> None:
+    """Move focus to the close button, then Tab into the problem list."""
+    problems = pane.list_widget()
+    pane.close_button().setFocus()
+    qtbot.waitUntil(pane.close_button().hasFocus)
+    qtbot.keyClick(pane.close_button(), Qt.Key.Key_Tab)
+    qtbot.waitUntil(problems.hasFocus)
+
+
+def test_the_list_paints_no_text_while_focused(qtbot) -> None:
+    pane = _show_pane_alone(qtbot)
+    problems = pane.list_widget()
+    _tab_into(qtbot, pane)
+    item = problems.currentItem()
+    viewport = problems.viewport()
+    pixmap = QPixmap(viewport.size())
+    pixmap.fill(QColor("#123456"))
+    viewport.render(pixmap, QPoint(), QRegion(), QWidget.RenderFlag(0))
+    image = pixmap.toImage().copy(problems.visualItemRect(item))
+    assert _colors(image) == {QColor("#123456").rgb()}
+
+
+def test_a_rewrapped_row_has_no_gap_under_the_line_number(qtbot) -> None:
+    message = (
+        "Line 3 starts with a tab. YAML needs spaces for indenting, "
+        "so replace the tab before formatting again."
+    )
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.resize(320, 400)
+    pane.set_problems((DisplayProblem(3, message, f"Line 3: {message}", "yaml_tab"),))
+    pane.show()
+    qtbot.waitExposed(pane)
+    pane.resize(520, 400)
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    qtbot.waitUntil(lambda: row.width() > 400)
+
+    line, text = (
+        label
+        for label in row.findChildren(QLabel)
+        if label.objectName() != "problemMarker"
+    )
+    assert line.height() == line.sizeHint().height()
+    assert text.geometry().top() == line.geometry().bottom() + 1
+    assert row.height() == max(row.heightForWidth(row.width()), 56)
+
+
+def _outlined(row: QWidget) -> bool:
+    """The top edge stands out 3:1 from the window, as an outline must."""
+    window = row.palette().color(QPalette.ColorRole.Window)
+    image = row.grab().toImage()
+    top = _seen(image.pixelColor(image.width() // 2, 0), window)
+    return _contrast(top, window) >= 3
+
+
+def _seen(color: QColor, background: QColor) -> QColor:
+    """``color`` blended over ``background``, as it appears on screen."""
+    alpha = color.alphaF()
+    return QColor(
+        round(color.red() * alpha + background.red() * (1 - alpha)),
+        round(color.green() * alpha + background.green() * (1 - alpha)),
+        round(color.blue() * alpha + background.blue() * (1 - alpha)),
+    )
+
+
+def _luminance(color: QColor) -> float:
+    def channel(value: int) -> float:
+        srgb = value / 255
+        if srgb <= 0.04045:
+            return srgb / 12.92
+        return ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.red())
+        + 0.7152 * channel(color.green())
+        + 0.0722 * channel(color.blue())
+    )
+
+
+def _contrast(first: QColor, second: QColor) -> float:
+    lighter = max(_luminance(first), _luminance(second))
+    darker = min(_luminance(first), _luminance(second))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _strongest_contrast(image: QImage, background: QColor) -> float:
+    """Contrast of the glyph pixel that stands out most from the fill."""
+    return max(
+        _contrast(image.pixelColor(x, y), background)
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+
+
+def _colors(image: QImage) -> set[int]:
+    return {
+        image.pixel(x, y) for y in range(image.height()) for x in range(image.width())
+    }
+
+
+def _has_pixel(image: QImage, target: QColor, tolerance: int = 16) -> bool:
     for y in range(image.height()):
         for x in range(image.width()):
-            color = image.pixelColor(x, y)
-            if (
-                abs(color.red() - target.red()) < 16
-                and abs(color.green() - target.green()) < 16
-                and abs(color.blue() - target.blue()) < 16
-            ):
+            if _near(image.pixelColor(x, y), target, tolerance):
                 return True
     return False
+
+
+def _near(color: QColor, target: QColor, tolerance: int = 8) -> bool:
+    return (
+        abs(color.red() - target.red()) <= tolerance
+        and abs(color.green() - target.green()) <= tolerance
+        and abs(color.blue() - target.blue()) <= tolerance
+    )
+
+
+def _has_error_pixel(image: QImage) -> bool:
+    return _has_pixel(image, QColor(ERROR))
