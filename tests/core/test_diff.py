@@ -18,7 +18,7 @@ from ruamel.yaml.constructor import ConstructorError, DuplicateKeyError
 from galley.core.diff import (
     SUMMARY_LIMIT,
     Change,
-    ParsedDocument,
+    Doc,
     Span,
     Summary,
     _yaml_document,
@@ -30,7 +30,7 @@ from galley.core.format import _clib_available
 from galley.core.problems import classify_failure
 
 
-def _json(value: object) -> ParsedDocument:
+def _json(value: object) -> Doc:
     return load_document(json.dumps(value, indent=2), "json")
 
 
@@ -40,7 +40,7 @@ def _changes(left: object, right: object) -> list[tuple[str, str]]:
     ]
 
 
-def _only(left: ParsedDocument, right: ParsedDocument) -> Change:
+def _only(left: Doc, right: Doc) -> Change:
     changes = diff(left, right)
     assert len(changes) == 1, changes
     return changes[0]
@@ -298,20 +298,43 @@ def test_yaml_tags_compare_by_resolved_value(yaml_text: str, json_text: str) -> 
     )
 
 
-def test_yaml_date_against_json_string_is_changed() -> None:
+def test_yaml_dates_and_binary_load_as_json_strings() -> None:
+    left = load_document(
+        "d: 2026-10-18\nt: 2026-10-18 09:30:00\nb: !!binary aGk=\n", "yaml"
+    )
+    right = load_document(
+        '{"d": "2026-10-18", "t": "2026-10-18T09:30:00", "b": "aGk="}', "json"
+    )
+    assert diff(left, right) == []
+
+
+def test_yaml_date_against_another_date_is_a_string_change() -> None:
     change = _only(
         load_document("d: 2026-10-18\n", "yaml"),
-        load_document('{"d": "2026-10-18"}', "json"),
+        load_document('{"d": "2026-10-19"}', "json"),
     )
-    assert change.kind == "changed"
-    assert change.old == Summary("date", "2026-10-18")
-    assert change.new == Summary("string", '"2026-10-18"')
+    assert change.old == Summary("string", '"2026-10-18"')
+    assert change.new == Summary("string", '"2026-10-19"')
 
 
 def test_yaml_non_string_keys_compare_as_text() -> None:
     left = load_document("1: a\ntrue: b\nnull: c\n", "yaml")
     right = load_document('{"1": "a", "true": "b", "null": "c"}', "json")
     assert diff(left, right) == []
+
+
+def test_json_against_yaml_with_changes() -> None:
+    left = load_document(
+        '{"name": "Ada", "tags": ["x", "y"], "age": 36, "admin": false}', "json"
+    )
+    right = load_document("age: 37\nname: Ada\ntags: [x]\nteam: core\n", "yaml")
+    # "team" follows "tags" on the right, so it sits after the tags changes.
+    assert [(c.kind, c.path_text) for c in diff(left, right)] == [
+        ("removed", "tags[1]"),
+        ("added", "team"),
+        ("changed", "age"),
+        ("removed", "admin"),
+    ]
 
 
 def test_json_against_equivalent_yaml() -> None:
@@ -454,6 +477,25 @@ def test_moved_sits_where_the_left_value_was() -> None:
         ("moved", "a.x"),
         ("changed", "last"),
     ]
+
+
+def test_yaml_merged_keys_sort_by_their_merge_line() -> None:
+    # Merged keys come first in the loaded mapping, but "<<" is below "y".
+    left = load_document("base: &b {x: 1, z: 1}\nm:\n  y: 3\n  <<: *b\n", "yaml")
+    right = _json({"base": {"x": 1, "z": 1}, "m": {"x": 5, "y": 4, "z": 1}})
+    changes = diff(left, right)
+    assert [change.path_text for change in changes] == ["m.y", "m.x"]
+    assert [change.left_span for change in changes] == [
+        Span(3, 3, 3, 7),
+        Span(4, 3, 4, 9),
+    ]
+
+
+def test_order_is_stable() -> None:
+    left = _json({"a": [1, 2, {"b": 3}], "c": {"d": 4}, "e": 5, "f": {"g": 1}})
+    right = _json({"h": 1, "e": 6, "c": {"d": 7}, "a": [1, 9], "g": {"g": 1}})
+    first = diff(left, right)
+    assert all(diff(left, right) == first for _ in range(5))
 
 
 def test_left_spans_are_in_document_order() -> None:
@@ -649,17 +691,17 @@ def test_yaml_past_max_depth_is_an_input_error() -> None:
 
 
 def test_diff_past_max_depth_is_an_input_error_not_a_recursion_error() -> None:
-    deep = ParsedDocument(_nested(MAX_DEPTH + 5), "json")
+    deep = Doc(_nested(MAX_DEPTH + 5), "json")
     with pytest.raises(InputError) as caught:
-        diff(deep, ParsedDocument(_nested(MAX_DEPTH + 5), "json"))
+        diff(deep, Doc(_nested(MAX_DEPTH + 5), "json"))
     assert caught.value.kind == "too_deep"
     assert caught.value.details == {"depth": MAX_DEPTH + 1}
 
 
 def test_moved_hash_past_max_depth_is_an_input_error() -> None:
     deep = _nested(MAX_DEPTH + 5)
-    left = ParsedDocument({"a": {"x": deep}, "b": {}}, "json")
-    right = ParsedDocument({"a": {}, "b": {"x": deep}}, "json")
+    left = Doc({"a": {"x": deep}, "b": {}}, "json")
+    right = Doc({"a": {}, "b": {"x": deep}}, "json")
     with pytest.raises(InputError) as caught:
         diff(left, right)
     assert caught.value.kind == "too_deep"
@@ -737,7 +779,7 @@ def test_changes_and_documents_pickle() -> None:
     [
         _YAML_TEXT,
         "a: &a {x: [1, 2]}\nb: *a\nc:\n  <<: *a\n  y: 3\n",
-        "a: 2026-10-18\nb: !!binary aGk=\nc: 1.5\nd: ~\ne: 'q'\n",
+        "c: 1.5\nd: ~\ne: 'q'\nf: !!int '7'\n",
         "- [1, 2]\n- {a: b}\n- |\n  text\n",
     ],
 )

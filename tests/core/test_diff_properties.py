@@ -11,7 +11,7 @@ from dataclasses import replace
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from galley.core.diff import Change, ParsedDocument, diff, load_document
+from galley.core.diff import Change, Doc, diff, load_document
 
 _SETTINGS = settings(max_examples=150, deadline=None)
 
@@ -51,7 +51,7 @@ def _moved_pairs(draw: st.DrawFn) -> tuple[object, object]:
 _PAIRS = st.one_of(st.tuples(_VALUES, _VALUES), _moved_pairs())
 
 
-def _load(value: object) -> ParsedDocument:
+def _load(value: object) -> Doc:
     return load_document(json.dumps(value, indent=2), "json")
 
 
@@ -102,7 +102,7 @@ def test_a_document_equals_itself(value: object) -> None:
 @_SETTINGS
 @given(_VALUES)
 def test_a_value_equals_itself_without_spans(value: object) -> None:
-    assert diff(ParsedDocument(value, "json"), ParsedDocument(value, "json")) == []
+    assert diff(Doc(value, "json"), Doc(value, "json")) == []
 
 
 @_SETTINGS
@@ -173,7 +173,12 @@ def test_a_unique_subtree_under_a_new_parent_is_moved(
     pair: tuple[object, object],
 ) -> None:
     left, right = pair
-    moved = [c for c in diff(_load(left), _load(right)) if c.kind == "moved"]
+    # Other edits in "rest" may also move a value, so count only this one.
+    moved = [
+        c
+        for c in diff(_load(left), _load(right))
+        if c.kind == "moved" and c.path[0] in {"from", "to"}
+    ]
     assert len(moved) == 1
     target = moved[0].moved_to
     assert target is not None

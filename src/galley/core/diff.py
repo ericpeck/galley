@@ -15,6 +15,9 @@ Value rules:
 - ``null`` is a value, so a key holding ``null`` is not a missing key.
 - NaN equals NaN. A document that contains ``.nan`` (YAML) or ``NaN`` (JSON)
   compares equal to itself.
+- Both formats load to one tree of dict, list, str, int, float, bool, and
+  None, so JSON compares against YAML. YAML dates and timestamps become
+  their ISO 8601 text, and ``!!binary`` becomes its base64 text.
 - YAML anchors, aliases, merge keys, and tags compare by their resolved
   values. ``!!set`` compares as a mapping whose values are ``null``, and
   ``!!omap`` and ``!!pairs`` compare as the list of one-key mappings they are
@@ -25,6 +28,7 @@ change when the two values are equal, no other Removed or Added value is
 equal to them, and their parents differ.
 """
 
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -113,7 +117,7 @@ class Summary:
     """A short view of one value.
 
     ``type`` is ``object``, ``array``, ``string``, ``number``, ``boolean``,
-    ``null``, ``date``, ``timestamp``, or ``binary``. ``text`` is compact
+    or ``null``. ``text`` is compact
     JSON-style text, at most ``SUMMARY_LIMIT`` characters, ending in "…"
     when it was cut.
     """
@@ -145,11 +149,11 @@ class Change:
 
 
 @dataclass(frozen=True)
-class ParsedDocument:
+class Doc:
     """A parsed document plus the span of every value that has one.
 
-    ``value`` uses dict, list, str, int, float, bool, and None, plus date,
-    datetime, and bytes from YAML. Object keys are str. ``spans`` maps a
+    ``value`` uses dict, list, str, int, float, bool, and None. Object keys
+    are str. ``spans`` maps a
     path to its span. A path inside an alias or a merged mapping has no
     entry; ``diff`` then uses the nearest enclosing span.
     """
@@ -159,7 +163,7 @@ class ParsedDocument:
     spans: dict[Path, Span] = field(default_factory=dict)
 
 
-def load_document(text: str | bytes, source: str) -> ParsedDocument:
+def load_document(text: str | bytes, source: str) -> Doc:
     """Parse ``text`` as ``source`` (``json`` or ``yaml``) and locate its values.
 
     Errors match ``format_document`` for the same text: ``InputError`` for
@@ -171,10 +175,12 @@ def load_document(text: str | bytes, source: str) -> ParsedDocument:
     return _load_yaml(text)
 
 
-def diff(left: ParsedDocument, right: ParsedDocument) -> list[Change]:
+def diff(left: Doc, right: Doc) -> list[Change]:
     """Return the differences from ``left`` to ``right``.
 
-    Changes come in left-document order. An Added key sits after its
+    Changes are sorted by left start position, and the order is stable
+    for the same input. Siblings are visited in span order, so the walk
+    itself yields that order. An Added key sits after its
     nearest left neighbour: the closest key before it in the right object
     that the left object also has, after any changes inside that key. With
     no such key it comes first in its object. Extra array items sit at the
@@ -191,7 +197,7 @@ def diff(left: ParsedDocument, right: ParsedDocument) -> list[Change]:
 # --- JSON ---------------------------------------------------------------
 
 
-def _load_json(text: str | bytes) -> ParsedDocument:
+def _load_json(text: str | bytes) -> Doc:
     source = _decode_json(text)
     value = _json_fast_value(source)
     if value is _CHARACTER_WALK:
@@ -200,7 +206,7 @@ def _load_json(text: str | bytes) -> ParsedDocument:
             value = json.loads(source)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
-    return ParsedDocument(value, "json", _json_spans(source))
+    return Doc(value, "json", _json_spans(source))
 
 
 def _json_spans(text: str) -> dict[Path, Span]:
@@ -271,7 +277,7 @@ def _json_key(token: str) -> str:
 # --- YAML ---------------------------------------------------------------
 
 
-def _load_yaml(text: str | bytes) -> ParsedDocument:
+def _load_yaml(text: str | bytes) -> Doc:
     """Load YAML with the same C-or-pure choice ``format_yaml`` makes."""
     source = _decode_yaml(text)
     if _clib_available():
@@ -297,12 +303,12 @@ def _decode_yaml(text: str | bytes) -> str:
     return text
 
 
-def _yaml_document(text: str, *, pure: bool) -> ParsedDocument:
+def _yaml_document(text: str, *, pure: bool) -> Doc:
     yaml = _safe_yaml(pure=pure)
     builder = _YamlBuilder(yaml, text)
     for event in yaml.parse(text):
         builder.feed(event)
-    return ParsedDocument(builder.root, "yaml", builder.spans)
+    return Doc(builder.root, "yaml", builder.spans)
 
 
 class _YamlFrame:
@@ -403,7 +409,7 @@ class _YamlBuilder:
         if tag == _STR_TAG:
             value: object = event.value
         else:
-            value = _scalar_value(self.yaml, event)
+            value = _plain_scalar(_scalar_value(self.yaml, event))
         if event.anchor:
             self.anchors[event.anchor] = value
         self.attach(value, start, end, event.start_mark)
@@ -586,6 +592,15 @@ def _merge_sources(
     )
 
 
+def _plain_scalar(value: object) -> object:
+    """Return a YAML-only scalar as the JSON value it is written as."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return base64.b64encode(value).decode("ascii")
+    return value
+
+
 def _key_text(key: object) -> str:
     """Return a mapping key as text, the way ``json.dumps`` writes keys."""
     if isinstance(key, str):
@@ -600,7 +615,7 @@ def _key_text(key: object) -> str:
 # --- Walk ---------------------------------------------------------------
 
 
-def _walk(left: ParsedDocument, right: ParsedDocument) -> list[list[object]]:
+def _walk(left: Doc, right: Doc) -> list[list[object]]:
     """Compare two trees on an explicit stack, in left-document order.
 
     Each entry is ``[kind, path, old, new, moved_to]``. A job's path length
@@ -619,7 +634,7 @@ def _walk(left: ParsedDocument, right: ParsedDocument) -> list[list[object]]:
             continue
         if isinstance(old, dict) and isinstance(new, dict):
             _check_depth(path, left)
-            stack.extend(reversed(_object_jobs(old, new, path)))
+            stack.extend(reversed(_object_jobs(old, new, path, left.spans)))
         elif isinstance(old, list) and isinstance(new, list):
             _check_depth(path, left)
             stack.extend(reversed(_array_jobs(old, new, path)))
@@ -628,16 +643,19 @@ def _walk(left: ParsedDocument, right: ParsedDocument) -> list[list[object]]:
     return found
 
 
-def _check_depth(path: Path, document: ParsedDocument) -> None:
+def _check_depth(path: Path, document: Doc) -> None:
     if len(path) >= MAX_DEPTH:
         raise _too_deep(len(path) + 1, path, document.spans)
 
 
 def _object_jobs(
-    old: dict[object, object], new: dict[object, object], path: Path
+    old: dict[object, object],
+    new: dict[object, object],
+    path: Path,
+    spans: dict[Path, Span],
 ) -> list[tuple[object, object, Path]]:
-    """Order members: left keys in left order, right-only keys after the
-    left key that precedes them on the right."""
+    """Order members: left keys by left start position, and right-only keys
+    after the left key that precedes them on the right."""
     added_after: dict[object, list[object]] = {}
     anchor: object = _FIRST
     for key in new:
@@ -648,12 +666,36 @@ def _object_jobs(
     jobs: list[tuple[object, object, Path]] = []
     for key in added_after.get(_FIRST, ()):
         jobs.append((_MISSING, new[key], (*path, _segment(key))))
-    for key, value in old.items():
-        jobs.append((value, new.get(key, _MISSING), (*path, _segment(key))))
+    for key in _keys_by_position(old, path, spans):
+        jobs.append((old[key], new.get(key, _MISSING), (*path, _segment(key))))
         if added_after:
             for extra in added_after.get(key, ()):
                 jobs.append((_MISSING, new[extra], (*path, _segment(extra))))
     return jobs
+
+
+def _keys_by_position(
+    mapping: dict[object, object], path: Path, spans: dict[Path, Span]
+) -> list[object]:
+    """Return the keys sorted by span start, or in dict order without spans.
+
+    Dict order is already document order except where a YAML merge key or a
+    duplicate JSON key places a key elsewhere. Keys inside an alias have no
+    spans and keep dict order. The sort is stable.
+    """
+    keys = list(mapping)
+    if not spans or len(keys) < 2:
+        return keys
+    starts: list[tuple[int, int]] = []
+    for key in keys:
+        span = spans.get((*path, _segment(key)))
+        if span is None:
+            return keys
+        starts.append((span.line, span.column))
+    if all(starts[index] <= starts[index + 1] for index in range(len(starts) - 1)):
+        return keys
+    order = sorted(range(len(keys)), key=starts.__getitem__)
+    return [keys[index] for index in order]
 
 
 def _array_jobs(
@@ -687,12 +729,6 @@ def _kind(value: object) -> str:
         return "object"
     if isinstance(value, list):
         return "array"
-    if isinstance(value, datetime):
-        return "timestamp"
-    if isinstance(value, date):
-        return "date"
-    if isinstance(value, (bytes, bytearray)):
-        return "binary"
     return type(value).__name__
 
 
@@ -734,9 +770,7 @@ def _equal(old: object, new: object) -> bool:
 # --- Moved --------------------------------------------------------------
 
 
-def _pair_moves(
-    found: list[list[object]], left: ParsedDocument, right: ParsedDocument
-) -> list[list[object]]:
+def _pair_moves(found: list[list[object]], left: Doc, right: Doc) -> list[list[object]]:
     """Turn a unique Removed and Added pair with different parents into Moved."""
     removed = [index for index, entry in enumerate(found) if entry[0] == "removed"]
     added = [index for index, entry in enumerate(found) if entry[0] == "added"]
@@ -974,8 +1008,4 @@ def _scalar_text(value: object, limit: int | None) -> str:
     if isinstance(value, str):
         shown = value if limit is None else value[: limit + 1]
         return json.dumps(shown, ensure_ascii=False)
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    if isinstance(value, (bytes, bytearray)):
-        return f"{len(value)} bytes"
     return repr(value)
