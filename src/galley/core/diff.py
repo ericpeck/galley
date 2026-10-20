@@ -1,15 +1,20 @@
 """Structural comparison of two JSON or YAML documents.
 
 This module does not import Qt. ``load_document`` parses text and records
-where each value sits. ``diff`` compares two loaded documents and returns
-``Change`` records in left-document order. Both are plain functions over
-picklable values, so a spawn worker can call them by import path.
+where each value sits. ``diff`` compares two loaded documents and returns a
+``DiffResult``: ``Change`` records in left-document order, plus whether
+every array was aligned. Both are plain functions over picklable values,
+so a spawn worker can call them by import path.
 
 Value rules:
 
 - Objects match by key, and key order is ignored. Keys compare as text, the
   way JSON sees them, so YAML ``1:`` and ``"1":`` are the same key.
-- Arrays match by index. Extra items at the end are Added or Removed.
+- Arrays are aligned before they are compared: items match by a stable,
+  key-order-independent hash with ``difflib.SequenceMatcher``, matched items
+  are compared recursively, and the rest are Added or Removed. An array too
+  repetitive to align within ``ALIGN_BUDGET`` compares its unmatched middle
+  by index, and the result says ``aligned=False``.
 - Scalars compare by type and value. ``1`` equals ``1.0``. ``"1"`` and ``1``
   are Changed. ``true`` and ``1`` are Changed: a boolean is not a number.
 - ``null`` is a value, so a key holding ``null`` is not a missing key.
@@ -25,14 +30,18 @@ Value rules:
 
 Moved: after the walk, one Removed and one Added subtree become one Moved
 change when the two values are equal, no other Removed or Added value is
-equal to them, and their parents differ.
+equal to them, and their parents differ. Parents are the same when the walk
+compared them with each other, which covers an array item whose index moved.
 """
 
 import base64
+import hashlib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from difflib import SequenceMatcher
 from typing import Literal
 
 from ruamel.yaml import YAML
@@ -71,6 +80,13 @@ Path = tuple[str | int, ...]
 
 # Longest summary text, in characters, including the closing "…".
 SUMMARY_LIMIT = 80
+
+# Most (left, right) pairs of equal items one array's alignment may visit.
+# SequenceMatcher costs about 50-150 ns per visit, so this caps one array
+# near 0.3 s. Arrays of up to 1,414 items a side never reach it; past that
+# only heavy repetition does. A cap on work, not time, keeps the result the
+# same on every machine.
+ALIGN_BUDGET = 2_000_000
 
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 _STR_TAG = "tag:yaml.org,2002:str"
@@ -130,11 +146,13 @@ class Summary:
 class Change:
     """One difference between the left and right documents.
 
-    ``path`` is the left path, or the right path for Added. A Moved change
-    also sets ``moved_to``, the right path. ``path_text`` is ``path`` in
-    ``render_path`` form; the root is ``""``. ``old`` is the left value and
-    ``new`` the right value; each is ``None`` on the side that has no value.
-    The spans follow the same rule.
+    ``path`` is the left path, or the right path for Added. ``path_text`` is
+    ``path`` in ``render_path`` form; the root is ``""``. ``right_path`` is
+    where the value sits on the right, or ``None`` for Removed. It differs
+    from ``path`` when array alignment pairs left ``[5]`` with right ``[6]``.
+    A Moved change also sets ``moved_to``, the same as ``right_path``.
+    ``old`` is the left value and ``new`` the right value; each is ``None``
+    on the side that has no value, and so are the spans.
     """
 
     kind: ChangeKind
@@ -144,8 +162,21 @@ class Change:
     new: Summary | None
     left_span: Span | None
     right_span: Span | None
+    right_path: Path | None
     moved_to: Path | None = None
     moved_to_text: str | None = None
+
+
+@dataclass(frozen=True)
+class DiffResult:
+    """The changes from left to right, in left-document order.
+
+    ``aligned`` is False when at least one array went over ``ALIGN_BUDGET``
+    and its unmatched middle was compared by index.
+    """
+
+    changes: list[Change]
+    aligned: bool
 
 
 @dataclass(frozen=True)
@@ -175,7 +206,7 @@ def load_document(text: str | bytes, source: str) -> Doc:
     return _load_yaml(text)
 
 
-def diff(left: Doc, right: Doc) -> list[Change]:
+def diff(left: Doc, right: Doc) -> DiffResult:
     """Return the differences from ``left`` to ``right``.
 
     Changes are sorted by left start position, and the order is stable
@@ -183,15 +214,17 @@ def diff(left: Doc, right: Doc) -> list[Change]:
     itself yields that order. An Added key sits after its
     nearest left neighbour: the closest key before it in the right object
     that the left object also has, after any changes inside that key. With
-    no such key it comes first in its object. Extra array items sit at the
-    end of their array. A Moved change sits where its left value was.
+    no such key it comes first in its object. An Added array item sits
+    after the left item it follows in the alignment. A Moved change sits
+    where its left value was.
 
     Raises ``InputError`` (``too_deep``) for a value nested past
     ``MAX_DEPTH``, which ``load_document`` already rejects.
     """
-    found = _walk(left, right)
-    found = _pair_moves(found, left, right)
-    return [_change(entry, left.spans, right.spans) for entry in found]
+    state = _DiffState(left, right)
+    found = _pair_moves(_walk(state), state)
+    changes = [_change(entry, left.spans, right.spans) for entry in found]
+    return DiffResult(changes, state.aligned)
 
 
 # --- JSON ---------------------------------------------------------------
@@ -615,31 +648,52 @@ def _key_text(key: object) -> str:
 # --- Walk ---------------------------------------------------------------
 
 
-def _walk(left: Doc, right: Doc) -> list[list[object]]:
+class _DiffState:
+    """One ``diff`` call: both documents, the hasher, and the container pairs
+    the walk matched. ``aligned`` turns False when an array falls back."""
+
+    def __init__(self, left: Doc, right: Doc) -> None:
+        self.left = left
+        self.right = right
+        self.hasher = _Hasher()
+        self.matched: set[tuple[Path, Path]] = set()
+        self.aligned = True
+
+
+def _walk(state: _DiffState) -> list[list[object]]:
     """Compare two trees on an explicit stack, in left-document order.
 
-    Each entry is ``[kind, path, old, new, moved_to]``. A job's path length
-    is the number of containers above it, so a container at
+    Each entry is ``[kind, left_path, right_path, old, new]``; the path on
+    the side without a value is None. A job's left path length is the
+    number of containers above it, so a container at
     ``len(path) == MAX_DEPTH`` is one level too deep.
     """
+    left = state.left
     found: list[list[object]] = []
-    stack: list[tuple[object, object, Path]] = [(left.value, right.value, ())]
+    stack: list[tuple[object, object, Path | None, Path | None]] = [
+        (left.value, state.right.value, (), ())
+    ]
     while stack:
-        old, new, path = stack.pop()
+        old, new, left_path, right_path = stack.pop()
         if old is _MISSING:
-            found.append(["added", path, None, new, None])
+            found.append(["added", None, right_path, None, new])
             continue
         if new is _MISSING:
-            found.append(["removed", path, old, None, None])
+            found.append(["removed", left_path, None, old, None])
             continue
+        if left_path is None or right_path is None:
+            raise TypeError("a compared pair needs both paths")
         if isinstance(old, dict) and isinstance(new, dict):
-            _check_depth(path, left)
-            stack.extend(reversed(_object_jobs(old, new, path, left.spans)))
+            _check_depth(left_path, left)
+            state.matched.add((left_path, right_path))
+            jobs = _object_jobs(old, new, left_path, right_path, left.spans)
+            stack.extend(reversed(jobs))
         elif isinstance(old, list) and isinstance(new, list):
-            _check_depth(path, left)
-            stack.extend(reversed(_array_jobs(old, new, path)))
+            _check_depth(left_path, left)
+            state.matched.add((left_path, right_path))
+            stack.extend(reversed(_array_jobs(old, new, left_path, right_path, state)))
         elif not _same_scalar(old, new):
-            found.append(["changed", path, old, new, None])
+            found.append(["changed", left_path, right_path, old, new])
     return found
 
 
@@ -648,12 +702,16 @@ def _check_depth(path: Path, document: Doc) -> None:
         raise _too_deep(len(path) + 1, path, document.spans)
 
 
+_Job = tuple[object, object, Path | None, Path | None]
+
+
 def _object_jobs(
     old: dict[object, object],
     new: dict[object, object],
-    path: Path,
+    left_path: Path,
+    right_path: Path,
     spans: dict[Path, Span],
-) -> list[tuple[object, object, Path]]:
+) -> list[_Job]:
     """Order members: left keys by left start position, and right-only keys
     after the left key that precedes them on the right."""
     added_after: dict[object, list[object]] = {}
@@ -663,14 +721,19 @@ def _object_jobs(
             anchor = key
         else:
             added_after.setdefault(anchor, []).append(key)
-    jobs: list[tuple[object, object, Path]] = []
+    jobs: list[_Job] = []
     for key in added_after.get(_FIRST, ()):
-        jobs.append((_MISSING, new[key], (*path, _segment(key))))
-    for key in _keys_by_position(old, path, spans):
-        jobs.append((old[key], new.get(key, _MISSING), (*path, _segment(key))))
+        jobs.append((_MISSING, new[key], None, (*right_path, _segment(key))))
+    for key in _keys_by_position(old, left_path, spans):
+        segment = _segment(key)
+        other = new.get(key, _MISSING)
+        target = None if other is _MISSING else (*right_path, segment)
+        jobs.append((old[key], other, (*left_path, segment), target))
         if added_after:
             for extra in added_after.get(key, ()):
-                jobs.append((_MISSING, new[extra], (*path, _segment(extra))))
+                jobs.append(
+                    (_MISSING, new[extra], None, (*right_path, _segment(extra)))
+                )
     return jobs
 
 
@@ -699,17 +762,141 @@ def _keys_by_position(
 
 
 def _array_jobs(
-    old: list[object], new: list[object], path: Path
-) -> list[tuple[object, object, Path]]:
-    shared = min(len(old), len(new))
-    jobs = [(old[index], new[index], (*path, index)) for index in range(shared)]
-    jobs.extend(
-        (old[index], _MISSING, (*path, index)) for index in range(shared, len(old))
-    )
-    jobs.extend(
-        (_MISSING, new[index], (*path, index)) for index in range(shared, len(new))
-    )
+    old: list[object],
+    new: list[object],
+    left_path: Path,
+    right_path: Path,
+    state: _DiffState,
+) -> list[_Job]:
+    jobs: list[_Job] = []
+    for left_index, right_index in _align(old, new, left_path, right_path, state):
+        if left_index is None:
+            jobs.append((_MISSING, new[right_index], None, (*right_path, right_index)))
+        elif right_index is None:
+            jobs.append((old[left_index], _MISSING, (*left_path, left_index), None))
+        else:
+            jobs.append(
+                (
+                    old[left_index],
+                    new[right_index],
+                    (*left_path, left_index),
+                    (*right_path, right_index),
+                )
+            )
     return jobs
+
+
+def _align(
+    old: list[object],
+    new: list[object],
+    left_path: Path,
+    right_path: Path,
+    state: _DiffState,
+) -> list[tuple[int, int | None] | tuple[None, int]]:
+    """Pair array items in left order. A side is None for Added or Removed.
+
+    The common head and tail match first. The middle is matched by
+    ``SequenceMatcher`` over item hashes, with ``autojunk=False`` so
+    repeated items still match. Equal blocks pair item by item. A replace
+    block pairs by position within the block, and the longer side's extra
+    items are Removed, then Added. When the middle would cost more than
+    ``ALIGN_BUDGET`` pair visits, it is compared by index instead and the
+    result is marked not aligned.
+    """
+    if not old or not new:
+        return [(index, None) for index in range(len(old))] + [
+            (None, index) for index in range(len(new))
+        ]
+    hasher = state.hasher
+    left_spans = state.left.spans
+    right_spans = state.right.spans
+    left_hashes = [
+        hasher.value(item, (*left_path, index), left_spans)
+        for index, item in enumerate(old)
+    ]
+    right_hashes = [
+        hasher.value(item, (*right_path, index), right_spans)
+        for index, item in enumerate(new)
+    ]
+    size = min(len(old), len(new))
+    head = 0
+    while head < size and left_hashes[head] == right_hashes[head]:
+        head += 1
+    tail = 0
+    while tail < size - head and left_hashes[-1 - tail] == right_hashes[-1 - tail]:
+        tail += 1
+    left_end = len(old) - tail
+    right_end = len(new) - tail
+    middle_left = left_hashes[head:left_end]
+    middle_right = right_hashes[head:right_end]
+    if middle_left and middle_right and _over_budget(middle_left, middle_right):
+        state.aligned = False
+        blocks = [("replace", head, left_end, head, right_end)]
+    else:
+        blocks = [
+            (tag, start + head, stop + head, other_start + head, other_stop + head)
+            for tag, start, stop, other_start, other_stop in _opcodes(
+                middle_left, middle_right
+            )
+        ]
+    pairs: list[tuple[int, int | None] | tuple[None, int]] = [
+        (index, index) for index in range(head)
+    ]
+    for tag, start, stop, other_start, other_stop in blocks:
+        if tag == "equal":
+            pairs.extend(zip(range(start, stop), range(other_start, other_stop)))
+            continue
+        shared = min(stop - start, other_stop - other_start)
+        pairs.extend((start + step, other_start + step) for step in range(shared))
+        pairs.extend((index, None) for index in range(start + shared, stop))
+        pairs.extend((None, index) for index in range(other_start + shared, other_stop))
+    pairs.extend((left_end + step, right_end + step) for step in range(tail))
+    return pairs
+
+
+def _over_budget(left_hashes: list[int], right_hashes: list[int]) -> bool:
+    """Return True when matching would visit more than ``ALIGN_BUDGET`` pairs.
+
+    ``SequenceMatcher`` visits every (left, right) pair of equal items when
+    it looks for the longest match, so the work is the sum over each hash of
+    its left count times its right count. Unique items cost one visit each;
+    a run of identical items costs its square.
+    """
+    counts = Counter(right_hashes)
+    work = 0
+    for digest in left_hashes:
+        work += counts.get(digest, 0)
+        if work > ALIGN_BUDGET:
+            return True
+    return False
+
+
+_MIRRORED_TAGS = {
+    "equal": "equal",
+    "replace": "replace",
+    "insert": "delete",
+    "delete": "insert",
+}
+
+
+def _opcodes(
+    left_hashes: list[int], right_hashes: list[int]
+) -> list[tuple[str, int, int, int, int]]:
+    """Return ``SequenceMatcher`` opcodes, the same whichever side is left.
+
+    The matcher breaks ties toward the start of its first sequence, so it
+    always runs with the smaller hash list first and the opcodes are
+    mirrored when that list is the right side. Swapping the documents then
+    gives the mirror image of the same alignment.
+    """
+    if left_hashes <= right_hashes:
+        matcher = SequenceMatcher(None, left_hashes, right_hashes, autojunk=False)
+        return matcher.get_opcodes()
+    matcher = SequenceMatcher(None, right_hashes, left_hashes, autojunk=False)
+    return [
+        (_MIRRORED_TAGS[tag], start, stop, other_start, other_stop)
+        for tag, other_start, other_stop, start, stop in matcher.get_opcodes()
+    ]
 
 
 def _segment(key: object) -> str:
@@ -767,17 +954,127 @@ def _equal(old: object, new: object) -> bool:
     return True
 
 
+# --- Hashing ------------------------------------------------------------
+
+# Small ints tag each kind of value, so the hashes are tuples of ints and do
+# not depend on PYTHONHASHSEED.
+_NULL_TAG = 1
+_BOOLEAN_TAG = 2
+_NUMBER_TAG = 3
+_NAN_TAG = 4
+_STRING_TAG = 5
+_OTHER_TAG = 6
+_OBJECT_TAG = 7
+_ARRAY_TAG = 8
+
+
+class _Hasher:
+    """Hash values so equal values hash alike, whatever their key order.
+
+    Strings hash with BLAKE2b and everything else is a tuple of ints, so a
+    hash is the same in every process and alignment ties break the same way
+    each run. ``1`` and ``1.0`` hash alike; ``True`` and ``1`` do not; NaN
+    hashes like NaN. Container hashes are memoized by identity for the
+    length of one ``diff`` call, so nested arrays hash each node once.
+    """
+
+    def __init__(self) -> None:
+        self.texts: dict[str, int] = {}
+        self.containers: dict[int, int] = {}
+
+    def text(self, value: str) -> int:
+        digest = self.texts.get(value)
+        if digest is None:
+            raw = hashlib.blake2b(
+                value.encode("utf-8", "surrogatepass"), digest_size=8
+            ).digest()
+            digest = int.from_bytes(raw, "big")
+            self.texts[value] = digest
+        return digest
+
+    def scalar(self, value: object) -> int:
+        if value is None:
+            return hash((_NULL_TAG,))
+        if isinstance(value, bool):
+            return hash((_BOOLEAN_TAG, int(value)))
+        if isinstance(value, (int, float)):
+            if value != value:
+                return hash((_NAN_TAG,))
+            return hash((_NUMBER_TAG, value))
+        if isinstance(value, str):
+            return hash((_STRING_TAG, self.text(value)))
+        return hash((_OTHER_TAG, self.text(repr(value))))
+
+    def value(self, value: object, path: Path, spans: dict[Path, Span]) -> int:
+        """Hash ``value`` at ``path``, post-order on an explicit stack."""
+        if not isinstance(value, (dict, list)):
+            return self.scalar(value)
+        memo = self.containers
+        cached = memo.get(id(value))
+        if cached is not None:
+            return cached
+        hashes: list[int] = []
+        stack: list[tuple[object, bool, int]] = [(value, False, len(path) + 1)]
+        while stack:
+            node, done, depth = stack.pop()
+            if isinstance(node, dict):
+                if done:
+                    start = len(hashes) - len(node)
+                    children = hashes[start:]
+                    del hashes[start:]
+                    keys = [self.text(_segment(key)) for key in node]
+                    digest = hash((_OBJECT_TAG, frozenset(zip(keys, children))))
+                    memo[id(node)] = digest
+                    hashes.append(digest)
+                    continue
+                cached = memo.get(id(node))
+                if cached is not None:
+                    hashes.append(cached)
+                    continue
+                if depth > MAX_DEPTH:
+                    raise _too_deep(depth, path, spans)
+                stack.append((node, True, depth))
+                stack.extend(
+                    (child, False, depth + 1) for child in reversed(node.values())
+                )
+            elif isinstance(node, list):
+                if done:
+                    start = len(hashes) - len(node)
+                    children = hashes[start:]
+                    del hashes[start:]
+                    digest = hash((_ARRAY_TAG, tuple(children)))
+                    memo[id(node)] = digest
+                    hashes.append(digest)
+                    continue
+                cached = memo.get(id(node))
+                if cached is not None:
+                    hashes.append(cached)
+                    continue
+                if depth > MAX_DEPTH:
+                    raise _too_deep(depth, path, spans)
+                stack.append((node, True, depth))
+                stack.extend((child, False, depth + 1) for child in reversed(node))
+            else:
+                hashes.append(self.scalar(node))
+        return hashes[0]
+
+
 # --- Moved --------------------------------------------------------------
 
 
-def _pair_moves(found: list[list[object]], left: Doc, right: Doc) -> list[list[object]]:
-    """Turn a unique Removed and Added pair with different parents into Moved."""
+def _pair_moves(found: list[list[object]], state: _DiffState) -> list[list[object]]:
+    """Turn a unique Removed and Added pair with different parents into Moved.
+
+    Parents are the same when the walk compared them with each other, so a
+    key renamed inside an aligned array item is not a move even though the
+    item's index differs between the sides.
+    """
     removed = [index for index, entry in enumerate(found) if entry[0] == "removed"]
     added = [index for index, entry in enumerate(found) if entry[0] == "added"]
     if not removed or not added:
         return found
-    removed_groups = _value_groups(found, removed, 2, left.spans)
-    added_groups = _value_groups(found, added, 3, right.spans)
+    removed_groups = _value_groups(found, removed, 1, 3, state.left.spans, state)
+    added_groups = _value_groups(found, added, 2, 4, state.right.spans, state)
     dropped: set[int] = set()
     for digest, removed_classes in removed_groups.items():
         added_classes = added_groups.get(digest)
@@ -791,7 +1088,7 @@ def _pair_moves(found: list[list[object]], left: Doc, right: Doc) -> list[list[o
                 (
                     other
                     for other in added_classes
-                    if _equal(source[2], found[other[0]][3])
+                    if _equal(source[3], found[other[0]][4])
                 ),
                 None,
             )
@@ -799,17 +1096,17 @@ def _pair_moves(found: list[list[object]], left: Doc, right: Doc) -> list[list[o
                 continue
             target = found[match[0]]
             source_path = source[1]
-            target_path = target[1]
+            target_path = target[2]
             if not isinstance(source_path, tuple) or not isinstance(target_path, tuple):
                 continue
-            if source_path[:-1] == target_path[:-1]:
+            if (source_path[:-1], target_path[:-1]) in state.matched:
                 continue
             found[members[0]] = [
                 "moved",
                 source_path,
-                source[2],
-                target[3],
                 target_path,
+                source[3],
+                target[4],
             ]
             dropped.add(match[0])
     if not dropped:
@@ -818,74 +1115,30 @@ def _pair_moves(found: list[list[object]], left: Doc, right: Doc) -> list[list[o
 
 
 def _value_groups(
-    found: list[list[object]], indexes: list[int], slot: int, spans: dict[Path, Span]
+    found: list[list[object]],
+    indexes: list[int],
+    path_slot: int,
+    value_slot: int,
+    spans: dict[Path, Span],
+    state: _DiffState,
 ) -> dict[int, list[list[int]]]:
     """Group entries by hash, then into classes of equal values."""
     groups: dict[int, list[list[int]]] = {}
     for index in indexes:
         entry = found[index]
-        value = entry[slot]
-        path = entry[1]
-        digest = _value_hash(value, path if isinstance(path, tuple) else (), spans)
+        value = entry[value_slot]
+        path = entry[path_slot]
+        digest = state.hasher.value(
+            value, path if isinstance(path, tuple) else (), spans
+        )
         classes = groups.setdefault(digest, [])
         for members in classes:
-            if _equal(found[members[0]][slot], value):
+            if _equal(found[members[0]][value_slot], value):
                 members.append(index)
                 break
         else:
             classes.append([index])
     return groups
-
-
-def _value_hash(value: object, path: Path, spans: dict[Path, Span]) -> int:
-    """Hash ``value`` so equal values hash alike, whatever their key order.
-
-    Post-order on an explicit stack. ``1`` and ``1.0`` hash alike, and
-    ``True`` does not hash like ``1``.
-    """
-    if not isinstance(value, (dict, list)):
-        return hash(_scalar_token(value))
-    base = len(path)
-    hashes: list[int] = []
-    stack: list[tuple[object, bool, int]] = [(value, False, base + 1)]
-    while stack:
-        node, done, depth = stack.pop()
-        if isinstance(node, dict):
-            if done:
-                count = len(node)
-                children = hashes[len(hashes) - count :]
-                del hashes[len(hashes) - count :]
-                hashes.append(hash(("object", frozenset(zip(node, children)))))
-                continue
-            if depth > MAX_DEPTH:
-                raise _too_deep(depth, path, spans)
-            stack.append((node, True, depth))
-            stack.extend((child, False, depth + 1) for child in reversed(node.values()))
-        elif isinstance(node, list):
-            if done:
-                count = len(node)
-                children = hashes[len(hashes) - count :]
-                del hashes[len(hashes) - count :]
-                hashes.append(hash(("array", tuple(children))))
-                continue
-            if depth > MAX_DEPTH:
-                raise _too_deep(depth, path, spans)
-            stack.append((node, True, depth))
-            stack.extend((child, False, depth + 1) for child in reversed(node))
-        else:
-            hashes.append(hash(_scalar_token(node)))
-    return hashes[0]
-
-
-def _scalar_token(value: object) -> tuple[str, object]:
-    kind = _kind(value)
-    if kind == "number" and value != value:
-        return kind, "nan"
-    try:
-        hash(value)
-    except TypeError:
-        return kind, repr(value)
-    return kind, value
 
 
 # --- Output -------------------------------------------------------------
@@ -894,22 +1147,24 @@ def _scalar_token(value: object) -> tuple[str, object]:
 def _change(
     entry: list[object], left_spans: dict[Path, Span], right_spans: dict[Path, Span]
 ) -> Change:
-    kind, path, old, new, moved_to = entry
-    if not isinstance(path, tuple):
-        raise TypeError(path)
-    target = moved_to if isinstance(moved_to, tuple) else None
+    kind, left_path, right_path, old, new = entry
+    left_at = left_path if isinstance(left_path, tuple) else None
+    right_at = right_path if isinstance(right_path, tuple) else None
+    path = left_at if left_at is not None else right_at
+    if path is None:
+        raise TypeError("a change needs a path")
+    moved = kind == "moved"
     return Change(
         kind=kind,
         path=path,
         path_text=render_path(list(path)),
-        old=None if kind == "added" else _summary(old),
-        new=None if kind == "removed" else _summary(new),
-        left_span=None if kind == "added" else _locate(left_spans, path),
-        right_span=None
-        if kind == "removed"
-        else _locate(right_spans, path if target is None else target),
-        moved_to=target,
-        moved_to_text=None if target is None else render_path(list(target)),
+        old=None if left_at is None else _summary(old),
+        new=None if right_at is None else _summary(new),
+        left_span=None if left_at is None else _locate(left_spans, left_at),
+        right_span=None if right_at is None else _locate(right_spans, right_at),
+        right_path=right_at,
+        moved_to=right_at if moved else None,
+        moved_to_text=render_path(list(right_at)) if moved and right_at else None,
     )
 
 

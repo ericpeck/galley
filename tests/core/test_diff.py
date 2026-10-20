@@ -7,7 +7,11 @@ each side's text.
 """
 
 import json
+import os
 import pickle
+import subprocess
+import sys
+import time
 from io import StringIO
 
 import pytest
@@ -36,12 +40,13 @@ def _json(value: object) -> Doc:
 
 def _changes(left: object, right: object) -> list[tuple[str, str]]:
     return [
-        (change.kind, change.path_text) for change in diff(_json(left), _json(right))
+        (change.kind, change.path_text)
+        for change in diff(_json(left), _json(right)).changes
     ]
 
 
 def _only(left: Doc, right: Doc) -> Change:
-    changes = diff(left, right)
+    changes = diff(left, right).changes
     assert len(changes) == 1, changes
     return changes[0]
 
@@ -51,7 +56,7 @@ def _only(left: Doc, right: Doc) -> Change:
 
 def test_identical_documents_have_no_changes() -> None:
     value = {"a": [1, {"b": None}], "c": "x"}
-    assert diff(_json(value), _json(value)) == []
+    assert diff(_json(value), _json(value)).changes == []
 
 
 def test_added_key() -> None:
@@ -111,13 +116,13 @@ def test_root_scalar_change_has_empty_path() -> None:
 def test_key_order_is_ignored() -> None:
     left = load_document('{"a": 1, "b": {"x": 1, "y": 2}}', "json")
     right = load_document('{"b": {"y": 2, "x": 1}, "a": 1}', "json")
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_key_order_is_ignored_in_yaml() -> None:
     left = load_document("a: 1\nb:\n  x: 1\n  y: 2\n", "yaml")
     right = load_document("b:\n  y: 2\n  x: 1\na: 1\n", "yaml")
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_arrays_match_by_index() -> None:
@@ -138,12 +143,9 @@ def test_extra_left_items_are_removed_at_the_end() -> None:
     ]
 
 
-def test_inserting_early_shifts_every_later_index() -> None:
-    assert _changes(["a", "b", "c"], ["a", "new", "b", "c"]) == [
-        ("changed", "[1]"),
-        ("changed", "[2]"),
-        ("added", "[3]"),
-    ]
+def test_inserting_early_is_one_added_item() -> None:
+    # Alignment keeps "b" and "c" matched after the insert.
+    assert _changes(["a", "b", "c"], ["a", "new", "b", "c"]) == [("added", "[1]")]
 
 
 def test_nested_paths_and_path_text() -> None:
@@ -180,13 +182,172 @@ def test_empty_containers() -> None:
     assert _changes({"a": {}}, {"a": []}) == [("changed", "a")]
 
 
+# --- Array alignment -------------------------------------------------------
+
+
+def test_one_insert_at_the_start_of_12000_items_is_one_change() -> None:
+    items = [{"id": index, "name": f"n{index}"} for index in range(12_000)]
+    left = _json({"rows": items})
+    right = _json({"rows": [{"id": "new"}, *items]})
+    result = diff(left, right)
+    assert result.aligned is True
+    assert [(c.kind, c.path_text) for c in result.changes] == [("added", "rows[0]")]
+
+
+def test_a_replace_block_pairs_by_position() -> None:
+    # "b" lines up with "X", and the extra "Y" is Added after it.
+    assert _changes(["a", "b", "c"], ["a", "X", "Y", "c"]) == [
+        ("changed", "[1]"),
+        ("added", "[2]"),
+    ]
+
+
+def test_deleting_from_the_middle_is_one_removed_item() -> None:
+    assert _changes([1, 2, 3, 4], [1, 2, 4]) == [("removed", "[2]")]
+
+
+def test_a_changed_value_in_a_shifted_item_keeps_both_paths() -> None:
+    # "a" and "b" match, so the edited last item pairs left [2] with right [3].
+    left = load_document('["a", "b", {"id": 1, "role": "user"}]', "json")
+    right = load_document('["new", "a", "b", {"id": 1, "role": "admin"}]', "json")
+    added, changed = diff(left, right).changes
+    assert (added.kind, added.path_text) == ("added", "[0]")
+    assert changed.kind == "changed"
+    # The path is the left path; right_path and right_span are on the right.
+    assert changed.path == (2, "role")
+    assert changed.path_text == "[2].role"
+    assert changed.right_path == (3, "role")
+    assert changed.left_span == Span(1, 22, 1, 36)
+    assert changed.right_span == Span(1, 29, 1, 44)
+
+
+def test_a_renamed_key_in_a_shifted_item_is_not_a_move() -> None:
+    # The two items were compared with each other, so they are one parent.
+    item = {"sku": "A-1"}
+    left = [{"id": 1}, {"id": 2, "x": item}]
+    right = [{"id": 0}, {"id": 1}, {"id": 2, "y": item}]
+    # "y" follows "id" on the right, so it sits before the Removed "x".
+    assert _changes(left, right) == [
+        ("added", "[0]"),
+        ("added", "[2].y"),
+        ("removed", "[1].x"),
+    ]
+
+
+def test_a_large_repetitive_array_still_aligns() -> None:
+    # Every item repeats 120 times. With SequenceMatcher's autojunk, items
+    # this common would be ignored and nothing would match.
+    items = [{"k": index % 50} for index in range(6000)]
+    edited = [{"k": "first"}, *items[1:3000], {"k": "new"}, *items[3000:5999]]
+    edited.append({"k": "last"})
+    result = diff(_json(items), _json(edited))
+    assert result.aligned is True
+    assert [(c.kind, c.path_text) for c in result.changes] == [
+        ("changed", "[0].k"),
+        ("added", "[3000]"),
+        ("changed", "[5999].k"),
+    ]
+
+
+def test_many_identical_items_align_around_an_insert() -> None:
+    items: list[object] = [{}] * 8000
+    result = diff(_json(items), _json([*items[:5000], {"x": 1}, *items[5000:]]))
+    assert result.aligned is True
+    assert [(c.kind, c.path_text) for c in result.changes] == [("added", "[5000]")]
+
+
+def test_over_budget_array_falls_back_to_index_matching() -> None:
+    # 3000 zeros and 3000 ones on each side: 18 million pair visits.
+    left = [0, 1] * 3000
+    right = [1, 0] * 3000
+    result = diff(_json(left), _json(right))
+    assert result.aligned is False
+    assert [(c.kind, c.path) for c in result.changes] == [
+        ("changed", (index,)) for index in range(6000)
+    ]
+
+
+def test_fallback_keeps_the_matching_head_and_tail() -> None:
+    left = ["head", *([0, 1] * 3000), "tail"]
+    right = ["head", *([1, 0] * 3000), "tail"]
+    result = diff(_json(left), _json(right))
+    assert result.aligned is False
+    assert [change.path for change in result.changes] == [
+        (index,) for index in range(1, 6001)
+    ]
+
+
+def test_an_aligned_result_says_so() -> None:
+    assert diff(_json({"a": [1, 2]}), _json({"a": [2, 1]})).aligned is True
+
+
+def test_alignment_is_the_same_under_any_hash_seed() -> None:
+    script = (
+        "import json\n"
+        "from galley.core.diff import diff, load_document\n"
+        "left = load_document(json.dumps(['x', 'y', {'a': 1}, 'z']), 'json')\n"
+        "right = load_document(json.dumps(['y', 'x', 'z', {'a': 1}]), 'json')\n"
+        "print([(c.kind, c.path_text) for c in diff(left, right).changes])\n"
+    )
+    outputs = set()
+    for seed in ("1", "2", "3"):
+        environment = {**os.environ, "PYTHONHASHSEED": seed}
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=True,
+            env=environment,
+            text=True,
+        )
+        outputs.add(completed.stdout)
+    assert len(outputs) == 1
+
+
+def _records(count: int) -> list[dict[str, object]]:
+    return [
+        {
+            "id": index,
+            "name": f"user{index}",
+            "email": f"u{index}@example.com",
+            "active": index % 2 == 0,
+            "score": index * 1.5,
+            "tags": ["a", "b", str(index % 7)],
+            "address": {"city": "Town", "zip": f"{index:05d}"},
+        }
+        for index in range(count)
+    ]
+
+
+def test_diffing_two_one_and_a_half_megabyte_documents_takes_under_half_a_second() -> (
+    None
+):
+    base = _records(6000)
+    edited = [{"id": -1}, *base]
+    edited[3000] = {**edited[3000], "name": "changed"}
+    left_text = json.dumps(base, indent=2)
+    assert len(left_text) > 1_400_000
+    left = load_document(left_text, "json")
+    right = load_document(json.dumps(edited, indent=2), "json")
+    timings = []
+    for _ in range(3):
+        start = time.perf_counter()
+        result = diff(left, right)
+        timings.append(time.perf_counter() - start)
+    assert result.aligned is True
+    assert [(c.kind, c.path_text) for c in result.changes] == [
+        ("added", "[0]"),
+        ("changed", "[2999].name"),
+    ]
+    assert min(timings) < 0.5, timings
+
+
 # --- Value rules ----------------------------------------------------------
 
 
 def test_int_equals_float_with_the_same_value() -> None:
     left = load_document('{"n": 1, "m": [2]}', "json")
     right = load_document('{"n": 1.0, "m": [2.0]}', "json")
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_string_against_number_is_changed_and_shows_the_type() -> None:
@@ -208,7 +369,8 @@ def test_booleans_are_not_numbers(old: object, new: object) -> None:
 
 
 def test_booleans_inside_arrays_are_not_numbers() -> None:
-    assert _changes([True, 1], [1, True]) == [("changed", "[0]"), ("changed", "[1]")]
+    # true and 1 never match in the alignment, so they pair up as Changed.
+    assert _changes([True, False], [1, 0]) == [("changed", "[0]"), ("changed", "[1]")]
 
 
 def test_null_is_not_a_missing_key() -> None:
@@ -229,8 +391,8 @@ def test_null_against_a_value_is_changed() -> None:
 def test_nan_equals_nan() -> None:
     left = load_document("a: .nan\nb: [.NaN]\n", "yaml")
     right = load_document('{"a": NaN, "b": [NaN]}', "json")
-    assert diff(left, right) == []
-    assert diff(left, left) == []
+    assert diff(left, right).changes == []
+    assert diff(left, left).changes == []
 
 
 def test_nan_against_a_number_is_changed() -> None:
@@ -242,7 +404,7 @@ def test_nan_against_a_number_is_changed() -> None:
 def test_infinity_compares_by_value() -> None:
     left = load_document("a: .inf\nb: -.inf\n", "yaml")
     right = load_document('{"a": Infinity, "b": -Infinity}', "json")
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_yaml_anchors_compare_by_resolved_value() -> None:
@@ -253,7 +415,7 @@ def test_yaml_anchors_compare_by_resolved_value() -> None:
         {"base": {"x": 1, "y": [1, 2]}, "copy": {"x": 1, "y": [1, 2]}, "name": "Ada"}
         | {"who": "Ada"}
     )
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_yaml_alias_change_is_found_inside_the_alias() -> None:
@@ -269,7 +431,7 @@ def test_yaml_alias_change_is_found_inside_the_alias() -> None:
 def test_yaml_merge_keys_compare_by_resolved_value() -> None:
     left = load_document("base: &b\n  x: 1\n  y: 2\nm:\n  <<: *b\n  y: 3\n", "yaml")
     right = _json({"base": {"x": 1, "y": 2}, "m": {"x": 1, "y": 3}})
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_yaml_merge_list_gives_the_first_mapping_priority() -> None:
@@ -294,7 +456,8 @@ def test_yaml_merge_list_gives_the_first_mapping_priority() -> None:
 )
 def test_yaml_tags_compare_by_resolved_value(yaml_text: str, json_text: str) -> None:
     assert (
-        diff(load_document(yaml_text, "yaml"), load_document(json_text, "json")) == []
+        diff(load_document(yaml_text, "yaml"), load_document(json_text, "json")).changes
+        == []
     )
 
 
@@ -305,7 +468,7 @@ def test_yaml_dates_and_binary_load_as_json_strings() -> None:
     right = load_document(
         '{"d": "2026-10-18", "t": "2026-10-18T09:30:00", "b": "aGk="}', "json"
     )
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_yaml_date_against_another_date_is_a_string_change() -> None:
@@ -320,7 +483,7 @@ def test_yaml_date_against_another_date_is_a_string_change() -> None:
 def test_yaml_non_string_keys_compare_as_text() -> None:
     left = load_document("1: a\ntrue: b\nnull: c\n", "yaml")
     right = load_document('{"1": "a", "true": "b", "null": "c"}', "json")
-    assert diff(left, right) == []
+    assert diff(left, right).changes == []
 
 
 def test_json_against_yaml_with_changes() -> None:
@@ -329,7 +492,7 @@ def test_json_against_yaml_with_changes() -> None:
     )
     right = load_document("age: 37\nname: Ada\ntags: [x]\nteam: core\n", "yaml")
     # "team" follows "tags" on the right, so it sits after the tags changes.
-    assert [(c.kind, c.path_text) for c in diff(left, right)] == [
+    assert [(c.kind, c.path_text) for c in diff(left, right).changes] == [
         ("removed", "tags[1]"),
         ("added", "team"),
         ("changed", "age"),
@@ -342,7 +505,7 @@ def test_json_against_equivalent_yaml() -> None:
     yaml = YAML(typ="safe")
     buffer = StringIO()
     yaml.dump(value, buffer)
-    assert diff(_json(value), load_document(buffer.getvalue(), "yaml")) == []
+    assert diff(_json(value), load_document(buffer.getvalue(), "yaml")).changes == []
 
 
 # --- Moved ----------------------------------------------------------------
@@ -428,7 +591,11 @@ def test_moved_keeps_other_changes() -> None:
 def test_changes_follow_the_left_document() -> None:
     left = load_document('{\n  "z": 1,\n  "a": {"k": 1},\n  "m": [1, 2]\n}', "json")
     right = load_document('{\n  "m": [1, 3],\n  "a": {"k": 2},\n  "z": 2\n}', "json")
-    assert [change.path_text for change in diff(left, right)] == ["z", "a.k", "m[1]"]
+    assert [change.path_text for change in diff(left, right).changes] == [
+        "z",
+        "a.k",
+        "m[1]",
+    ]
 
 
 def test_added_sits_after_its_nearest_left_neighbour() -> None:
@@ -483,7 +650,7 @@ def test_yaml_merged_keys_sort_by_their_merge_line() -> None:
     # Merged keys come first in the loaded mapping, but "<<" is below "y".
     left = load_document("base: &b {x: 1, z: 1}\nm:\n  y: 3\n  <<: *b\n", "yaml")
     right = _json({"base": {"x": 1, "z": 1}, "m": {"x": 5, "y": 4, "z": 1}})
-    changes = diff(left, right)
+    changes = diff(left, right).changes
     assert [change.path_text for change in changes] == ["m.y", "m.x"]
     assert [change.left_span for change in changes] == [
         Span(3, 3, 3, 7),
@@ -494,14 +661,14 @@ def test_yaml_merged_keys_sort_by_their_merge_line() -> None:
 def test_order_is_stable() -> None:
     left = _json({"a": [1, 2, {"b": 3}], "c": {"d": 4}, "e": 5, "f": {"g": 1}})
     right = _json({"h": 1, "e": 6, "c": {"d": 7}, "a": [1, 9], "g": {"g": 1}})
-    first = diff(left, right)
-    assert all(diff(left, right) == first for _ in range(5))
+    first = diff(left, right).changes
+    assert all(diff(left, right).changes == first for _ in range(5))
 
 
 def test_left_spans_are_in_document_order() -> None:
     left = _json({"a": [1, 2, {"b": 3}], "c": {"d": 4}, "e": 5})
     right = _json({"e": 6, "c": {"d": 7}, "a": [1, 9, {"b": 8}]})
-    spans = [change.left_span for change in diff(left, right)]
+    spans = [change.left_span for change in diff(left, right).changes]
     assert all(span is not None for span in spans)
     starts = [(span.line, span.column) for span in spans if span is not None]
     assert starts == sorted(starts)
@@ -693,7 +860,7 @@ def test_yaml_past_max_depth_is_an_input_error() -> None:
 def test_diff_past_max_depth_is_an_input_error_not_a_recursion_error() -> None:
     deep = Doc(_nested(MAX_DEPTH + 5), "json")
     with pytest.raises(InputError) as caught:
-        diff(deep, Doc(_nested(MAX_DEPTH + 5), "json"))
+        diff(deep, Doc(_nested(MAX_DEPTH + 5), "json")).changes
     assert caught.value.kind == "too_deep"
     assert caught.value.details == {"depth": MAX_DEPTH + 1}
 
@@ -703,7 +870,7 @@ def test_moved_hash_past_max_depth_is_an_input_error() -> None:
     left = Doc({"a": {"x": deep}, "b": {}}, "json")
     right = Doc({"a": {}, "b": {"x": deep}}, "json")
     with pytest.raises(InputError) as caught:
-        diff(left, right)
+        diff(left, right).changes
     assert caught.value.kind == "too_deep"
 
 
@@ -758,7 +925,7 @@ def test_unknown_format_is_rejected() -> None:
 
 def test_empty_yaml_is_null() -> None:
     assert load_document("", "yaml").value is None
-    assert diff(load_document("", "yaml"), load_document("null", "json")) == []
+    assert diff(load_document("", "yaml"), load_document("null", "json")).changes == []
 
 
 # --- Worker readiness -------------------------------------------------------
@@ -767,7 +934,7 @@ def test_empty_yaml_is_null() -> None:
 def test_changes_and_documents_pickle() -> None:
     left = load_document(_YAML_TEXT, "yaml")
     right = load_document(_YAML_TEXT.replace("Ada", "Grace"), "yaml")
-    changes = diff(left, right)
+    changes = diff(left, right).changes
     assert changes
     assert pickle.loads(pickle.dumps(changes)) == changes
     restored = pickle.loads(pickle.dumps(left))

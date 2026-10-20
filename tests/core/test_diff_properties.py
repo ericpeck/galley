@@ -12,6 +12,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from galley.core.diff import Change, Doc, diff, load_document
+from galley.core.keypath import render_path
 
 _SETTINGS = settings(max_examples=150, deadline=None)
 
@@ -48,7 +49,24 @@ def _moved_pairs(draw: st.DrawFn) -> tuple[object, object]:
     return left, right
 
 
-_PAIRS = st.one_of(st.tuples(_VALUES, _VALUES), _moved_pairs())
+@st.composite
+def _array_pairs(draw: st.DrawFn) -> tuple[object, object]:
+    """Two arrays of repeated small items, the right an edit of the left."""
+    item = st.sampled_from([0, 1, True, "a", {}, {"k": 1}, {"k": 2}, [1]])
+    left = draw(st.lists(item, max_size=12))
+    right = list(left)
+    for _ in range(draw(st.integers(min_value=0, max_value=4))):
+        action = draw(st.sampled_from(["insert", "delete", "replace"]))
+        if action == "insert" or not right:
+            right.insert(draw(st.integers(0, len(right))), draw(item))
+        elif action == "delete":
+            del right[draw(st.integers(0, len(right) - 1))]
+        else:
+            right[draw(st.integers(0, len(right) - 1))] = draw(item)
+    return {"items": left}, {"items": right}
+
+
+_PAIRS = st.one_of(st.tuples(_VALUES, _VALUES), _moved_pairs(), _array_pairs())
 
 
 def _load(value: object) -> Doc:
@@ -65,18 +83,18 @@ def _mirror(change: Change) -> Change:
         right_span=change.left_span,
     )
     if change.kind == "added":
-        return replace(swapped, kind="removed")
+        return replace(swapped, kind="removed", right_path=None)
     if change.kind == "removed":
-        return replace(swapped, kind="added")
+        return replace(swapped, kind="added", right_path=change.path)
+    assert change.right_path is not None
+    swapped = replace(
+        swapped,
+        path=change.right_path,
+        path_text=render_path(list(change.right_path)),
+        right_path=change.path,
+    )
     if change.kind == "moved":
-        assert change.moved_to is not None and change.moved_to_text is not None
-        return replace(
-            swapped,
-            path=change.moved_to,
-            path_text=change.moved_to_text,
-            moved_to=change.path,
-            moved_to_text=change.path_text,
-        )
+        return replace(swapped, moved_to=change.path, moved_to_text=change.path_text)
     return swapped
 
 
@@ -96,21 +114,21 @@ def _paths(value: object) -> set[tuple[str | int, ...]]:
 @_SETTINGS
 @given(_VALUES)
 def test_a_document_equals_itself(value: object) -> None:
-    assert diff(_load(value), _load(value)) == []
+    assert diff(_load(value), _load(value)).changes == []
 
 
 @_SETTINGS
 @given(_VALUES)
 def test_a_value_equals_itself_without_spans(value: object) -> None:
-    assert diff(Doc(value, "json"), Doc(value, "json")) == []
+    assert diff(Doc(value, "json"), Doc(value, "json")).changes == []
 
 
 @_SETTINGS
 @given(_PAIRS)
 def test_swapping_sides_mirrors_every_change(pair: tuple[object, object]) -> None:
     left, right = pair
-    forward = diff(_load(left), _load(right))
-    backward = diff(_load(right), _load(left))
+    forward = diff(_load(left), _load(right)).changes
+    backward = diff(_load(right), _load(left)).changes
     assert Counter(_mirror(change) for change in forward) == Counter(backward)
 
 
@@ -118,7 +136,7 @@ def test_swapping_sides_mirrors_every_change(pair: tuple[object, object]) -> Non
 @given(_PAIRS)
 def test_paths_are_unique_per_kind(pair: tuple[object, object]) -> None:
     left, right = pair
-    changes = diff(_load(left), _load(right))
+    changes = diff(_load(left), _load(right)).changes
     keys = [(change.kind, change.path) for change in changes]
     assert len(keys) == len(set(keys))
     targets = [change.moved_to for change in changes if change.kind == "moved"]
@@ -131,19 +149,18 @@ def test_every_change_points_at_a_real_path(pair: tuple[object, object]) -> None
     left, right = pair
     left_paths = _paths(left)
     right_paths = _paths(right)
-    for change in diff(_load(left), _load(right)):
+    for change in diff(_load(left), _load(right)).changes:
         if change.kind == "added":
-            assert change.path in right_paths
+            assert change.path in right_paths and change.right_path == change.path
             assert change.right_span is not None and change.left_span is None
         elif change.kind == "removed":
-            assert change.path in left_paths
+            assert change.path in left_paths and change.right_path is None
             assert change.left_span is not None and change.right_span is None
-        elif change.kind == "moved":
-            assert change.path in left_paths and change.moved_to in right_paths
-            assert change.moved_to is not None
-            assert change.path[:-1] != change.moved_to[:-1]
         else:
-            assert change.path in left_paths and change.path in right_paths
+            assert change.path in left_paths and change.right_path in right_paths
+            assert change.left_span is not None and change.right_span is not None
+            if change.kind == "moved":
+                assert change.moved_to == change.right_path
 
 
 @_SETTINGS
@@ -152,7 +169,7 @@ def test_left_sided_changes_come_in_left_order(pair: tuple[object, object]) -> N
     left, right = pair
     starts = [
         (change.left_span.line, change.left_span.column)
-        for change in diff(_load(left), _load(right))
+        for change in diff(_load(left), _load(right)).changes
         if change.left_span is not None
     ]
     assert starts == sorted(starts)
@@ -176,10 +193,30 @@ def test_a_unique_subtree_under_a_new_parent_is_moved(
     # Other edits in "rest" may also move a value, so count only this one.
     moved = [
         c
-        for c in diff(_load(left), _load(right))
+        for c in diff(_load(left), _load(right)).changes
         if c.kind == "moved" and c.path[0] in {"from", "to"}
     ]
     assert len(moved) == 1
     target = moved[0].moved_to
     assert target is not None
     assert {moved[0].path[0], target[0]} == {"from", "to"}
+
+
+@_SETTINGS
+@given(_array_pairs())
+def test_aligned_arrays_report_no_more_changes_than_edits(
+    pair: tuple[object, object],
+) -> None:
+    left, right = pair
+    result = diff(_load(left), _load(right))
+    assert result.aligned
+    assert isinstance(left, dict) and isinstance(right, dict)
+    left_items = left["items"]
+    right_items = right["items"]
+    # Index matching would report up to every item; alignment stays within
+    # the larger side's length and finds nothing for equal arrays.
+    assert len(result.changes) <= max(len(left_items), len(right_items))
+    assert (result.changes == []) == (
+        json.dumps(left_items, sort_keys=True)
+        == json.dumps(right_items, sort_keys=True)
+    )
