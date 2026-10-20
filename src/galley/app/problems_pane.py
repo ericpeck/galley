@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.problem_text import DisplayProblem
 from galley.app.style import muted_text_style
-from galley.app.theme import ACCENT, ACCENT_TINT, ERROR, TEXT, TEXT_ON_ACCENT
+from galley.app.theme import ERROR, selected_problem_palette
 
 # Off until Replace tabs with spaces is approved. The control stays hidden.
 SHOW_REPLACE_TABS_BUTTON = False
@@ -45,13 +45,13 @@ class ProblemsPane(QWidget):
 
         self._title = QLabel("Problems")
         self._title.setObjectName("problemsTitle")
-        self._title.setStyleSheet(f"color: {TEXT}; font-weight: 700;")
+        self._title.setStyleSheet("font-weight: 700;")
 
         self._badge = QLabel("0")
         self._badge.setObjectName("problemsBadge")
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._badge.setStyleSheet(
-            f"background: {ERROR}; color: {TEXT_ON_ACCENT}; "
+            f"background: {ERROR}; color: palette(highlighted-text); "
             "border-radius: 8px; padding: 0 6px; font-weight: 700;"
         )
 
@@ -112,8 +112,8 @@ class ProblemsPane(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._strip.setStyleSheet(
-            f"QPushButton {{ background: {ERROR}; color: {TEXT_ON_ACCENT}; "
-            "border: none; font-weight: 700; }"
+            f"QPushButton {{ background: {ERROR}; color: palette(highlighted-text); "
+            "border: none; font-weight: 700; }}"
         )
         self._strip.clicked.connect(self.expand_requested.emit)
         self._strip.hide()
@@ -254,11 +254,12 @@ class _ProblemRow(QWidget):
         marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
         marker.setFixedSize(16, 16)
         marker.setStyleSheet(
-            f"background: {ERROR}; color: {TEXT_ON_ACCENT}; border-radius: 8px;"
+            f"background: {ERROR}; color: palette(highlighted-text); "
+            "border-radius: 8px;"
         )
 
         line = QLabel(f"Line {problem.lineno}")
-        line.setStyleSheet(f"color: {TEXT}; font-weight: 700;")
+        line.setStyleSheet("font-weight: 700;")
 
         message = QLabel(problem.message)
         message.setWordWrap(True)
@@ -281,8 +282,10 @@ class _ProblemRow(QWidget):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         if selected:
+            self.setPalette(selected_problem_palette(self.palette()))
             self.setStyleSheet(
-                f"background: {ACCENT_TINT}; border-left: 3px solid {ACCENT};"
+                "background: palette(highlight); "
+                "border-left: 3px solid palette(accent);"
             )
             return
         self.setStyleSheet(
