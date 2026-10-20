@@ -10,9 +10,12 @@ Word Wrap is portable ``Ctrl+Alt+W`` (⌥⌘W on macOS, Ctrl+Alt+W on Windows).
 Close Others is portable ``Ctrl+Alt+Shift+W`` (⇧⌥⌘W on macOS,
 Ctrl+Alt+Shift+W on Windows). The two sequences are different, so Word Wrap
 keeps Ctrl+Alt+W. Show Problems is portable ``Ctrl+Shift+M``
-(⌘⇧M on macOS, Ctrl+Shift+M on Windows).
+(⌘⇧M on macOS, Ctrl+Shift+M on Windows). Stack Panes is
+``Qt.ControlModifier | Qt.AltModifier`` with L, so Qt maps it to ⌘⌥L
+on macOS and Ctrl+Alt+L on Windows.
 """
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 
 _PORTABLE = QKeySequence.SequenceFormat.PortableText
@@ -25,6 +28,7 @@ SHOW_WHITESPACE = QKeySequence("Ctrl+Shift+8", _PORTABLE)
 ACTUAL_SIZE = QKeySequence("Ctrl+0", _PORTABLE)
 FORMAT = QKeySequence("Ctrl+Return", _PORTABLE)
 SHOW_PROBLEMS = QKeySequence("Ctrl+Shift+M", _PORTABLE)
+STACK_PANES = QKeySequence(Qt.ControlModifier | Qt.AltModifier | Qt.Key.Key_L)
 
 
 def apply_standard(action: QAction, key: QKeySequence.StandardKey) -> None:

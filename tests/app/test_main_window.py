@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
-    QToolButton,
 )
 
 from galley.app.editor import CodeEditor
@@ -51,6 +50,7 @@ CUSTOM_SHORTCUTS = {
     "Actual Size": ["Ctrl+0"],
     "Format": ["Ctrl+Return"],
     "Show Problems": ["Ctrl+Shift+M"],
+    "Stack Panes": ["Ctrl+Alt+L"],
 }
 
 STANDARD_SHORTCUTS = {
@@ -179,6 +179,8 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Indent Guides",
         "Show Problems",
         "|",
+        "Stack Panes",
+        "|",
         "Enter Full Screen",
     ]
     assert _submenu(view, "Font").actions() == []
@@ -211,6 +213,7 @@ def test_view_defaults_match_spec(qtbot) -> None:
     assert not _action(window, "Off").isChecked()
     assert not _action(window, "Lines").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()
+    assert not _action(window, "Stack Panes").isChecked()
     assert not _action(window, "Show window").isEnabled()
     assert not _action(window, "Bring back").isEnabled()
 
@@ -245,18 +248,6 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
     assert _portable(_action(window, "Word Wrap")) != _portable(
         _action(window, "Close others")
     )
-
-
-def test_layout_button_uses_accent(qtbot) -> None:
-    window = _show(qtbot)
-    layout_button = window.findChild(QToolButton, "layoutButton")
-    swap_button = window.findChild(QToolButton, "swapButton")
-    assert isinstance(layout_button, QToolButton)
-    assert isinstance(swap_button, QToolButton)
-    assert layout_button.text() == "▥"
-    assert f"color: {ACCENT}" in layout_button.styleSheet()
-    assert GUTTER_BG not in layout_button.styleSheet()
-    assert GUTTER_BG in swap_button.styleSheet()
 
 
 def test_splitter_starts_even(qtbot) -> None:

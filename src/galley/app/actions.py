@@ -15,6 +15,7 @@ from galley.app.shortcuts import (
     FORMAT,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
+    STACK_PANES,
     UNESCAPE_STRING,
     WORD_WRAP,
     apply_standard,
@@ -140,6 +141,13 @@ class ShellActions:
             checkable=True,
             checked=True,
         )
+        self.stack_panes = _action(
+            parent,
+            "Stack Panes",
+            shortcut=STACK_PANES,
+            checkable=True,
+        )
+        self.stack_panes.setObjectName("stackPanes")
 
         self.pop_out = _action(parent, "Pop out into window")
         self.show_window = _action(parent, "Show window", enabled=False)
