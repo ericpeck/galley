@@ -3,6 +3,8 @@
 import importlib
 import sys
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMainWindow
 from ruamel.yaml import YAML
 from ruamel.yaml.main import CParser
@@ -18,8 +20,18 @@ _SELF_CHECK_OK = "ruamel.yaml.clib self-check: ok"
 _SELF_CHECK_YAML = "a: 1\n"
 
 
+def use_light_color_scheme() -> None:
+    """Ask Qt for light native controls whatever the system appearance.
+
+    Broadsheet is light only (spec §13). Without this, macOS Dark Mode
+    gives native buttons and combo boxes white text on light surfaces.
+    """
+    QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Light)
+
+
 def create_main_window() -> QMainWindow:
-    """Return the Galley window in its empty state."""
+    """Return the Galley window in its empty state, in the light scheme."""
+    use_light_color_scheme()
     return MainWindow()
 
 
@@ -93,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     if _SELF_CHECK_FLAG in args:
         return run_self_check()
     application = QApplication(sys.argv)
+    use_light_color_scheme()
     application.setApplicationName("Galley")
     application.setApplicationDisplayName("Galley")
     application.setFont(ui_font())

@@ -68,6 +68,7 @@ from galley.app.theme import (
     GUTTER_BG,
     SELECTION,
     TEXT,
+    TEXT_MUTED,
     TEXT_ON_ACCENT,
     WINDOW_BG,
 )
@@ -84,6 +85,8 @@ SIZE_WARNING_DETAIL = (
     "Large documents can take a while to format. You can cancel while it runs."
 )
 _NOT_YET_MS = 4000
+# Share of ``text.muted`` in a disabled label, as ``accent.disabled`` uses.
+_DISABLED_TEXT_OPACITY = 0.45
 
 # Final timings. The busy indicator waits 500 ms, the progress bar and
 # Cancel wait 2 s, and the status text counts up from 10 s.
@@ -224,6 +227,13 @@ class MainWindow(QMainWindow):
         palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT))
+        disabled_text = _disabled_text_color()
+        for role in (
+            QPalette.ColorRole.WindowText,
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.ButtonText,
+        ):
+            palette.setColor(QPalette.ColorGroup.Disabled, role, disabled_text)
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
@@ -1081,13 +1091,20 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format and Convert disabled for the whole job."""
+        """Block Format and Convert for the whole job.
+
+        The button keeps its full accent face while working and reads
+        ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        """
         has_input = self._input_pane.editor.toPlainText() != ""
         available = has_input and not self._formatting
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
-        self._format_button.setEnabled(available)
+        self._format_button.setEnabled(has_input or self._formatting)
+        self._format_button.setText(
+            FORMATTING_MESSAGE if self._formatting else self._format_idle_text
+        )
         self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:
@@ -1153,6 +1170,17 @@ def _reveal_due(delay_ms: int, started_s: float) -> bool:
     if delay_ms <= 0:
         return True
     return _elapsed_ms(started_s) >= delay_ms
+
+
+def _disabled_text_color() -> QColor:
+    """``text.muted`` faded the way ``accent.disabled`` fades ``accent``.
+
+    45% opacity over ``window.bg`` matches that role's blend, so disabled
+    labels need no extra color beyond the spec's roles (spec §2, §13).
+    """
+    color = QColor(TEXT_MUTED)
+    color.setAlphaF(_DISABLED_TEXT_OPACITY)
+    return color
 
 
 def _formatting_status(elapsed_ms: float) -> str:
