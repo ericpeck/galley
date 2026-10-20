@@ -99,7 +99,8 @@ def test_convert_is_disabled_while_format_runs_and_returns_after(
     monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
     window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     _action(window, "Format").trigger()
-    assert not button.isEnabled()
+    assert button.isEnabled()
+    assert not _action(window, "Format").isEnabled()
     assert not convert.isEnabled()
     editor.insertPlainText(" ")
     assert not convert.isEnabled()
@@ -111,7 +112,8 @@ def test_convert_is_disabled_while_format_runs_and_returns_after(
 
     _action(window, "Format").trigger()
     assert not convert.isEnabled()
-    assert not button.isEnabled()
+    assert button.isEnabled()
+    assert not _action(window, "Format").isEnabled()
     window._cancel_format()
     assert convert.isEnabled()
     assert button.isEnabled()

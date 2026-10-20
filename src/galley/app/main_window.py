@@ -3,7 +3,7 @@
 import time
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QCloseEvent,
     QKeyEvent,
@@ -64,6 +64,9 @@ from galley.core.format import _has_tab
 NOT_YET_MESSAGE = "Not yet available."
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+FORMAT_ACCESSIBLE_NAME = "Format"
+FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
+FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
 FORMAT_NOT_STARTED_MESSAGE = (
     "Formatting didn't start. The formatter is shut down or already running."
 )
@@ -105,6 +108,34 @@ class _EditorView(NamedTuple):
     horizontal: int
 
 
+class _FormatButton(QPushButton):
+    """Format button sized for its widest label.
+
+    The toolbar measures Format when it reflows. Sizing for both labels
+    keeps the toolbar still when a resize lands mid-job.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._labels: tuple[str, ...] = ()
+
+    def set_labels(self, labels: tuple[str, ...]) -> None:
+        self._labels = labels
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        current = metrics.horizontalAdvance(self.text())
+        widest = max(
+            (metrics.horizontalAdvance(label) for label in self._labels),
+            default=current,
+        )
+        if widest > current:
+            hint.setWidth(hint.width() + widest - current)
+        return hint
+
+
 class MainWindow(QMainWindow):
     """The single Galley window in its empty, ready state."""
 
@@ -132,6 +163,7 @@ class MainWindow(QMainWindow):
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_idle_text = ""
+        self._format_idle_tooltip = ""
         self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
@@ -334,9 +366,9 @@ class MainWindow(QMainWindow):
         return caption
 
     def _build_format_button(self) -> QPushButton:
-        button = QPushButton()
+        button = _FormatButton()
         button.setObjectName("formatButton")
-        button.setAccessibleName("Format")
+        button.setAccessibleName(FORMAT_ACCESSIBLE_NAME)
         button.setIcon(toolbar_icon("Format", pad=True))
         button.setStyleSheet(primary_button_style())
         button.setMinimumHeight(28)
@@ -344,7 +376,10 @@ class MainWindow(QMainWindow):
             QKeySequence.SequenceFormat.NativeText
         )
         self._format_idle_text = f"{{·}} Format {hint}".rstrip()
+        self._format_idle_tooltip = f"Format ({hint})" if hint else "Format"
         button.setText(self._format_idle_text)
+        button.setToolTip(self._format_idle_tooltip)
+        button.set_labels((self._format_idle_text, FORMATTING_MESSAGE))
         self._format_button = button
         self._actions.format.enabledChanged.connect(self._on_format_action_enabled)
         button.setEnabled(self._actions.format.isEnabled())
@@ -1034,13 +1069,30 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self) -> None:
-        """Keep Format and Convert disabled for the whole job."""
+        """Block Format and Convert for the whole job.
+
+        The button keeps its full accent face while working and reads
+        ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        """
         has_input = self._input_pane.editor.toPlainText() != ""
         available = has_input and not self._formatting
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
-        self._format_button.setEnabled(available)
+        button = self._format_button
+        button.setEnabled(has_input or self._formatting)
+        if self._formatting:
+            button.setText(FORMATTING_MESSAGE)
+            button.setAccessibleName(FORMATTING_MESSAGE)
+            button.setAccessibleDescription(FORMAT_BUSY_DESCRIPTION)
+            button.setToolTip(FORMAT_BUSY_TOOLTIP)
+            button.setCursor(Qt.CursorShape.BusyCursor)
+        else:
+            button.setText(self._format_idle_text)
+            button.setAccessibleName(FORMAT_ACCESSIBLE_NAME)
+            button.setAccessibleDescription("")
+            button.setToolTip(self._format_idle_tooltip)
+            button.unsetCursor()
         self._actions.convert_python.setEnabled(available)
 
     def _sync_input_state(self) -> None:
