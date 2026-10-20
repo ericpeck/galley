@@ -361,9 +361,11 @@ def _contrast_palette(*, dark: bool) -> QPalette:
         window = QColor("#F3F2F2")
         base = QColor("#FFFFFF")
         text = QColor("#201E1D")
-        disabled_text = QColor("#C2410C")
         placeholder = QColor("#5E5B5B")
-        disabled_placeholder = QColor("#C2410C")
+        # Fake ink, not the app palette. Orange is disabled window text and
+        # green is disabled placeholder, so a swapped role cannot pass.
+        disabled_text = QColor("#C2410C")
+        disabled_placeholder = QColor("#148C2A")
     groups = (
         QPalette.ColorGroup.Active,
         QPalette.ColorGroup.Inactive,
