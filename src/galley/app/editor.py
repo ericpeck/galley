@@ -1,5 +1,8 @@
 """Code editor with a line-number gutter and syntax colors."""
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+
 from PySide6.QtCore import QEvent, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
@@ -22,6 +25,92 @@ GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
 _MARKER_SLOT = 16
 
+PROBLEM_MARKERS = "problem"
+CHANGE_MARKERS = "change"
+FOLD_MARKERS = "fold"
+
+
+@dataclass(frozen=True)
+class GutterLane:
+    """One lane of the gutter. Each marker kind in ``kinds`` that has
+    markers takes one ``column_width`` column, so an empty lane takes no
+    width. The numbers lane has no kinds and gets the rest of the gutter.
+    """
+
+    name: str
+    kinds: tuple[str, ...] = ()
+    column_width: int = _MARKER_SLOT
+
+
+# Gutter lanes, left to right, ahead of the right padding. This order is
+# also the marker priority: where kinds share a line, the first one listed
+# picks the line-number color and the line tint.
+GUTTER_LANES: tuple[GutterLane, ...] = (
+    GutterLane("markers", (PROBLEM_MARKERS, CHANGE_MARKERS)),
+    GutterLane("numbers"),
+    # Reserved for the collapse arrows in #64.
+    GutterLane("fold", (FOLD_MARKERS,)),
+)
+MARKER_KINDS: tuple[str, ...] = tuple(
+    kind for lane in GUTTER_LANES for kind in lane.kinds
+)
+
+
+class LineMarker:
+    """What one marker kind shows on one line of the gutter."""
+
+    def paint(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
+        """Draw in ``rect``, one column of this marker's lane on one line."""
+        raise NotImplementedError
+
+    def number_color(self, palette: QPalette) -> QColor | None:
+        """Color for this line's number, or None for the usual color."""
+        del palette
+        return None
+
+    def line_tint(self, palette: QPalette) -> QColor | None:
+        """Band behind the whole line, or None for no band."""
+        del palette
+        return None
+
+
+class ProblemMarker(LineMarker):
+    """Error marker: a circled exclamation, so the error is not color alone."""
+
+    def paint(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
+        diameter = 12
+        marker_y = rect.top() + max(0, (rect.height() - diameter) // 2)
+        fill = error_color(palette)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawEllipse(rect.left() + 2, marker_y, diameter, diameter)
+        painter.setPen(ink_on(fill, palette))
+        painter.drawText(
+            rect.left() + 2,
+            marker_y,
+            diameter,
+            diameter,
+            int(Qt.AlignmentFlag.AlignCenter),
+            "!",
+        )
+
+    def number_color(self, palette: QPalette) -> QColor | None:
+        return error_color(palette)
+
+    def line_tint(self, palette: QPalette) -> QColor | None:
+        return problem_line_tint(palette)
+
+
+PROBLEM_MARKER = ProblemMarker()
+
+
+@dataclass(frozen=True)
+class GutterLayout:
+    """Where each lane and marker column sits, as ``(left, width)``."""
+
+    lanes: dict[str, tuple[int, int]]
+    columns: dict[str, tuple[int, int]]
+
 
 class LineNumberArea(QWidget):
     """Gutter painted by its editor."""
@@ -43,7 +132,7 @@ class CodeEditor(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._adopting_palette = False
-        self._problem_lines: set[int] = set()
+        self._markers: dict[str, dict[int, LineMarker]] = {}
         self._overlay: QWidget | None = None
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -121,24 +210,71 @@ class CodeEditor(QPlainTextEdit):
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
         measured = _GUTTER_PAD + self.fontMetrics().horizontalAdvance("9") * digits
-        if self._problem_lines:
-            measured += _MARKER_SLOT
+        measured += sum(width for _, width in self._marker_columns())
         return max(GUTTER_MIN_WIDTH, measured)
 
     def line_number_area(self) -> QWidget:
         """Gutter widget. Tests read the painted marker from it."""
         return self._line_numbers
 
-    def problem_lines(self) -> set[int]:
-        """1-based lines that show an error marker."""
-        return set(self._problem_lines)
+    def gutter_layout(self, width: int | None = None) -> GutterLayout:
+        """Lanes and marker columns for a gutter ``width`` pixels wide.
 
-    def set_problem_lines(self, lines: set[int]) -> None:
-        """Mark ``lines`` with an error tint and a gutter marker."""
-        self._problem_lines = set(lines)
+        Marker lanes are as wide as their columns. The numbers lane takes
+        what is left before the right padding. ``width`` defaults to the
+        gutter's current width.
+        """
+        if width is None:
+            width = self._line_numbers.width()
+        columns = dict(self._marker_columns())
+        lane_widths = {
+            lane.name: sum(columns.get(kind, 0) for kind in lane.kinds)
+            for lane in GUTTER_LANES
+        }
+        lane_widths["numbers"] = max(0, width - _GUTTER_PAD - sum(lane_widths.values()))
+        lanes: dict[str, tuple[int, int]] = {}
+        placed: dict[str, tuple[int, int]] = {}
+        left = 0
+        for lane in GUTTER_LANES:
+            lanes[lane.name] = (left, lane_widths[lane.name])
+            column_left = left
+            for kind in lane.kinds:
+                if kind in columns:
+                    placed[kind] = (column_left, columns[kind])
+                    column_left += columns[kind]
+            left += lane_widths[lane.name]
+        return GutterLayout(lanes, placed)
+
+    def line_markers(self, kind: str) -> dict[int, LineMarker]:
+        """1-based lines and their ``kind`` markers."""
+        return dict(self._markers.get(_known_kind(kind), {}))
+
+    def set_line_markers(self, kind: str, markers: Mapping[int, LineMarker]) -> None:
+        """Show ``markers`` (1-based line to marker) as this kind's markers.
+
+        They replace the kind's previous markers. An empty mapping clears
+        the kind, and its column takes no width again.
+        """
+        kind = _known_kind(kind)
+        if markers:
+            self._markers[kind] = dict(markers)
+        else:
+            self._markers.pop(kind, None)
         self._update_line_number_width(0)
         self._highlight_current_line()
         self._line_numbers.update()
+
+    def clear_line_markers(self, kind: str) -> None:
+        """Remove every ``kind`` marker."""
+        self.set_line_markers(kind, {})
+
+    def problem_lines(self) -> set[int]:
+        """1-based lines that show an error marker."""
+        return set(self._markers.get(PROBLEM_MARKERS, {}))
+
+    def set_problem_lines(self, lines: set[int]) -> None:
+        """Mark ``lines`` with an error tint and a gutter marker."""
+        self.set_line_markers(PROBLEM_MARKERS, dict.fromkeys(lines, PROBLEM_MARKER))
 
     def syntax_mode(self) -> SyntaxMode:
         """``"JSON"`` or ``"YAML"``, the colors the editor applies."""
@@ -208,26 +344,47 @@ class CodeEditor(QPlainTextEdit):
         painter.fillRect(event.rect(), self.gutter_color())
         painter.setPen(self.line_number_color())
         painter.setFont(self.font())
+        palette = self.palette()
+        layout = self.gutter_layout()
+        numbers_left, numbers_width = layout.lanes["numbers"]
+        line_height = self.fontMetrics().height()
+        # Kinds in priority order, so the first marker found on a line wins.
+        active = [
+            (self._markers[kind], layout.columns[kind])
+            for kind in MARKER_KINDS
+            if kind in self._markers
+        ]
         block = self.firstVisibleBlock()
         number = block.blockNumber()
         top = int(
             self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
         )
         bottom = top + int(self.blockBoundingRect(block).height())
-        area_width = self._line_numbers.width() - _GUTTER_PAD
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 lineno = number + 1
-                if lineno in self._problem_lines:
-                    self._paint_error_marker(painter, top)
-                    painter.setPen(error_color(self.palette()))
-                else:
-                    painter.setPen(self.line_number_color())
+                number_color = None
+                for markers, (column_left, column_width) in active:
+                    marker = markers.get(lineno)
+                    if marker is None:
+                        continue
+                    painter.save()
+                    marker.paint(
+                        painter,
+                        QRect(column_left, top, column_width, line_height),
+                        palette,
+                    )
+                    painter.restore()
+                    if number_color is None:
+                        number_color = marker.number_color(palette)
+                if number_color is None:
+                    number_color = self.line_number_color()
+                painter.setPen(number_color)
                 painter.drawText(
-                    _MARKER_SLOT if self._problem_lines else 0,
+                    numbers_left,
                     top,
-                    area_width - (_MARKER_SLOT if self._problem_lines else 0),
-                    self.fontMetrics().height(),
+                    numbers_width,
+                    line_height,
                     int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
                     str(lineno),
                 )
@@ -271,17 +428,39 @@ class CodeEditor(QPlainTextEdit):
 
     def _highlight_current_line(self) -> None:
         selections: list[QTextEdit.ExtraSelection] = []
+        tints = self._line_tints()
         current = self.textCursor().blockNumber() + 1
-        if current not in self._problem_lines:
+        if current not in tints:
             band = self.palette().color(QPalette.ColorRole.Midlight)
             selections.append(self._line_band(self.textCursor(), band))
-        block = self.document().firstBlock()
-        while block.isValid():
-            if block.blockNumber() + 1 in self._problem_lines:
-                tint = problem_line_tint(self.palette())
-                selections.append(self._line_band(QTextCursor(block), tint))
-            block = block.next()
+        document = self.document()
+        for lineno in sorted(tints):
+            block = document.findBlockByNumber(lineno - 1)
+            if block.isValid():
+                selections.append(self._line_band(QTextCursor(block), tints[lineno]))
         self.setExtraSelections(selections)
+
+    def _line_tints(self) -> dict[int, QColor]:
+        """Band color per 1-based line, from the highest-priority marker."""
+        palette = self.palette()
+        tints: dict[int, QColor] = {}
+        for kind in MARKER_KINDS:
+            for lineno, marker in self._markers.get(kind, {}).items():
+                if lineno in tints:
+                    continue
+                tint = marker.line_tint(palette)
+                if tint is not None:
+                    tints[lineno] = tint
+        return tints
+
+    def _marker_columns(self) -> list[tuple[str, int]]:
+        """Kinds that have markers, in lane order, with their column widths."""
+        return [
+            (kind, lane.column_width)
+            for lane in GUTTER_LANES
+            for kind in lane.kinds
+            if kind in self._markers
+        ]
 
     def _line_band(
         self, cursor: QTextCursor, color: QColor
@@ -293,20 +472,8 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor.clearSelection()
         return selection
 
-    def _paint_error_marker(self, painter: QPainter, top: int) -> None:
-        """Draw a circled exclamation so the error is not color alone."""
-        diameter = 12
-        marker_y = top + max(0, (self.fontMetrics().height() - diameter) // 2)
-        fill = error_color(self.palette())
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(fill)
-        painter.drawEllipse(2, marker_y, diameter, diameter)
-        painter.setPen(ink_on(fill, self.palette()))
-        painter.drawText(
-            2,
-            marker_y,
-            diameter,
-            diameter,
-            int(Qt.AlignmentFlag.AlignCenter),
-            "!",
-        )
+
+def _known_kind(kind: str) -> str:
+    if kind not in MARKER_KINDS:
+        raise ValueError(f"unknown marker kind {kind!r}; add it to GUTTER_LANES")
+    return kind
