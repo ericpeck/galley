@@ -1,4 +1,4 @@
-"""Remember whether the Problems pane is open, minimized, or closed."""
+"""Remember Problems pane state and whether Input and Output are stacked."""
 
 from PySide6.QtCore import QSettings
 
@@ -11,6 +11,7 @@ STRIP_WIDTH = 28
 
 _STATE_KEY = "problems/state"
 _WIDTH_KEY = "problems/width"
+_STACKED_KEY = "view/stackPanes"
 _STATES = frozenset({STATE_OPEN, STATE_MINIMIZED, STATE_CLOSED})
 
 
@@ -40,6 +41,28 @@ def save_problems_preferences(state: str, width: int) -> None:
     settings.setValue(_STATE_KEY, state)
     settings.setValue(_WIDTH_KEY, width)
     settings.sync()
+
+
+def load_stacked_panes() -> bool:
+    """Return whether Input was last saved over Output."""
+    return _as_bool(problems_settings().value(_STACKED_KEY, False))
+
+
+def save_stacked_panes(stacked: bool) -> None:
+    """Store the pane layout so the next launch can restore it."""
+    settings = problems_settings()
+    settings.setValue(_STACKED_KEY, bool(stacked))
+    settings.sync()
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    if isinstance(value, int):
+        return value != 0
+    return False
 
 
 def _width(value: object) -> int:

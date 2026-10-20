@@ -1,6 +1,7 @@
 """Galley main window: menus, toolbar, panes, and status bar."""
 
 import time
+from typing import NamedTuple
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
@@ -48,7 +49,9 @@ from galley.app.problems_settings import (
     STATE_OPEN,
     STRIP_WIDTH,
     load_problems_preferences,
+    load_stacked_panes,
     save_problems_preferences,
+    save_stacked_panes,
 )
 from galley.app.splitter import PaneSplitter
 from galley.app.status_message import StatusMessage
@@ -108,6 +111,13 @@ JSON_PROGRESS_BYTES = 20 * _SI_MB
 JSON_WARNING_BYTES = 100 * _SI_MB
 
 
+class _EditorView(NamedTuple):
+    position: int
+    anchor: int
+    vertical: int
+    horizontal: int
+
+
 class MainWindow(QMainWindow):
     """The single Galley window in its empty, ready state."""
 
@@ -162,6 +172,7 @@ class MainWindow(QMainWindow):
         self._sync_direction()
         self._splitter.apply_even_split()
         self._layout_problems()
+        self._restore_stacked_panes()
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -262,6 +273,8 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_lines)
         guides.addAction(actions.guides_depth)
         view.addAction(actions.show_problems)
+        view.addSeparator()
+        view.addAction(actions.stack_panes)
         view.addSeparator()
         view.addAction(actions.full_screen)
 
@@ -476,6 +489,7 @@ class MainWindow(QMainWindow):
         actions.format.triggered.connect(self._format)
         actions.convert_python.triggered.connect(self._convert_python)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
+        actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
         self._cancel_button.clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
@@ -518,7 +532,6 @@ class MainWindow(QMainWindow):
         rail = self._splitter.rail
         if rail is not None:
             rail.swap_button.clicked.connect(self._not_yet)
-            rail.layout_button.clicked.connect(self._not_yet)
 
         application = QApplication.instance()
         if isinstance(application, QApplication):
@@ -819,6 +832,36 @@ class MainWindow(QMainWindow):
 
     def _on_show_problems_toggled(self, checked: bool) -> None:
         self._set_problems_state(STATE_OPEN if checked else STATE_CLOSED)
+
+    def _restore_stacked_panes(self) -> None:
+        stacked = load_stacked_panes()
+        action = self._actions.stack_panes
+        action.blockSignals(True)
+        action.setChecked(stacked)
+        action.blockSignals(False)
+        self._apply_stacked_layout(stacked)
+
+    def _on_stack_panes_toggled(self, stacked: bool) -> None:
+        self._apply_stacked_layout(stacked)
+        save_stacked_panes(stacked)
+
+    def _apply_stacked_layout(self, stacked: bool) -> None:
+        splitter = self._splitter
+        if splitter is None:
+            return
+        target = Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
+        if splitter.orientation() == target:
+            return
+        views = tuple(_capture_editor(editor) for editor in self._editors())
+        splitter.apply_stacked(stacked)
+        self._restore_editor_views(views)
+        # A later resize scrolls the cursor into view. Put the scroll back
+        # once that layout pass has finished.
+        QTimer.singleShot(0, self, lambda: self._restore_editor_views(views))
+
+    def _restore_editor_views(self, views: tuple[_EditorView, ...]) -> None:
+        for editor, view in zip(self._editors(), views, strict=True):
+            _restore_editor(editor, view)
 
     def _on_status_clicked(self) -> None:
         if self._problems_pane.count() == 0:
@@ -1152,6 +1195,25 @@ def _replace_as_one_undo(editor: CodeEditor, text: str) -> None:
     cursor.insertText(text)
     cursor.endEditBlock()
     editor.setTextCursor(cursor)
+
+
+def _capture_editor(editor: CodeEditor) -> _EditorView:
+    cursor = editor.textCursor()
+    return _EditorView(
+        cursor.position(),
+        cursor.anchor(),
+        editor.verticalScrollBar().value(),
+        editor.horizontalScrollBar().value(),
+    )
+
+
+def _restore_editor(editor: CodeEditor, view: _EditorView) -> None:
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition(view.anchor)
+    cursor.setPosition(view.position, QTextCursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    editor.verticalScrollBar().setValue(view.vertical)
+    editor.horizontalScrollBar().setValue(view.horizontal)
 
 
 def _editor_from(widget: QWidget | None) -> CodeEditor | None:
