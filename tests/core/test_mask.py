@@ -9,7 +9,14 @@ import pytest
 from ruamel.yaml import YAML
 
 from galley.core.errors import MAX_DEPTH
-from galley.core.format import dump_value, format_document, load_document
+from galley.core.format import (
+    YAML_DUMP_WIDTH,
+    _dump_parsed,
+    _dump_yaml_value,
+    dump_value,
+    format_document,
+    load_document,
+)
 from galley.core.mask import (
     DEFAULT_MASK_KEYS,
     MASK,
@@ -568,23 +575,37 @@ LONG_ADDRESS = (
 )
 
 
-def test_format_keeping_mask_keeps_wrapped_yaml_lines() -> None:
+def test_format_keeping_mask_keeps_long_yaml_lines() -> None:
     plain = format_document(LONG_ADDRESS, "yaml", "yaml")
     value = load_document(LONG_ADDRESS, "yaml")
     for mode in ("masked", "fake"):
         copied = dump_value(copy_as_tree(value, mode, rng=random.Random(8)), "yaml")  # type: ignore[arg-type]
-        assert _line_count(copied) == _line_count(plain) == 3
+        assert _line_count(copied) == _line_count(plain) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Open question for #66: the YAML emitter wraps a string longer than "
-        "its 80-column width over several lines, and '•••' fits on one. "
-        "Reported under the stop rule instead of inventing a rule."
-    ),
-)
 def test_masked_long_yaml_string_keeps_the_line_count() -> None:
     plain = format_document(LONG_ADDRESS, "yaml", "yaml")
     masked = dump_value(mask_tree(load_document(LONG_ADDRESS, "yaml")).value, "yaml")
-    assert _line_count(masked) == _line_count(plain)
+    assert _line_count(masked) == _line_count(plain) == 2
+
+
+@pytest.mark.parametrize("source", ["json", "yaml"])
+def test_format_does_not_wrap_a_long_yaml_string(source: str) -> None:
+    long_value = " ".join(["Example"] * 400)
+    text = (
+        json.dumps({"note": long_value, "quoted": "a: " + long_value})
+        if source == "json"
+        else f"note: {long_value}\nquoted: 'a: {long_value}'\n"
+    )
+    plain = format_document(text, source, "yaml")
+    assert plain == f"note: {long_value}\nquoted: 'a: {long_value}'\n"
+    assert plain.splitlines()[0] == f"note: {long_value}"
+
+
+def test_c_and_pure_yaml_dumps_share_the_width() -> None:
+    value = {"note": "Example " * 2000, "items": ["Example Street " * 500]}
+    pure = _dump_parsed(value, pure=True)
+    assert pure == _dump_parsed(value, pure=False) == _dump_yaml_value(value)
+    assert pure == dump_value(value, "yaml")
+    assert _line_count(pure) == 3
+    assert YAML_DUMP_WIDTH == 2**31 - 1

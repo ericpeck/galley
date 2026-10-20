@@ -50,6 +50,13 @@ from galley.core.errors import (
 # Python's recursion limit, so it is built with an explicit stack instead.
 _RUAMEL_SAFE_DEPTH = 256
 
+# Line width for every YAML dump. ruamel wraps a scalar that contains spaces
+# once a line passes ``width`` (80 by default), so masking a long value to
+# "•••" would drop lines. The largest C int is the widest value the
+# ruamel.yaml.clib emitter accepts, and no line in a document Galley opens
+# reaches it, so neither emitter wraps. Format and masked output share it.
+YAML_DUMP_WIDTH = 2**31 - 1
+
 # Test seam for the pure-Python retry. Unset during normal use. The spinner
 # test sets the force flag so the C attempt fails, and the gate path so that
 # retry stays in progress long enough to observe the busy indicator.
@@ -234,12 +241,18 @@ def _load_parsed(
 
 def _dump_parsed(value: object, *, pure: bool) -> str:
     """Dump ``value`` with safe YAML, using the pure emitter when asked."""
-    yaml = _safe_yaml(pure=pure)
-    yaml.default_flow_style = False
-    yaml.representer.sort_base_mapping_type_on_output = False
+    yaml = _block_dumper(_safe_yaml(pure=pure))
     buffer = StringIO()
     yaml.dump(value, buffer)
     return buffer.getvalue()
+
+
+def _block_dumper(yaml: YAML) -> YAML:
+    """Set the block style, key order and width every YAML dump shares."""
+    yaml.default_flow_style = False
+    yaml.representer.sort_base_mapping_type_on_output = False
+    yaml.width = YAML_DUMP_WIDTH
+    return yaml
 
 
 def _has_tab(text: str | bytes) -> bool:
@@ -939,9 +952,7 @@ def _dump_json(value: object) -> str:
 
 def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with the same safe block style ``format_yaml`` uses."""
-    yaml = YAML(typ="safe")
-    yaml.default_flow_style = False
-    yaml.representer.sort_base_mapping_type_on_output = False
+    yaml = _block_dumper(YAML(typ="safe"))
     buffer = StringIO()
     try:
         yaml.dump(value, buffer)
