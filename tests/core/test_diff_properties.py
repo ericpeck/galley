@@ -5,16 +5,25 @@ the two sides share keys often and the suite stays fast on Windows CI.
 """
 
 import json
+import os
 from collections import Counter
 from dataclasses import replace
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from galley.core.diff import Change, Doc, diff, load_document
 from galley.core.keypath import render_path
 
-_SETTINGS = settings(max_examples=150, deadline=None)
+# CI runs the same examples every time (GitHub Actions sets CI), so a red
+# build is reproducible. Local runs stay random and keep exploring.
+_SETTINGS = settings(
+    max_examples=150, deadline=None, derandomize=bool(os.environ.get("CI"))
+)
+
+# SequenceMatcher matched {} across every other item here and reported six
+# changes for five items (macOS CI, f8ce29b).
+_CROSSING_MATCH = ({"items": [{}, 1, 0, 1, 0]}, {"items": [1, 1, {}]})
 
 _KEYS = st.sampled_from(["a", "b", "c", "a.b", "0"])
 _SCALARS = st.one_of(
@@ -125,6 +134,7 @@ def test_a_value_equals_itself_without_spans(value: object) -> None:
 
 @_SETTINGS
 @given(_PAIRS)
+@example(_CROSSING_MATCH)
 def test_swapping_sides_mirrors_every_change(pair: tuple[object, object]) -> None:
     left, right = pair
     forward = diff(_load(left), _load(right)).changes
@@ -204,7 +214,8 @@ def test_a_unique_subtree_under_a_new_parent_is_moved(
 
 @_SETTINGS
 @given(_array_pairs())
-def test_aligned_arrays_report_no_more_changes_than_edits(
+@example(_CROSSING_MATCH)
+def test_aligned_arrays_never_report_more_than_index_matching(
     pair: tuple[object, object],
 ) -> None:
     left, right = pair
@@ -213,8 +224,10 @@ def test_aligned_arrays_report_no_more_changes_than_edits(
     assert isinstance(left, dict) and isinstance(right, dict)
     left_items = left["items"]
     right_items = right["items"]
-    # Index matching would report up to every item; alignment stays within
-    # the larger side's length and finds nothing for equal arrays.
+    # The engine keeps whichever pairing reports fewer top-level changes:
+    # its alignment or position order. Position order reports at most
+    # max(len) top-level changes, and each of these items differs from
+    # another in exactly one change, so the total is bounded the same way.
     assert len(result.changes) <= max(len(left_items), len(right_items))
     assert (result.changes == []) == (
         json.dumps(left_items, sort_keys=True)

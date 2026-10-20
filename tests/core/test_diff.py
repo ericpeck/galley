@@ -202,6 +202,19 @@ def test_a_replace_block_pairs_by_position() -> None:
     ]
 
 
+def test_a_crossing_match_falls_back_to_position_pairing() -> None:
+    # SequenceMatcher would match {} (left [0], right [2]) and leave the
+    # other six items unpaired; pairing by position reports four changes.
+    result = diff(_json([{}, 1, 0, 1, 0]), _json([1, 1, {}]))
+    assert result.aligned is True
+    assert [(c.kind, c.path_text) for c in result.changes] == [
+        ("changed", "[0]"),
+        ("changed", "[2]"),
+        ("removed", "[3]"),
+        ("removed", "[4]"),
+    ]
+
+
 def test_deleting_from_the_middle_is_one_removed_item() -> None:
     assert _changes([1, 2, 3, 4], [1, 2, 4]) == [("removed", "[2]")]
 
