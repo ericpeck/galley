@@ -8,7 +8,14 @@ measures anything.
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QPalette
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QColor,
+    QFont,
+    QGuiApplication,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -417,11 +424,25 @@ def _tool_button(window, text: str) -> QToolButton:
 
 
 def _label_ink(button: QToolButton) -> tuple[QColor, QColor]:
-    """Strongest opaque label pixel and the button's most common pixel.
+    """The color the style draws the label in, and the button's face.
 
-    The label sits right of the icon, so the left 40% is skipped.
+    The label sits right of the icon, so the left 40% is skipped. Text is
+    grabbed without antialiasing, so every glyph pixel is the pen the style
+    chose. With antialiasing, a stem that falls between pixels never
+    reaches full ink: the Windows runner drew the palette's #81807F
+    "Sort keys" label with no pixel past 80% coverage (#979696), while
+    "Paste", whose "P" stem lands on a whole pixel, reached its full ink.
+    Contrast rules apply to the text color, which this measures; a style
+    that drew another color (an etch, a fade, a different role) still fails.
     """
-    image = button.grab().toImage()
+    font = button.font()
+    exact = QFont(font)
+    exact.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+    button.setFont(exact)
+    try:
+        image = button.grab().toImage()
+    finally:
+        button.setFont(font)
     counts: dict[int, int] = {}
     for y in range(2, image.height() - 2):
         for x in range(int(image.width() * 0.4), image.width() - 3):
