@@ -123,9 +123,12 @@ class StatusBar(QStatusBar):
         if layout is not None:
             layout.setContentsMargins(8, 0, 8, 0)
 
-    def set_state(self, text: str) -> None:
-        """Show ordinary state text that does not open the pane."""
-        self._message.show_text(text)
+    def set_state(self, text: str, detail: str = "") -> None:
+        """Show ordinary state text that does not open the pane.
+
+        ``detail`` goes in the tooltip and accessible description only.
+        """
+        self._message.show_text(text, detail)
 
     def set_problem_count(self, count: int) -> None:
         """Show ``N problems`` in the state slot and accept a click."""
@@ -163,8 +166,12 @@ class StatusBar(QStatusBar):
     def info_text(self) -> str:
         return self._direction.text()
 
-    def set_busy(self, busy: Busy) -> None:
-        """Show the spinner, the progress bar with Cancel, or neither."""
+    def set_busy(self, busy: Busy, name: str = SPINNER_ACCESSIBLE_NAME) -> None:
+        """Show the spinner, the progress bar with Cancel, or neither.
+
+        ``name`` is the spinner's accessible name, such as ``Opening``.
+        """
+        self._spinner.setAccessibleName(name)
         if busy is Busy.PROGRESS:
             self._progress.show()
             self._spinner.hide()

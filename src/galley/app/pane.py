@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Never
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -116,6 +116,14 @@ class PaneWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_drop_target(self, active: bool) -> None:
+        """Draw the focus ring while a file is dragged over this pane."""
+        if self.property("paneDropTarget") is active:
+            return
+        self.setProperty("paneDropTarget", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def _build_tab_strip(self) -> None:
         tab = QLabel(self.spec.title)
         tab.setObjectName(f"{self.spec.name}TabTitle")
@@ -180,7 +188,7 @@ class PaneWidget(QWidget):
         overlay = QWidget()
         overlay.setObjectName(f"empty{self.spec.name.capitalize()}")
         overlay.setStyleSheet("background: transparent;")
-        heading = QLabel("Paste JSON or YAML, or drop a file here")
+        heading = QLabel(_source_empty_heading())
         heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -265,6 +273,16 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(self.count_label)
         row.addWidget(self.copy_button)
+
+
+def _source_empty_heading() -> str:
+    """Empty Input heading with this platform's Open shortcut."""
+    shortcut = QKeySequence(QKeySequence.StandardKey.Open).toString(
+        QKeySequence.SequenceFormat.NativeText
+    )
+    if not shortcut:
+        return "Paste JSON or YAML, or drop a file here."
+    return f"Paste JSON or YAML, or drop a file here. {shortcut} to open."
 
 
 def _style_empty_heading(heading: QLabel) -> None:

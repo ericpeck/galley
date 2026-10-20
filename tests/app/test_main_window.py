@@ -148,7 +148,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Quit",
     ]
-    assert _labels(_menu(window, "File")) == ["Open file…"]
+    assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
     assert _labels(_menu(window, "Edit")) == [
         "Undo",
         "Redo",
@@ -294,7 +294,7 @@ def test_empty_state(qtbot) -> None:
     assert direction is not None and direction.text() == "JSON → JSON"
     assert caption is not None and "Input 1" in caption.text()
     assert input_title is not None
-    assert input_title.text() == "Paste JSON or YAML, or drop a file here"
+    assert input_title.text().startswith("Paste JSON or YAML, or drop a file here.")
     assert input_title.isVisible()
     assert hint is not None
     assert hint.text() == "⌨ ⌘V to paste · Ctrl+V on Windows"
