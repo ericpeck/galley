@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.about import show_about_dialog
-from galley.app.actions import ShellActions
+from galley.app.actions import ShellActions, coming_soon_wrapper
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.pane import PaneRole, PaneWidget
@@ -537,6 +537,17 @@ class MainWindow(QMainWindow):
         if isinstance(application, QApplication):
             application.focusChanged.connect(self._on_focus_changed)
             application.installEventFilter(self)
+        self._shield_unbuilt_controls()
+
+    def _shield_unbuilt_controls(self) -> None:
+        """Keep Coming soon on disabled buttons that are not toolbar actions."""
+        actions = self._actions
+        open_button = self._input_pane.open_button
+        if open_button is not None:
+            coming_soon_wrapper(open_button, actions.open_file)
+        for pane in (self._input_pane, self._output_pane):
+            coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
+            coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format from whichever editor has focus."""
@@ -1120,12 +1131,12 @@ def _add_menu(bar: QMenuBar, title: str) -> QMenu:
     return menu
 
 
-def _tool_button(action: QAction) -> QToolButton:
+def _tool_button(action: QAction) -> QWidget:
     button = QToolButton()
     button.setDefaultAction(action)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     button.setAutoRaise(True)
-    return button
+    return coming_soon_wrapper(button, action)
 
 
 def _monotonic() -> float:
