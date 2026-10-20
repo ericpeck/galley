@@ -4,6 +4,9 @@ The Format button fill is the one UI surface that names the brand hex.
 Everything else asks the palette, which the light samples seed.
 """
 
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
+
 from galley.app.theme import ACCENT
 
 
@@ -72,24 +75,45 @@ def progress_style() -> str:
 
 
 def menu_style() -> str:
-    """Menu bar and menus. The selected row uses the link role."""
-    return """
-        QMenuBar {
+    """Menu bar and menus. The selected row uses the link role.
+
+    Disabled rows use the disabled window text. Fusion ignores
+    ``palette(disabled, …)`` on a menu item and etches a brighter color,
+    so that role is written out as components from the current palette.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    disabled = palette.color(
+        QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText
+    )
+    disabled_ink = f"rgb({disabled.red()}, {disabled.green()}, {disabled.blue()})"
+    return f"""
+        QMenuBar {{
             background: palette(window);
+        }}
+        QMenuBar::item {{
             color: palette(window-text);
-        }
-        QMenuBar::item:selected {
+        }}
+        QMenuBar::item:selected {{
             background: palette(link);
             color: palette(highlighted-text);
-        }
-        QMenu {
+        }}
+        QMenuBar::item:disabled {{
+            color: {disabled_ink};
+        }}
+        QMenu {{
             background: palette(window);
+        }}
+        QMenu::item {{
             color: palette(window-text);
-        }
-        QMenu::item:selected {
+        }}
+        QMenu::item:selected {{
             background: palette(link);
             color: palette(highlighted-text);
-        }
+        }}
+        QMenu::item:disabled {{
+            color: {disabled_ink};
+        }}
         """
 
 

@@ -5,13 +5,9 @@ from typing import NamedTuple
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
-    QAction,
     QCloseEvent,
     QKeyEvent,
     QKeySequence,
-    QPainter,
-    QPaintEvent,
-    QPalette,
     QResizeEvent,
     QShowEvent,
     QTextCursor,
@@ -19,9 +15,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
@@ -30,13 +23,12 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from galley.app.about import show_about_dialog
-from galley.app.actions import ShellActions, coming_soon_wrapper, is_unbuilt
+from galley.app.actions import ShellActions, coming_soon_wrapper
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
@@ -65,6 +57,7 @@ from galley.app.style import (
     status_bar_style,
 )
 from galley.app.tab_repair import replace_leading_tabs
+from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.format import _has_tab
 
@@ -359,57 +352,7 @@ class MainWindow(QMainWindow):
         return button
 
     def _build_toolbar(self) -> QWidget:
-        actions = self._actions
-        toolbar = QWidget()
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMinimumHeight(56)
-        toolbar.setAutoFillBackground(True)
-
-        indent = QComboBox()
-        indent.setObjectName("indentSize")
-        indent.setAccessibleName("Indent size")
-        indent.setToolTip("Indent size")
-        indent.addItems(["2 spaces", "4 spaces", "Tab"])
-
-        tray = _UndoRedoTray()
-        tray_row = QHBoxLayout(tray)
-        tray_row.setContentsMargins(2, 2, 2, 2)
-        tray_row.setSpacing(0)
-        tray_row.addWidget(_tool_button(actions.undo))
-        tray_row.addWidget(_tool_button(actions.redo))
-
-        format_column = QWidget()
-        format_layout = QVBoxLayout(format_column)
-        format_layout.setContentsMargins(0, 2, 0, 2)
-        format_layout.setSpacing(0)
-        format_layout.addWidget(self._format_button)
-        format_layout.addWidget(self._editing)
-
-        row = QHBoxLayout(toolbar)
-        row.setContentsMargins(12, 4, 12, 4)
-        row.setSpacing(4)
-        row.addWidget(_tool_button(actions.paste))
-        row.addWidget(_tool_button(actions.copy))
-        row.addSpacing(16)
-        row.addWidget(tray)
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.outdent))
-        row.addWidget(_tool_button(actions.indent))
-        row.addWidget(indent)
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.sort_keys))
-        row.addWidget(_tool_button(actions.minify))
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.expand_all))
-        row.addWidget(_tool_button(actions.collapse_all))
-        row.addSpacing(16)
-        row.addWidget(_tool_button(actions.validate))
-        row.addWidget(_tool_button(actions.convert_python))
-        row.addStretch(1)
-        row.addWidget(_tool_button(actions.find))
-        row.addSpacing(8)
-        row.addWidget(format_column)
-        return toolbar
+        return MainToolbar(self._actions, self._format_button, self._editing)
 
     def _build_status_bar(self) -> tuple[StatusMessage, QLabel]:
         status = self.statusBar()
@@ -1141,51 +1084,6 @@ def _add_menu(bar: QMenuBar, title: str) -> QMenu:
     menu = bar.addMenu(title)
     menu.setObjectName("menu" + title.replace(" ", ""))
     return menu
-
-
-_ICON_ONLY = frozenset({"Outdent", "Indent", "Expand all", "Collapse all"})
-
-
-def _tool_button(action: QAction) -> QWidget:
-    button = QToolButton()
-    button.setDefaultAction(action)
-    icon_only = action.text() in _ICON_ONLY
-    icon = toolbar_icon(action.text(), pad=not icon_only)
-    if not icon.isNull():
-        action.setIcon(icon)
-        button.setIcon(icon)
-    if icon_only:
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        button.setAccessibleName(action.text())
-        if not is_unbuilt(action):
-            shortcut = action.shortcut().toString(
-                QKeySequence.SequenceFormat.NativeText
-            )
-            tip = action.text() if not shortcut else f"{action.text()} ({shortcut})"
-            button.setToolTip(tip)
-    elif not icon.isNull():
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    else:
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-    button.setAutoRaise(True)
-    return coming_soon_wrapper(button, action)
-
-
-class _UndoRedoTray(QFrame):
-    """Shared rounded tray. No stylesheet, so the buttons keep platform text."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setObjectName("undoRedoTray")
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self.palette().color(QPalette.ColorRole.AlternateBase))
-        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 4, 4)
-        painter.end()
 
 
 def _monotonic() -> float:
