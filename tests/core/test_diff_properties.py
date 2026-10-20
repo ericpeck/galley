@@ -12,7 +12,7 @@ from dataclasses import replace
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from galley.core.diff import Change, Doc, diff, load_document
+from galley.core.diff import Change, Doc, _summary, diff, load_document
 from galley.core.keypath import render_path
 
 # CI runs the same examples every time (GitHub Actions sets CI), so a red
@@ -21,8 +21,9 @@ _SETTINGS = settings(
     max_examples=150, deadline=None, derandomize=bool(os.environ.get("CI"))
 )
 
-# SequenceMatcher matched {} across every other item here and reported six
-# changes for five items (macOS CI, f8ce29b).
+# SequenceMatcher matches {} across every other item here and reports six
+# changes for five items. That broke an earlier max(len) bound on macOS CI
+# at f8ce29b; the round trip and the len(left) + len(right) bound hold.
 _CROSSING_MATCH = ({"items": [{}, 1, 0, 1, 0]}, {"items": [1, 1, {}]})
 
 _KEYS = st.sampled_from(["a", "b", "c", "a.b", "0"])
@@ -105,6 +106,100 @@ def _mirror(change: Change) -> Change:
     if change.kind == "moved":
         return replace(swapped, moved_to=change.path, moved_to_text=change.path_text)
     return swapped
+
+
+def _same(left: object, right: object) -> bool:
+    """Equality under the diff's value rules: 1 == 1.0, true != 1, NaN == NaN."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _same(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _same(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, float) and isinstance(right, float):
+        if left != left and right != right:
+            return True
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    return type(left) is type(right) and left == right
+
+
+def _at(value: object, path: tuple[str | int, ...]) -> object:
+    for segment in path:
+        value = value[segment]
+    return value
+
+
+def _apply(left: object, right: object, changes: list[Change]) -> object:
+    """Rebuild the right document from the left one and ``changes``.
+
+    A Change carries summaries, which are cut at 80 characters, so the new
+    values of Added, Changed, and Moved are read from ``right`` at their
+    right path. That lookup is test-only. Everything else comes from the
+    changes: which left values go (Removed, the source of a Moved), which
+    are replaced (Changed), and where right-only values go in each parent
+    (Added, the target of a Moved). Kept array items keep their order, so
+    they fill the right indexes no insertion takes.
+    """
+    gone = {c.path for c in changes if c.kind in ("removed", "moved")}
+    replaced = {c.path: c.right_path for c in changes if c.kind == "changed"}
+    inserted: dict[tuple[str | int, ...], list[str | int]] = {}
+    for change in changes:
+        target = change.right_path if change.kind in ("added", "moved") else None
+        if target is not None:
+            inserted.setdefault(target[:-1], []).append(target[-1])
+    for change in changes:
+        if change.kind in ("removed", "changed", "moved"):
+            assert change.old == _summary(_at(left, change.path))
+        if change.right_path is not None:
+            assert change.new == _summary(_at(right, change.right_path))
+
+    def rebuild(
+        node: object,
+        left_path: tuple[str | int, ...],
+        right_path: tuple[str | int, ...],
+    ) -> object:
+        if left_path in replaced:
+            assert replaced[left_path] == right_path
+            return _at(right, right_path)
+        extra = inserted.get(right_path, [])
+        if isinstance(node, dict):
+            result = {
+                key: rebuild(child, (*left_path, key), (*right_path, key))
+                for key, child in node.items()
+                if (*left_path, key) not in gone
+            }
+            for key in extra:
+                assert isinstance(key, str) and key not in result
+                result[key] = _at(right, (*right_path, key))
+            return result
+        if isinstance(node, list):
+            kept = [
+                (index, child)
+                for index, child in enumerate(node)
+                if (*left_path, index) not in gone
+            ]
+            slots = set(extra)
+            size = len(kept) + len(slots)
+            assert all(isinstance(slot, int) and slot < size for slot in slots)
+            free = iter(index for index in range(size) if index not in slots)
+            result: list[object] = [None] * size
+            for index, child in kept:
+                position = next(free)
+                result[position] = rebuild(
+                    child, (*left_path, index), (*right_path, position)
+                )
+            for slot in slots:
+                result[slot] = _at(right, (*right_path, slot))
+            return result
+        assert not extra
+        return node
+
+    return rebuild(left, (), ())
 
 
 def _paths(value: object) -> set[tuple[str | int, ...]]:
@@ -215,21 +310,25 @@ def test_a_unique_subtree_under_a_new_parent_is_moved(
 @_SETTINGS
 @given(_array_pairs())
 @example(_CROSSING_MATCH)
-def test_aligned_arrays_never_report_more_than_index_matching(
-    pair: tuple[object, object],
-) -> None:
+def test_aligned_arrays_stay_within_both_lengths(pair: tuple[object, object]) -> None:
     left, right = pair
     result = diff(_load(left), _load(right))
     assert result.aligned
     assert isinstance(left, dict) and isinstance(right, dict)
     left_items = left["items"]
     right_items = right["items"]
-    # The engine keeps whichever pairing reports fewer top-level changes:
-    # its alignment or position order. Position order reports at most
-    # max(len) top-level changes, and each of these items differs from
-    # another in exactly one change, so the total is bounded the same way.
-    assert len(result.changes) <= max(len(left_items), len(right_items))
-    assert (result.changes == []) == (
-        json.dumps(left_items, sort_keys=True)
-        == json.dumps(right_items, sort_keys=True)
-    )
+    # Each item is either paired, costing at most one change for these
+    # small items, or unpaired, costing one Added or Removed.
+    assert len(result.changes) <= len(left_items) + len(right_items)
+    assert (result.changes == []) == _same(left_items, right_items)
+
+
+@_SETTINGS
+@given(_PAIRS)
+@example(_CROSSING_MATCH)
+def test_applying_the_changes_rebuilds_the_right_document(
+    pair: tuple[object, object],
+) -> None:
+    left, right = pair
+    changes = diff(_load(left), _load(right)).changes
+    assert _same(_apply(left, right, changes), right)

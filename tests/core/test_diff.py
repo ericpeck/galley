@@ -202,14 +202,18 @@ def test_a_replace_block_pairs_by_position() -> None:
     ]
 
 
-def test_a_crossing_match_falls_back_to_position_pairing() -> None:
-    # SequenceMatcher would match {} (left [0], right [2]) and leave the
-    # other six items unpaired; pairing by position reports four changes.
+def test_a_crossing_match_keeps_the_sequencematcher_alignment() -> None:
+    # Every block is one item long, and SequenceMatcher takes the earliest:
+    # {} at left [0] with right [2]. The other items fall on opposite sides
+    # of that match, so they are Added and Removed rather than paired. Six
+    # changes is within the len(left) + len(right) bound (team ruling).
     result = diff(_json([{}, 1, 0, 1, 0]), _json([1, 1, {}]))
     assert result.aligned is True
     assert [(c.kind, c.path_text) for c in result.changes] == [
-        ("changed", "[0]"),
-        ("changed", "[2]"),
+        ("added", "[0]"),
+        ("added", "[1]"),
+        ("removed", "[1]"),
+        ("removed", "[2]"),
         ("removed", "[3]"),
         ("removed", "[4]"),
     ]
@@ -301,13 +305,19 @@ def test_two_over_budget_arrays_are_both_listed_in_left_order() -> None:
     assert result.unaligned == (("z",), ("a", "b"))
 
 
-def test_a_small_repetitive_middle_can_go_over_budget() -> None:
-    # 1,500 identical items between different ends: 2.25 million visits.
-    left = ["start", *([{}] * 1500), "end"]
-    right = ["START", *([{}] * 1500), "END"]
+def test_a_small_repetitive_array_falls_back() -> None:
+    # 1,500 identical items between different ends: 1,500 squared is 2.25
+    # million visits, over ALIGN_BUDGET, although the array is well under
+    # 5,000 items. The fallback is gated on the budget only (Erik's ruling).
+    left = {"users": ["start", *([{}] * 1500), "end"]}
+    right = {"users": ["START", *([{}] * 1500), "END"]}
     result = diff(_json(left), _json(right))
-    assert result.unaligned == ((),)
-    assert [change.path_text for change in result.changes] == ["[0]", "[1501]"]
+    assert result.aligned is False
+    assert result.unaligned == (("users",),)
+    assert [change.path_text for change in result.changes] == [
+        "users[0]",
+        "users[1501]",
+    ]
 
 
 def test_fallback_keeps_the_matching_head_and_tail() -> None:

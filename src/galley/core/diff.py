@@ -804,13 +804,7 @@ def _align(
     ``SequenceMatcher`` over item hashes, with ``autojunk=False`` so
     repeated items still match. Equal blocks pair item by item. A replace
     block pairs by position within the block, and the longer side's extra
-    items are Removed, then Added. ``SequenceMatcher`` takes the longest
-    block first, not an optimal common subsequence, so one early match can
-    cross every other item: ``[{}, 1, 0, 1, 0]`` against ``[1, 1, {}]``
-    matches ``{}`` and leaves six items unpaired. When pairing the middle by
-    position would report fewer top-level changes, that pairing is used
-    instead, so an array never reports more changes than index matching
-    would. When the middle would cost more than
+    items are Removed, then Added. When the middle would cost more than
     ``ALIGN_BUDGET`` pair visits, it is compared by index instead and the
     array's left path joins ``unaligned``. Arrays are visited in pre-order,
     so that list is in left-document order.
@@ -841,20 +835,16 @@ def _align(
     right_end = len(new) - tail
     middle_left = left_hashes[head:left_end]
     middle_right = right_hashes[head:right_end]
-    by_position = [("replace", 0, len(middle_left), 0, len(middle_right))]
     if middle_left and middle_right and _over_budget(middle_left, middle_right):
         state.unaligned.append(left_path)
-        chosen = by_position
+        blocks = [("replace", head, left_end, head, right_end)]
     else:
-        chosen = _opcodes(middle_left, middle_right)
-        if _pairing_cost(chosen, middle_left, middle_right) > _pairing_cost(
-            by_position, middle_left, middle_right
-        ):
-            chosen = by_position
-    blocks = [
-        (tag, start + head, stop + head, other_start + head, other_stop + head)
-        for tag, start, stop, other_start, other_stop in chosen
-    ]
+        blocks = [
+            (tag, start + head, stop + head, other_start + head, other_stop + head)
+            for tag, start, stop, other_start, other_stop in _opcodes(
+                middle_left, middle_right
+            )
+        ]
     pairs: list[tuple[int, int | None] | tuple[None, int]] = [
         (index, index) for index in range(head)
     ]
@@ -868,29 +858,6 @@ def _align(
         pairs.extend((None, index) for index in range(other_start + shared, other_stop))
     pairs.extend((left_end + step, right_end + step) for step in range(tail))
     return pairs
-
-
-def _pairing_cost(
-    blocks: list[tuple[str, int, int, int, int]],
-    left_hashes: list[int],
-    right_hashes: list[int],
-) -> int:
-    """Count the top-level changes a pairing reports.
-
-    Each unpaired item is one Added or Removed, and each paired item whose
-    hash differs is at least one Changed. Equal blocks cost nothing.
-    """
-    cost = 0
-    for tag, start, stop, other_start, other_stop in blocks:
-        if tag == "equal":
-            continue
-        shared = min(stop - start, other_stop - other_start)
-        cost += (stop - start) + (other_stop - other_start) - 2 * shared
-        cost += sum(
-            left_hashes[start + step] != right_hashes[other_start + step]
-            for step in range(shared)
-        )
-    return cost
 
 
 def _over_budget(left_hashes: list[int], right_hashes: list[int]) -> bool:
