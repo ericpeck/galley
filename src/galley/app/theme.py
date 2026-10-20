@@ -112,7 +112,7 @@ def find_highlight_color() -> QColor:
 
 
 def light_palette(current: QPalette) -> QPalette:
-    """Light-mode roles on ``current``. Disabled text stays the platform fade."""
+    """Light-mode roles on ``current``, with a legible disabled fade."""
     palette = QPalette(current)
     active = (
         QPalette.ColorGroup.Active,
@@ -150,12 +150,17 @@ def light_palette(current: QPalette) -> QPalette:
             group, QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT)
         )
         palette.setColor(group, QPalette.ColorRole.Light, QColor(ACCENT_DISABLED))
+    _set_disabled_text(palette)
     return palette
 
 
 # Text and control-edge minimums from AGENTS.md.
 TEXT_MIN_CONTRAST: Final = 4.5
 EDGE_MIN_CONTRAST: Final = 3.0
+# Disabled labels are exempt from 4.5:1 but must stay legible and clearly
+# dimmer than enabled text. 3.5:1 on the window lands near 3:1 on the
+# slightly lighter native button face.
+DISABLED_TEXT_CONTRAST: Final = 3.5
 # Share of ERROR_DARK mixed into the dark editor Base for a problem line.
 _ERROR_TINT_DARK_SHARE: Final = 0.2
 # Share of ACCENT over the window for the disabled Format fill, as in
@@ -168,10 +173,11 @@ def dark_palette(platform: QPalette) -> QPalette:
 
     The platform keeps window, base, text, and selection. These roles are
     replaced because the macOS dark palette misses them: ``AlternateBase``
-    is a light gray (the gutter and Undo/Redo tray), ``PlaceholderText`` is
-    25% white, and ``Mid`` is too close to the window for a 3:1 edge. The
-    replacements are mixed from the palette's own window and text until
-    they pass, so no new UI hex is introduced.
+    is a light gray (the gutter and Undo/Redo tray), ``PlaceholderText`` and
+    disabled text are 25% white, ``Mid`` is too close to the window for a
+    3:1 edge, and Inactive ``ButtonText`` is black. The replacements are
+    mixed from the palette's own window and text until they pass, so no new
+    UI hex is introduced.
 
     A platform without a dark palette (offscreen, or a style that ignores
     the color scheme) gets the light roles with their lightness turned
@@ -199,6 +205,13 @@ def dark_palette(platform: QPalette) -> QPalette:
     for role, color in roles.items():
         for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
             palette.setColor(group, role, color)
+    # macOS reports Inactive ButtonText as opaque black in both schemes, so
+    # an unfocused dark window would draw black toolbar labels.
+    palette.setColor(
+        QPalette.ColorGroup.Inactive,
+        QPalette.ColorRole.ButtonText,
+        palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText),
+    )
     disabled_fill = mix(window, QColor(ACCENT), _ACCENT_DISABLED_SHARE)
     for group in (
         QPalette.ColorGroup.Active,
@@ -210,7 +223,28 @@ def dark_palette(platform: QPalette) -> QPalette:
             group, QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT)
         )
         palette.setColor(group, QPalette.ColorRole.Light, disabled_fill)
+    _set_disabled_text(palette)
     return palette
+
+
+def _set_disabled_text(palette: QPalette) -> None:
+    """Disabled text roles: an opaque blend of Text toward Window.
+
+    The platform fade is 25% alpha on macOS (about 1.9:1 in light and 2.1:1
+    in dark on the toolbar), so Coming soon buttons read as faint smudges.
+    """
+    window = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Window)
+    base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
+    text = _over(
+        palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text), window
+    )
+    faded = _first_passing(window, text, (window, base), DISABLED_TEXT_CONTRAST)
+    for role in (
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+        QPalette.ColorRole.WindowText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, faded)
 
 
 def is_dark(palette: QPalette) -> bool:

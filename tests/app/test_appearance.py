@@ -39,6 +39,7 @@ from galley.app.theme import (
     LINE_NUMBER_DARK,
     TEXT_MIN_CONTRAST,
     contrast_ratio,
+    dark_palette,
     error_color,
     line_number_color,
     problem_line_tint,
@@ -401,3 +402,95 @@ def test_stylesheet_palette_colors_follow_a_switch(qtbot) -> None:
     dark_fill = QColor(dark.pixel(dark.width() // 2, 2))
     assert _is_dark(dark_fill), "the status bar kept its light stylesheet fill"
     assert dark_fill.name() == _palette().color(_R.Window).name()
+
+
+def _tool_button(window, text: str) -> QToolButton:
+    for button in window.findChildren(QToolButton):
+        action = button.defaultAction()
+        if action is not None and action.text() == text:
+            return button
+    raise AssertionError(text)
+
+
+def _label_ink(button: QToolButton) -> tuple[QColor, QColor]:
+    """Strongest opaque label pixel and the button's most common pixel.
+
+    The label sits right of the icon, so the left 40% is skipped.
+    """
+    image = button.grab().toImage()
+    counts: dict[int, int] = {}
+    for y in range(2, image.height() - 2):
+        for x in range(int(image.width() * 0.4), image.width() - 3):
+            pixel = image.pixelColor(x, y)
+            if pixel.alpha() < 255:
+                continue
+            counts[pixel.rgb()] = counts.get(pixel.rgb(), 0) + 1
+    background = QColor(max(counts, key=counts.__getitem__))
+    ink = max(
+        (QColor(pixel) for pixel in counts),
+        key=lambda color: contrast_ratio(color, background),
+    )
+    return ink, background
+
+
+def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
+    """Carries #69's faded-text fix: Coming soon must not look like Paste."""
+    window = _window(qtbot)
+    paste = _tool_button(window, "Paste")
+    assert paste.isEnabled()
+    coming_soon = [
+        _tool_button(window, name)
+        for name in ("Sort keys", "Minify", "Validate", "Find…")
+    ]
+    for button in coming_soon:
+        assert not button.isEnabled()
+
+    for label in ("Light", "Dark"):
+        _pick(qtbot, window, label)
+        palette = _palette()
+        assert _is_dark(palette.color(_R.Window)) == (label == "Dark")
+        surface = palette.color(_R.Window)
+        enabled = palette.color(QPalette.ColorGroup.Active, _R.ButtonText)
+        for role in (_R.ButtonText, _R.Text, _R.WindowText):
+            faded = palette.color(QPalette.ColorGroup.Disabled, role)
+            assert faded.alpha() == 255, f"{label} {role.name} is translucent"
+            assert faded.rgba() != enabled.rgba()
+            ratio = _ratio(faded, surface)
+            assert ratio >= 3.0, f"{label} disabled {role.name}: {ratio:.2f}"
+            assert _ratio(enabled, surface) - ratio >= 2.0, (
+                f"{label} disabled {role.name} is not clearly dimmer"
+            )
+        inactive = palette.color(QPalette.ColorGroup.Inactive, _R.ButtonText)
+        assert _ratio(inactive, surface) >= TEXT_MIN_CONTRAST
+
+        paste_ink, paste_bg = _label_ink(paste)
+        paste_ratio = contrast_ratio(paste_ink, paste_bg)
+        assert paste_ratio >= TEXT_MIN_CONTRAST, f"{label} Paste {paste_ratio:.2f}"
+        for button in coming_soon:
+            ink, background = _label_ink(button)
+            assert ink.name() != paste_ink.name(), button.defaultAction().text()
+            ratio = contrast_ratio(ink, background)
+            assert 2.5 <= ratio < paste_ratio - 1.5, (
+                f"{label} {button.defaultAction().text()}: {ratio:.2f}"
+            )
+
+
+def test_dark_palette_fixes_black_inactive_button_text() -> None:
+    """macOS reports Inactive ButtonText as opaque black even in dark mode."""
+    platform = QPalette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        platform.setColor(group, _R.Window, QColor(50, 50, 50))
+        platform.setColor(group, _R.Base, QColor(23, 23, 23))
+        platform.setColor(group, _R.Text, QColor(255, 255, 255))
+        platform.setColor(group, _R.WindowText, QColor(255, 255, 255, 216))
+    platform.setColor(
+        QPalette.ColorGroup.Active, _R.ButtonText, QColor(255, 255, 255, 216)
+    )
+    platform.setColor(QPalette.ColorGroup.Inactive, _R.ButtonText, QColor(0, 0, 0))
+
+    fixed = dark_palette(platform)
+
+    active = fixed.color(QPalette.ColorGroup.Active, _R.ButtonText)
+    assert (
+        fixed.color(QPalette.ColorGroup.Inactive, _R.ButtonText).rgba() == active.rgba()
+    )
