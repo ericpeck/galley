@@ -1,8 +1,10 @@
 """Gutter lanes: numbers, fold, and markers."""
 
+from collections.abc import Callable
+
 import pytest
 from PySide6.QtCore import QRect
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette
+from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPalette, QTextCursor
 
 from galley.app.editor import (
     CHANGE_MARKERS,
@@ -14,7 +16,11 @@ from galley.app.editor import (
     CodeEditor,
     LineMarker,
 )
-from galley.app.theme import error_color
+from galley.app.main import create_main_window
+from galley.app.main_window import MainWindow
+from galley.app.problems_pane import ProblemsPane
+from galley.app.status_message import StatusMessage
+from galley.app.theme import error_color, is_dark
 
 _TEXT = "one\ntwo\nthree\nfour\nfive\n"
 
@@ -185,16 +191,27 @@ def test_problem_markers_draw_on_their_lines(qtbot, scheme_palette: QPalette) ->
     assert editor.gutter_layout().lanes["markers"] == (0, 16)
 
 
+@pytest.mark.parametrize(
+    "change_first", [False, True], ids=["problem-first", "change-first"]
+)
 def test_a_problem_outranks_a_change_on_the_same_line(
-    qtbot, scheme_palette: QPalette
+    qtbot, scheme_palette: QPalette, change_first: bool
 ) -> None:
     editor = _editor(qtbot)
     width = editor.line_number_area_width()
-    editor.set_problem_lines({3})
     change = _Tinted()
-    editor.set_line_markers(CHANGE_MARKERS, {3: change, 4: change})
+    if change_first:
+        editor.set_line_markers(CHANGE_MARKERS, {3: change, 4: change})
+        assert editor.line_number_area_width() == width
+        editor.set_problem_lines({3})
+    else:
+        editor.set_problem_lines({3})
+        assert editor.line_number_area_width() == width
+        editor.set_line_markers(CHANGE_MARKERS, {3: change, 4: change})
 
     assert editor.line_number_area_width() == width
+    assert editor.line_number_area().width() == width
+    change.painted.clear()
     image = _gutter(editor)
     error = error_color(scheme_palette).rgb()
     fill = scheme_palette.color(QPalette.ColorRole.Highlight).rgb()
@@ -245,3 +262,128 @@ def test_marker_tints_skip_lines_past_the_end(qtbot) -> None:
     editor.set_problem_lines({2, 99})
 
     assert set(_tints(editor)) == {2}
+
+
+# Chief's regression check for #74: the first problem marker must not move
+# or rewrap the text. Line 3 is long enough to soft-wrap, and 1,100 more
+# lines give four-digit line numbers, so the gutter is wider than its
+# 50 px minimum and an unreserved marker column would show up as a jump.
+_LONG = " ".join(f"word{i}" for i in range(120))
+_KEYS = "".join(f'  "k{i}": {i},\n' for i in range(1100))
+_VALID = (
+    '{\n  "name": "Galley",\n  "note": "'
+    + _LONG
+    + '",\n  "count": 3,\n'
+    + _KEYS
+    + '  "ok": true\n}\n'
+)
+# The same text with the comma after "count" removed: one problem, line 4.
+_MISSING_COMMA = _VALID.replace('"count": 3,', '"count": 3', 1)
+_LONG_LINE = 3
+
+
+def _window_action(window: MainWindow, text: str) -> QAction:
+    found = [item for item in window.findChildren(QAction) if item.text() == text]
+    assert len(found) == 1, text
+    return found[0]
+
+
+def _format_input(qtbot, window: MainWindow, text: str, status_text: str) -> None:
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(StatusMessage, "statusMessage")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(status, StatusMessage)
+    editor.setPlainText(text)
+    _window_action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: status.text() == status_text, timeout=15000)
+
+
+def _gutter_geometry(editor: CodeEditor) -> dict[str, object]:
+    return {
+        "markers lane": editor.gutter_layout().lanes["markers"],
+        "gutter width": editor.line_number_area().width(),
+        "viewport margin": editor.viewportMargins().left(),
+        "numbers left": editor.gutter_layout().lanes["numbers"][0],
+        "text x": editor.viewport().geometry().x(),
+    }
+
+
+def _text_flow(editor: CodeEditor) -> dict[str, object]:
+    block = editor.document().findBlockByNumber(_LONG_LINE - 1)
+    cursor = QTextCursor(block)
+    cursor.setPosition(block.position() + 300)
+    return {
+        "viewport width": editor.viewport().width(),
+        "wrapped lines": block.layout().lineCount(),
+        "cursor rect": editor.cursorRect(cursor).getRect(),
+    }
+
+
+def _formatted_window(
+    qtbot, install_scheme: Callable[[str], QPalette], scheme: str
+) -> tuple[MainWindow, CodeEditor]:
+    window = create_main_window()
+    qtbot.addWidget(window)
+    window.resize(1100, 700)
+    window.show()
+    qtbot.waitExposed(window)
+    install_scheme(scheme)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    assert isinstance(editor, CodeEditor)
+    assert is_dark(editor.palette()) == (scheme == "dark")
+    return window, editor
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_first_problem_from_format_moves_and_rewraps_nothing(
+    qtbot, install_scheme: Callable[[str], QPalette], scheme: str
+) -> None:
+    window, editor = _formatted_window(qtbot, install_scheme, scheme)
+    # The Problems pane opens beside the editors and narrows them, which
+    # rewraps text on its own. Close it, as a user can, so that only the
+    # gutter could move the text here.
+    show_problems = _window_action(window, "Show Problems")
+    if show_problems.isChecked():
+        show_problems.trigger()
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(pane, ProblemsPane)
+
+    _format_input(qtbot, window, _VALID, "Valid JSON")
+    assert editor.problem_lines() == set()
+    assert editor.line_markers(PROBLEM_MARKERS) == {}
+    assert editor.line_number_area().width() > GUTTER_MIN_WIDTH
+    clean_gutter = _gutter_geometry(editor)
+    clean_flow = _text_flow(editor)
+    assert clean_gutter["markers lane"] == (0, 16)
+    assert clean_flow["wrapped lines"] > 1
+
+    _format_input(qtbot, window, _MISSING_COMMA, "1 problem")
+    qtbot.waitUntil(lambda: editor.problem_lines() == {4}, timeout=15000)
+    assert not pane.isVisible()
+
+    assert _gutter_geometry(editor) == clean_gutter
+    assert _text_flow(editor) == clean_flow
+    image = _gutter(editor)
+    error = error_color(editor.palette()).rgb()
+    assert error in _lane_pixels(editor, image, "markers", 4)
+    assert error not in _lane_pixels(editor, image, "markers", _LONG_LINE)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_first_problem_with_the_problems_pane_keeps_the_gutter(
+    qtbot, install_scheme: Callable[[str], QPalette], scheme: str
+) -> None:
+    window, editor = _formatted_window(qtbot, install_scheme, scheme)
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(pane, ProblemsPane)
+
+    _format_input(qtbot, window, _VALID, "Valid JSON")
+    assert editor.problem_lines() == set()
+    clean_gutter = _gutter_geometry(editor)
+    assert clean_gutter["markers lane"] == (0, 16)
+
+    _format_input(qtbot, window, _MISSING_COMMA, "1 problem")
+    qtbot.waitUntil(lambda: editor.problem_lines() == {4}, timeout=15000)
+    qtbot.waitUntil(pane.isVisible, timeout=15000)
+
+    assert _gutter_geometry(editor) == clean_gutter
