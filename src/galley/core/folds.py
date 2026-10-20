@@ -28,10 +28,16 @@ FoldFormat = Literal["JSON", "YAML"]
 
 _LOG = logging.getLogger(__name__)
 
-# A JSON string. Valid JSON strings never span lines.
-_JSON_STRING = re.compile(r'"[^"\\\n]*(?:\\.[^"\\\n]*)*"')
-_JSON_BRACKET = re.compile(r"[\[\]{}]")
-_NON_SPACE = re.compile(r"\S")
+# A JSON string, as UTF-8. Valid JSON strings never span lines.
+_JSON_STRING = re.compile(rb'"[^"\\\n]*(?:\\.[^"\\\n]*)*"')
+# Brackets, commas and newlines keep their byte. Every other byte but
+# whitespace becomes ``x``, a value, until the empty containers are gone.
+_STRUCTURE = b"[]{},\n"
+_TOKENS = bytes(byte if byte in _STRUCTURE else ord("x") for byte in range(256))
+_SPACE = b" \t\r"
+# Empty containers never fold. Removing them leaves every other container
+# with at least one child; a newline inside one stays for the line count.
+_EMPTIES = ((b"[]", b""), (b"{}", b""), (b"[\n]", b"\n"), (b"{\n}", b"\n"))
 # Fields per range in ``pack_ranges``: start, end, kind, count, depth.
 _PACKED_FIELDS = 5
 
@@ -109,38 +115,43 @@ def unpack_ranges(data: bytes) -> tuple[list[FoldRange], int]:
 
 
 def _json_ranges(text: str) -> list[FoldRange]:
-    # Strings become "" so every bracket and comma left is structural. The
-    # newlines stay, so line numbers do not move. The loop runs once per
-    # bracket and is kept short: the 2 MB budget is 50 ms.
-    bare = _JSON_STRING.sub('""', text)
-    count = bare.count
-    found: list[list] = []
-    # Open containers: [index in found, commas so far, has a child].
-    stack: list[list[int]] = []
+    # Strings become "" so the brackets and commas left are structure. Then
+    # the text shrinks to those bytes and its newlines, so the loop below
+    # runs once per bracket, comma or line: the 2 MB budget is 50 ms.
+    bare = _JSON_STRING.sub(b'""', text.encode("utf-8"))
+    tokens = bare.translate(_TOKENS, _SPACE)
+    for empty, kept in _EMPTIES:
+        tokens = tokens.replace(empty, kept)
+    tokens = tokens.translate(None, b"x")
+    slots: list[FoldRange | None] = []
+    # Open containers: (slot, start line, the parent's commas, opening byte).
+    stack: list[tuple[int, int, int, int]] = []
+    push, pop, reserve = stack.append, stack.pop, slots.append
+    kinds, new_range, max_depth = _KINDS, _new_range, MAX_DEPTH
     line = 0
-    after = 0
-    for match in _JSON_BRACKET.finditer(bare):
-        at = match.start()
-        line += count("\n", after, at)
-        char = bare[at]
-        if char == "{" or char == "[":
-            if stack:
-                top = stack[-1]
-                top[1] += count(",", after, at)
-                top[2] = 1
-                if len(stack) >= MAX_DEPTH:
-                    return []
-            stack.append([len(found), 0, 0])
-            found.append([line, -1, _KINDS[char == "["], 0, len(stack) - 1])
+    commas = 0
+    # The byte values are literal: the loop runs about 100,000 times a MB.
+    for byte in tokens:
+        if byte == 10:  # newline
+            line += 1
+        elif byte == 44:  # comma
+            commas += 1
+        elif not byte & 4:  # [ or {; ] and } have bit 4 set
+            if len(stack) >= max_depth:
+                return []
+            push((len(slots), line, commas, byte))
+            reserve(None)
+            commas = 0
         elif stack:
-            index, commas, child = stack.pop()
-            commas += count(",", after, at)
-            entry = found[index]
-            entry[1] = line
-            if commas or child or _NON_SPACE.search(bare, after, at):
-                entry[3] = commas + 1
-        after = at + 1
-    return _finish(found)
+            slot, start, outer, opening = pop()
+            # One range per line: one that opens on its parent's line is
+            # dropped and the parent kept.
+            if line > start and not (stack and stack[-1][1] == start):
+                kind = kinds[opening == 91]  # [
+                item = (start, line, kind, commas + 1, len(stack))
+                slots[slot] = new_range(FoldRange, item)
+            commas = outer
+    return [item for item in slots if item is not None]
 
 
 def _yaml_ranges(text: str) -> list[FoldRange]:

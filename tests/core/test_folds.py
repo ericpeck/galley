@@ -61,6 +61,10 @@ def test_empty_and_one_line_containers_do_not_fold() -> None:
     assert fold_ranges("", "JSON") == []
 
 
+def test_empty_containers_over_lines_do_not_fold() -> None:
+    assert _spans('{\n  "a": [\n  ],\n  "b": {\n}\n}\n') == [(0, 5, OBJECT, 2, 0)]
+
+
 def test_brackets_and_commas_inside_strings_are_text() -> None:
     value = {
         'q"{': "[},",
@@ -263,33 +267,37 @@ def _best_of(runs: int, operation) -> float:
 
 
 def _two_mb_json() -> str:
-    """Records shaped like an API response, about 90 bytes a container."""
-    records = []
-    index = 0
+    """Just over 2 MB of records shaped like an API response.
+
+    About 90 bytes a container, with brackets, commas and escaped quotes in
+    the strings.
+    """
+
+    def record(index: int) -> dict[str, object]:
+        return {
+            "id": index,
+            "name": f"item {index}",
+            "tags": ["a", "b{", "c]"],
+            "active": index % 2 == 0,
+            "owner": {"login": f"user{index}", "site_admin": False},
+            "metrics": {"views": index * 3, "scores": [1.5, 2.25, index]},
+            "notes": 'quote " and [brackets] {x}',
+        }
+
+    count = 1000
     while True:
-        for _ in range(500):
-            records.append(
-                {
-                    "id": index,
-                    "name": f"item {index}",
-                    "tags": ["a", "b{", "c]"],
-                    "active": index % 2 == 0,
-                    "owner": {"login": f"user{index}", "site_admin": False},
-                    "metrics": {"views": index * 3, "scores": [1.5, 2.25, index]},
-                    "notes": 'quote " and [brackets] {x}',
-                }
-            )
-            index += 1
-        text = _json({"items": records})
-        if len(text.encode("utf-8")) >= TWO_MB:
+        text = _json({"items": [record(index) for index in range(count)]})
+        size = len(text.encode("utf-8"))
+        if size >= TWO_MB:
             return text
+        count += max(1, (TWO_MB - size) * count // size // 2 + 1)
 
 
 def _nested(depth: int) -> str:
-    """``depth`` arrays, one inside the next, each over two lines."""
+    """``depth`` arrays, one inside the next, the innermost holding ``1``."""
     opening = "".join(f"{'  ' * level}[\n" for level in range(depth))
     closing = "".join(f"{'  ' * level}]\n" for level in reversed(range(depth)))
-    return opening + closing
+    return opening + f"{'  ' * depth}1\n" + closing
 
 
 def _random_value(generator: random.Random, depth: int) -> object:

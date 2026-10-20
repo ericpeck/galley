@@ -631,9 +631,10 @@ class CodeEditor(QPlainTextEdit):
         self._flush_fold_rescan()
         if not self._folds:
             return 0
+        before = self._folded
         self._folded = {start for start, item in self._folds.items() if item.depth}
         self._park_cursor()
-        self._apply_visibility(0, self.document().blockCount() - 1)
+        self._refold(before)
         self._sync_fold_markers()
         self.folds_changed.emit()
         return len(self._folded)
@@ -644,8 +645,9 @@ class CodeEditor(QPlainTextEdit):
         count = len(self._folded)
         if not count:
             return 0
-        self._folded.clear()
-        self._apply_visibility(0, self.document().blockCount() - 1)
+        before = self._folded
+        self._folded = set()
+        self._refold(before)
         self._sync_fold_markers()
         self.folds_changed.emit()
         return count
@@ -660,9 +662,9 @@ class CodeEditor(QPlainTextEdit):
         ]
         if not opened:
             return False
+        before = set(self._folded)
         self._folded.difference_update(opened)
-        last = max(self._folds[start].end_line for start in opened)
-        self._apply_visibility(min(opened) + 1, last)
+        self._refold(before)
         self._sync_fold_markers()
         self.folds_changed.emit()
         return True
@@ -914,8 +916,9 @@ class CodeEditor(QPlainTextEdit):
 
     def _replace_folds(self, ranges: Sequence[FoldRange]) -> None:
         if self._folded:
-            self._folded.clear()
-            self._apply_visibility(0, self.document().blockCount() - 1)
+            before = self._folded
+            self._folded = set()
+            self._refold(before)
         self._folds = {item.start_line: item for item in ranges}
         self._sync_fold_markers()
         self.folds_changed.emit()
@@ -930,8 +933,10 @@ class CodeEditor(QPlainTextEdit):
                 # New blocks start shown.
                 self._folded.clear()
             else:
+                # The edit moved lines, so the old ranges no longer say
+                # which blocks are hidden.
                 self._folded.clear()
-                self._apply_visibility(0, self.document().blockCount() - 1)
+                self._show_every_block()
             self._sync_fold_markers()
             self.folds_changed.emit()
         self._fold_rescan.start(0 if whole else _FOLD_RESCAN_MS)
@@ -961,7 +966,7 @@ class CodeEditor(QPlainTextEdit):
             self._folded.difference_update(starts)
         if self._folded == before:
             return item
-        self._apply_visibility(item.start_line + 1, item.end_line)
+        self._refold(before)
         self._sync_fold_markers()
         self.folds_changed.emit()
         self.fold_toggled.emit(item, fold)
@@ -1002,41 +1007,61 @@ class CodeEditor(QPlainTextEdit):
             return
         self.ensure_line_visible(self.textCursor().blockNumber() + 1)
 
-    def _apply_visibility(self, first: int, last: int) -> None:
-        """Show or hide 0-based lines ``first`` to ``last`` to match the folds.
+    def _refold(self, before: set[int]) -> None:
+        """Hide and show blocks to go from the ``before`` folds to the current.
 
-        A line is hidden when it is inside a folded block below its first
-        line. The layout is told once, for the whole span.
+        Only the lines whose state changes are touched, and the layout is
+        told once for the span they cover.
         """
+        old = self._hidden_spans(before)
+        new = self._hidden_spans(self._folded)
+        changes = [(span, False) for span in _subtract(new, old)]
+        changes += [(span, True) for span in _subtract(old, new)]
+        if not changes:
+            return
         document = self.document()
-        last = min(last, document.blockCount() - 1)
-        if first > last:
-            return
-        folds = self._folds
-        folded = self._folded
-        hidden_until = -1
-        for start in folded:
-            end = folds[start].end_line
-            if start < first <= end and end > hidden_until:
-                hidden_until = end
-        first_block = document.findBlockByNumber(first)
-        block = first_block
-        line = first
+        # Unbound methods: this loop runs once a line, 100,000 times for
+        # Collapse all on 2 MB.
+        set_visible, next_block = QTextBlock.setVisible, QTextBlock.next
+        for (first, last), visible in changes:
+            block = document.findBlockByNumber(first)
+            for _line in range(first, last + 1):
+                set_visible(block, visible)
+                block = next_block(block)
+        first = min(span[0] for span, _visible in changes)
+        last = max(span[1] for span, _visible in changes)
+        self._mark_lines_dirty(first, last)
+
+    def _hidden_spans(self, folded: set[int]) -> list[tuple[int, int]]:
+        """The 0-based lines ``folded`` hides, as sorted, merged spans."""
+        spans: list[tuple[int, int]] = []
+        for start in sorted(folded):
+            end = self._folds[start].end_line
+            if spans and start <= spans[-1][1]:
+                # Inside the last span, or opening on its last line.
+                if end > spans[-1][1]:
+                    spans[-1] = (spans[-1][0], end)
+                continue
+            spans.append((start + 1, end))
+        return spans
+
+    def _show_every_block(self) -> None:
+        document = self.document()
+        block = document.firstBlock()
         changed = False
-        while line <= last and block.isValid():
-            visible = line > hidden_until
-            if block.isVisible() != visible:
-                block.setVisible(visible)
+        while block.isValid():
+            if not block.isVisible():
+                block.setVisible(True)
                 changed = True
-            if line in folded:
-                end = folds[line].end_line
-                if end > hidden_until:
-                    hidden_until = end
             block = block.next()
-            line += 1
-        if not changed:
-            return
-        end_block = document.findBlockByNumber(last)
+        if changed:
+            self._mark_lines_dirty(0, document.blockCount() - 1)
+
+    def _mark_lines_dirty(self, first: int, last: int) -> None:
+        """Have the layout measure lines ``first`` to ``last`` again."""
+        document = self.document()
+        first_block = document.findBlockByNumber(first)
+        end_block = document.findBlockByNumber(min(last, document.blockCount() - 1))
         span = end_block.position() + end_block.length() - first_block.position()
         document.markContentsDirty(first_block.position(), span)
         self.viewport().update()
@@ -1173,6 +1198,27 @@ def _selection_ranges(
             continue
         ranges.append(item)
     return ranges
+
+
+def _subtract(
+    spans: list[tuple[int, int]], minus: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """The lines in ``spans`` that are not in ``minus``. Both are sorted spans."""
+    result: list[tuple[int, int]] = []
+    index = 0
+    for first, last in spans:
+        while index < len(minus) and minus[index][1] < first:
+            index += 1
+        current = first
+        probe = index
+        while probe < len(minus) and minus[probe][0] <= last:
+            if minus[probe][0] > current:
+                result.append((current, minus[probe][0] - 1))
+            current = max(current, minus[probe][1] + 1)
+            probe += 1
+        if current <= last:
+            result.append((current, last))
+    return result
 
 
 def fold_count_text(item: FoldRange) -> str:

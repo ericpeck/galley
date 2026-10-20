@@ -1,6 +1,7 @@
 """Collapsible JSON in the Output pane (#64)."""
 
 import json
+import random
 import sys
 import time
 from collections.abc import Callable
@@ -615,3 +616,33 @@ def test_lines_above_a_fold_paint_as_qt_paints_them(qtbot) -> None:
         if stock.pixelColor(x, y) != folded.pixelColor(x, y)
     ]
     assert differing == []
+
+
+def test_any_fold_sequence_hides_exactly_the_folded_lines(qtbot) -> None:
+    value = {
+        "a": [{"b": [1, {"c": 2}]}, [3, [4, 5]]],
+        "d": {"e": {"f": [6]}, "g": 7},
+    }
+    editor = _editor(qtbot, json.dumps(value, indent=2) + "\n")
+    starts = [item.start_line + 1 for item in editor.fold_ranges()]
+    generator = random.Random(64)
+    for _ in range(200):
+        roll = generator.random()
+        line = generator.choice(starts)
+        if roll < 0.4:
+            editor.fold_line(line, nested=roll < 0.1)
+        elif roll < 0.8:
+            editor.unfold_line(line, nested=roll > 0.7)
+        elif roll < 0.9:
+            editor.collapse_all()
+        else:
+            editor.expand_all()
+        expected = sorted(
+            {
+                hidden + 1
+                for item in editor.fold_ranges()
+                if item.start_line + 1 in editor.folded_lines()
+                for hidden in range(item.start_line + 1, item.end_line + 1)
+            }
+        )
+        assert _hidden(editor) == expected
