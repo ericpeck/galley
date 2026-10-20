@@ -183,7 +183,12 @@ def test_read_errors_are_split_by_kind(
         ("a.txt", "parent:\n  child: 1", "YAML"),
         ("a.txt", "just some words", None),
         ("a.txt", "http://example.com", None),
+        ("a.geojson", "type: x", "JSON"),
+        ("A.GEOJSON", "", "JSON"),
         ("a.jsonc", "", None),
+        ("a.jsonc", '{"a": 1, // note\n}', "JSON"),
+        ("a.jsonc", "key: value", "YAML"),
+        ("a.json5", "[1,]", "JSON"),
         ("noext", "", None),
     ],
 )

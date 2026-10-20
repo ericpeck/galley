@@ -103,12 +103,14 @@ def read_document(path: Path, max_bytes: int = MAX_OPEN_BYTES) -> LoadedDocument
 def detect_format(path: Path, text: str) -> str | None:
     """Return ``JSON`` or ``YAML`` for ``path``, or None when unsettled.
 
-    ``.json``, ``.yaml``, and ``.yml`` win over the text. Otherwise the
+    ``.json``, ``.geojson``, ``.yaml``, and ``.yml`` win over the text.
+    ``.jsonc`` and ``.json5`` are not mapped, since the JSON parser rejects
+    their comments and trailing commas; they fall through. Otherwise the
     first meaningful line decides: an object or array opener is JSON, and
     a document marker, a list item, or a ``key:`` line is YAML.
     """
     match path.suffix.casefold():
-        case ".json":
+        case ".json" | ".geojson":
             return "JSON"
         case ".yaml" | ".yml":
             return "YAML"
