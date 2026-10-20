@@ -45,11 +45,11 @@ Ruff `S102` and `S307` ban `exec` and `eval`. Convert from Python parses with `a
 
 ## Releases
 
-Push a `v*` release tag only after the project owner has tested that build and approved it. Do not release while any menu or toolbar action still shows Coming soon or Not yet. The release check fails a tag build while Coming soon actions remain.
+Push a `v*` release tag only after the project owner has tested that build and approved it. Pushing a `v*` tag does not change the version in `pyproject.toml`; the tag only marks a build the project owner has already tested and approved. Do not release while any menu or toolbar action still shows Coming soon or Not yet. The release check fails a tag build while Coming soon actions remain.
 
 ## Cross-platform
 
-Use `Qt.ControlModifier` and `QKeySequence` standard keys for shortcuts. Never hard-code ⌘. Avoid macOS-only APIs. Windows support is planned.
+Use `Qt.ControlModifier` and `QKeySequence` standard keys for shortcuts. Never hard-code ⌘. Avoid Ctrl+Alt shortcuts on Windows. They collide with AltGr on some keyboard layouts. Avoid macOS-only APIs. Windows support is planned.
 
 ## UI
 
