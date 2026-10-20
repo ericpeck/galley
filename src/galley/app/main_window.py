@@ -533,11 +533,11 @@ class MainWindow(QMainWindow):
         if rail is not None:
             rail.swap_button.clicked.connect(self._not_yet)
 
+        self._shield_unbuilt_controls()
         application = QApplication.instance()
         if isinstance(application, QApplication):
             application.focusChanged.connect(self._on_focus_changed)
             application.installEventFilter(self)
-        self._shield_unbuilt_controls()
 
     def _shield_unbuilt_controls(self) -> None:
         """Keep Coming soon on disabled buttons that are not toolbar actions."""
@@ -551,6 +551,8 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format from whichever editor has focus."""
+        if not isinstance(watched, QObject):
+            return False
         if (
             self._formatting
             and event.type() == QEvent.Type.KeyPress

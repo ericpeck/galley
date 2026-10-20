@@ -188,9 +188,10 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
         host = button.parentWidget()
         assert isinstance(host, QWidget)
-        assert host.isEnabled()
-        assert host.toolTip() == COMING_SOON
-        assert host.accessibleDescription() == COMING_SOON
+        if host.property("comingSoonHost") is True:
+            assert host.isEnabled()
+            assert host.toolTip() == COMING_SOON
+            assert host.accessibleDescription() == COMING_SOON
         action = button.defaultAction() if isinstance(button, QToolButton) else None
         if isinstance(action, QAction):
             seen.add(action.property("unbuiltName"))
@@ -198,6 +199,13 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         center = QPoint(max(button.width() // 2, 0), max(button.height() // 2, 0))
         qtbot.mouseMove(button, center)
         qtbot.waitUntil(lambda: QToolTip.text() == COMING_SOON, timeout=2000)
+    hosts = [
+        button.parentWidget() for button in buttons if isinstance(button, QToolButton)
+    ]
+    assert hosts
+    assert all(
+        host is not None and host.property("comingSoonHost") is True for host in hosts
+    )
     assert seen == {"Find", "Indent", "Sort keys", "Minify", "Expand", "Validate"}
 
 

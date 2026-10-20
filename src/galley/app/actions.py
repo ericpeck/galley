@@ -129,21 +129,24 @@ def coming_soon_wrapper(control: QWidget, action: QAction) -> QWidget:
     """
     if not is_unbuilt(action):
         return control
-    placed = _owning_layout(control)
-    host = QWidget()
-    host.setToolTip(COMING_SOON)
-    host.setAccessibleDescription(COMING_SOON)
     control.setToolTip(COMING_SOON)
     control.setAccessibleDescription(COMING_SOON)
     control.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     control.setEnabled(False)
+    control.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+    # Reparenting a control that already has a layout crashes Qt on macOS
+    # and Windows. Those controls keep the tooltip themselves. A control
+    # with no layout yet gets an enabled host so hover can show it.
+    if _owning_layout(control) is not None:
+        return control
+    host = QWidget()
+    host.setProperty("comingSoonHost", True)
+    host.setToolTip(COMING_SOON)
+    host.setAccessibleDescription(COMING_SOON)
     row = QHBoxLayout(host)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(0)
     row.addWidget(control)
-    if placed is not None:
-        layout, index = placed
-        layout.insertWidget(index, host)
     return host
 
 
