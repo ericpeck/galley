@@ -16,7 +16,7 @@ from galley.app.theme import (
     STRING,
     TEXT_CODE_VALUE,
     TEXT_MUTED,
-    install_light_palette,
+    light_palette,
 )
 
 KEY = (ACCENT_INK, False)
@@ -89,8 +89,7 @@ def color_scheme(qapp) -> Iterator[Callable[[bool], None]]:
             qapp.setPalette(_dark_palette(original))
         else:
             hints.setColorScheme(Qt.ColorScheme.Light)
-            qapp.setPalette(original)
-            install_light_palette(qapp)
+            qapp.setPalette(light_palette(original))
 
     yield apply
     hints.unsetColorScheme()
