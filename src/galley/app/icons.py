@@ -30,7 +30,7 @@ def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
 
 def _ink(name: str) -> QPalette.ColorRole:
     if name == "Format":
-        return QPalette.ColorRole.Link
+        return QPalette.ColorRole.Accent
     return QPalette.ColorRole.PlaceholderText
 
 

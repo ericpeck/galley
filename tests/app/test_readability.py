@@ -24,6 +24,7 @@ from galley.app.editor import CodeEditor
 from galley.app.fonts import ui_font
 from galley.app.main import create_main_window
 from galley.app.splitter import RESET_NAME
+from galley.app.theme import ACCENT
 
 _ICON_ONLY = ("Outdent", "Indent", "Expand all", "Collapse all")
 
@@ -227,6 +228,20 @@ def test_editor_base_is_not_white_in_dark_mode(qtbot) -> None:
             restore(previous_scheme)
             app.processEvents()
             assert hints.colorScheme() == previous_scheme
+
+
+def test_brand_color_is_format_fill_and_find_highlight(qtbot) -> None:
+    window = _show(qtbot)
+    button = window.findChild(QPushButton, "formatButton")
+    assert button is not None
+    sheet = button.styleSheet()
+    assert ACCENT in sheet
+    assert sheet.lower().count(ACCENT.lower()) == 1
+    editor = window.findChild(CodeEditor, "inputEditor")
+    assert isinstance(editor, CodeEditor)
+    assert editor.find_highlight_color().name() == ACCENT.lower()
+    accent = QApplication.palette().color(QPalette.ColorRole.Accent)
+    assert accent.name() == ACCENT.lower()
 
 
 def test_icon_only_toolbar_buttons_have_tooltips(qtbot) -> None:

@@ -29,7 +29,7 @@ from galley.app.main_window import (
     SPINNER_WIDTH_PX,
 )
 from galley.app.parse_session import ParseSession
-from galley.app.theme import ACCENT, ACCENT_DISABLED, TEXT_ON_ACCENT
+from galley.app.theme import ACCENT, ACCENT_DISABLED
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 
@@ -302,8 +302,10 @@ def test_empty_state(qtbot) -> None:
     assert "Format  " not in format_button.text()
     sheet = format_button.styleSheet()
     assert ACCENT in sheet
-    assert ACCENT_DISABLED in sheet
-    assert TEXT_ON_ACCENT in sheet
+    assert "palette(highlighted-text)" in sheet
+    assert "palette(light)" in sheet
+    light = QApplication.palette().color(QPalette.ColorRole.Light).name()
+    assert light == ACCENT_DISABLED.lower()
     assert isinstance(editor, CodeEditor)
     assert isinstance(output, CodeEditor)
     qtbot.waitUntil(lambda: editor.hasFocus())

@@ -13,7 +13,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit, QTextEdit, QWidget
 
 from galley.app.fonts import code_font
-from galley.app.theme import ERROR, ERROR_TINT, LINE_CURRENT, TEXT_ON_ACCENT
+from galley.app.theme import ERROR, ERROR_TINT
+from galley.app.theme import find_highlight_color as brand_find_highlight
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -55,6 +56,10 @@ class CodeEditor(QPlainTextEdit):
         self._highlight_current_line()
         # setDocumentMargin records an edit. Drop it so Undo starts disabled.
         self.document().clearUndoRedoStacks()
+
+    def find_highlight_color(self) -> QColor:
+        """Brand color for a find match. Not the text-selection role."""
+        return brand_find_highlight()
 
     def line_number_color(self) -> QColor:
         """Gutter numerals. This is the palette's placeholder text."""
@@ -218,17 +223,21 @@ class CodeEditor(QPlainTextEdit):
         selections: list[QTextEdit.ExtraSelection] = []
         current = self.textCursor().blockNumber() + 1
         if current not in self._problem_lines:
-            selections.append(self._line_band(self.textCursor(), LINE_CURRENT))
+            band = self.palette().color(QPalette.ColorRole.Midlight)
+            selections.append(self._line_band(self.textCursor(), band))
         block = self.document().firstBlock()
         while block.isValid():
             if block.blockNumber() + 1 in self._problem_lines:
-                selections.append(self._line_band(QTextCursor(block), ERROR_TINT))
+                tint = QColor(ERROR_TINT)
+                selections.append(self._line_band(QTextCursor(block), tint))
             block = block.next()
         self.setExtraSelections(selections)
 
-    def _line_band(self, cursor: QTextCursor, color: str) -> QTextEdit.ExtraSelection:
+    def _line_band(
+        self, cursor: QTextCursor, color: QColor
+    ) -> QTextEdit.ExtraSelection:
         selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(QColor(color))
+        selection.format.setBackground(color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = cursor
         selection.cursor.clearSelection()
@@ -241,7 +250,7 @@ class CodeEditor(QPlainTextEdit):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(ERROR))
         painter.drawEllipse(2, marker_y, diameter, diameter)
-        painter.setPen(QColor(TEXT_ON_ACCENT))
+        painter.setPen(self.palette().color(QPalette.ColorRole.HighlightedText))
         painter.drawText(
             2,
             marker_y,

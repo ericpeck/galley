@@ -17,8 +17,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from galley.app.theme import ACCENT
-
 _MIN_CONTRAST = 4.5
 
 
@@ -182,7 +180,7 @@ class PopOutButton(QPushButton):
 
 
 def _paint_arrow_chip(painter: QPainter, rect: QRect, palette: QPalette) -> None:
-    chip = QColor(ACCENT)
+    chip = palette.color(QPalette.ColorRole.Accent)
     painter.fillRect(rect, chip)
     ink = _best_ink(
         chip,
