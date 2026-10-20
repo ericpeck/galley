@@ -37,6 +37,12 @@ from PySide6.QtWidgets import (
 
 from galley.app.about import show_about_dialog
 from galley.app.actions import ShellActions, coming_soon_wrapper, is_unbuilt
+from galley.app.appearance import (
+    MODE_DARK,
+    MODE_LIGHT,
+    MODE_SYSTEM,
+    application_appearance,
+)
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
@@ -205,6 +211,7 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange:
             self._follow_editor_palette()
+            self._refresh_toolbar_icons()
         if event.type() != QEvent.Type.WindowStateChange:
             return
         fullscreen = self.isFullScreen()
@@ -222,6 +229,19 @@ class MainWindow(QMainWindow):
                 editor.follow_application_palette()
         finally:
             self._following_palette = False
+
+    def _refresh_toolbar_icons(self) -> None:
+        """Redraw the toolbar glyphs, which keep the ink they were drawn with."""
+        if not hasattr(self, "_format_button"):
+            return
+        for button in self.findChildren(QToolButton):
+            action = button.defaultAction()
+            if action is None or action.icon().isNull():
+                continue
+            icon = toolbar_icon(action.text(), pad=action.text() not in _ICON_ONLY)
+            action.setIcon(icon)
+            button.setIcon(icon)
+        self._format_button.setIcon(toolbar_icon("Format", pad=True))
 
     def _build_menus(self) -> None:
         actions = self._actions
@@ -272,6 +292,8 @@ class MainWindow(QMainWindow):
         view.addSeparator()
         view.addAction(actions.stack_panes)
         view.addSeparator()
+        self._build_appearance_menu(view)
+        view.addSeparator()
         view.addAction(actions.full_screen)
 
         window_menu = _add_menu(bar, "Window")
@@ -303,6 +325,36 @@ class MainWindow(QMainWindow):
         self._editor_menu.addAction(actions.copy)
         self._editor_menu.addAction(actions.paste)
         self._editor_menu.addAction(actions.select_all)
+
+    def _build_appearance_menu(self, view: QMenu) -> None:
+        """View › Appearance: System, Light, Dark. Shared by every window."""
+        menu = view.addMenu("Appearance")
+        menu.setObjectName("menuAppearance")
+        modes = {
+            MODE_SYSTEM: self._actions.appearance_system,
+            MODE_LIGHT: self._actions.appearance_light,
+            MODE_DARK: self._actions.appearance_dark,
+        }
+        for mode, action in modes.items():
+            menu.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, chosen=mode: self._set_appearance(chosen)
+            )
+        self._appearance_actions = modes
+        appearance = application_appearance()
+        if appearance is not None:
+            appearance.mode_changed.connect(self._sync_appearance_actions)
+            self._sync_appearance_actions(appearance.mode())
+
+    def _set_appearance(self, mode: str) -> None:
+        appearance = application_appearance()
+        if appearance is not None:
+            appearance.set_mode(mode)
+
+    def _sync_appearance_actions(self, mode: str) -> None:
+        action = self._appearance_actions.get(mode)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
 
     def _build_splitter(self) -> PaneSplitter:
         splitter = PaneSplitter()

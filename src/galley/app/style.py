@@ -72,7 +72,12 @@ def progress_style() -> str:
 
 
 def menu_style() -> str:
-    """Menu bar and menus. The selected row uses the link role."""
+    """Menu bar and menus. The selected row uses the link role.
+
+    Its label is the base role: white on the light link, and the dark base
+    on the lighter dark-mode link, where a white label would fall below
+    4.5:1.
+    """
     return """
         QMenuBar {
             background: palette(window);
@@ -80,7 +85,7 @@ def menu_style() -> str:
         }
         QMenuBar::item:selected {
             background: palette(link);
-            color: palette(highlighted-text);
+            color: palette(base);
         }
         QMenu {
             background: palette(window);
@@ -88,7 +93,7 @@ def menu_style() -> str:
         }
         QMenu::item:selected {
             background: palette(link);
-            color: palette(highlighted-text);
+            color: palette(base);
         }
         """
 

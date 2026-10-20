@@ -1,13 +1,16 @@
 """Small monochrome toolbar icons.
 
-Glyphs use the palette's placeholder text. Format uses the link role.
+Glyphs use the palette's placeholder text. The Format glyph uses the
+brand fill it sits on, in both modes.
 A few transparent pixels sit to the right of label icons so the
 platform's icon gap lands near 8 px. No stylesheet sets the color.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
+
+from galley.app.theme import ACCENT
 
 _ICON = 16
 _GAP = 4
@@ -28,16 +31,18 @@ def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
     return QIcon(wider)
 
 
-def _ink(name: str) -> QPalette.ColorRole:
+def _ink(name: str) -> QColor:
     if name == "Format":
-        return QPalette.ColorRole.Accent
-    return QPalette.ColorRole.PlaceholderText
+        # Dark mode moves the Accent role off the brand blue, but the
+        # Format button fill stays ACCENT, so the glyph stays with it.
+        return QColor(ACCENT)
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    return palette.color(QPalette.ColorRole.PlaceholderText)
 
 
 def _draw(name: str) -> QPixmap | None:
-    app = QApplication.instance()
-    palette = app.palette() if isinstance(app, QApplication) else QPalette()
-    color = palette.color(_ink(name))
+    color = _ink(name)
     pixmap = QPixmap(_ICON, _ICON)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)

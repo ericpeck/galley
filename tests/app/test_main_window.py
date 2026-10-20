@@ -176,9 +176,12 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Stack Panes",
         "|",
+        "Appearance",
+        "|",
         "Enter Full Screen",
     ]
     assert _submenu(view, "Font").actions() == []
+    assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
     assert _labels(_submenu(view, "Indent Guides")) == [
         "Off",
         "Lines",

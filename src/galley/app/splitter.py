@@ -1,6 +1,6 @@
 """Input / Output splitter with a rail that reads the split ratio."""
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QBoxLayout,
@@ -80,6 +80,17 @@ class SplitterRail(QSplitterHandle):
             self._reset_even()
             return True
         return super().eventFilter(watched, event)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            # The muted ink is copied, so a scheme change skips it. Copy
+            # again once the new placeholder role has reached the children.
+            QTimer.singleShot(0, self, self._follow_placeholder_text)
+
+    def _follow_placeholder_text(self) -> None:
+        _use_placeholder_text(self.reset_button)
+        _use_placeholder_text(self.ratio_label)
 
     def _reset_even(self) -> None:
         splitter = self.splitter()
