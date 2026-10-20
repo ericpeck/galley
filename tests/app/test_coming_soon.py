@@ -1,5 +1,6 @@
 """Unbuilt roadmap actions stay visible, disabled, and marked Coming soon."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
@@ -12,6 +13,7 @@ from galley.app.actions import (
     UNBUILT_ACTIONS,
     is_unbuilt,
     main,
+    not_yet_failure,
     release_failure,
 )
 from galley.app.editor import CodeEditor
@@ -20,6 +22,21 @@ from galley.app.main_window import NOT_YET_MESSAGE
 
 _RELEASE_FIX = (
     "Build them or remove them from UNBUILT_ACTIONS in actions.py before tagging."
+)
+_NOT_YET_FIX = (
+    "Build them or remove them from _not_yet_actions() in actions.py before tagging."
+)
+_NOT_YET_MENU_NAMES = (
+    "Find and Replace…",
+    "Escape as String",
+    "Unescape String",
+    "Guides › Off",
+    "Guides › Lines",
+    "Guides › Colored by depth",
+    "Pop out into window",
+    "Show window",
+    "Bring back",
+    "Outdent",
 )
 _RELEASE_WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
@@ -46,53 +63,82 @@ def _menu(window, title: str) -> QMenu:
     return menu
 
 
-def _note(action: QAction, found: list[str]) -> None:
-    name = action.property("unbuiltName")
-    if isinstance(name, str) and name not in found:
-        found.append(name)
+def _visit_shell(window, note: Callable[[QAction], None]) -> None:
+    """Visit commands in menu order: menu bar, toolbar, then the tab menu."""
 
+    def walk_menu(menu: QMenu) -> None:
+        children = menu.findChildren(
+            QMenu, options=Qt.FindChildOption.FindDirectChildrenOnly
+        )
+        child_by_action = {id(child.menuAction()): child for child in children}
+        for action in menu.actions():
+            note(action)
+            child = child_by_action.get(id(action))
+            if child is not None:
+                walk_menu(child)
 
-def _walk_menu(menu: QMenu, found: list[str]) -> None:
-    children = menu.findChildren(
-        QMenu, options=Qt.FindChildOption.FindDirectChildrenOnly
-    )
-    child_by_action = {id(child.menuAction()): child for child in children}
-    for action in menu.actions():
-        _note(action, found)
-        child = child_by_action.get(id(action))
-        if child is not None:
-            _walk_menu(child, found)
+    def walk_toolbar(widget: QWidget) -> None:
+        layout = widget.layout()
+        if layout is None:
+            return
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            if item is None:
+                continue
+            child = item.widget()
+            if child is None:
+                continue
+            if isinstance(child, QToolButton):
+                action = child.defaultAction()
+                if isinstance(action, QAction):
+                    note(action)
+            walk_toolbar(child)
 
-
-def _walk_toolbar(widget: QWidget, found: list[str]) -> None:
-    layout = widget.layout()
-    if layout is None:
-        return
-    for index in range(layout.count()):
-        item = layout.itemAt(index)
-        if item is None:
-            continue
-        child = item.widget()
-        if child is None:
-            continue
-        if isinstance(child, QToolButton):
-            action = child.defaultAction()
-            if isinstance(action, QAction):
-                _note(action, found)
-        _walk_toolbar(child, found)
+    for title in [action.text() for action in window.menuBar().actions()]:
+        walk_menu(_menu(window, title))
+    toolbar = window.findChild(QWidget, "mainToolbar")
+    assert isinstance(toolbar, QWidget)
+    walk_toolbar(toolbar)
+    tab_menu = window.findChild(QMenu, "tabMenu")
+    assert isinstance(tab_menu, QMenu)
+    walk_menu(tab_menu)
 
 
 def _menu_order(window) -> list[str]:
     """Unbuilt names as they first appear: menu bar, toolbar, tab menu."""
     found: list[str] = []
-    for title in [action.text() for action in window.menuBar().actions()]:
-        _walk_menu(_menu(window, title), found)
-    toolbar = window.findChild(QWidget, "mainToolbar")
-    assert isinstance(toolbar, QWidget)
-    _walk_toolbar(toolbar, found)
-    tab_menu = window.findChild(QMenu, "tabMenu")
-    assert isinstance(tab_menu, QMenu)
-    _walk_menu(tab_menu, found)
+
+    def note(action: QAction) -> None:
+        name = action.property("unbuiltName")
+        if isinstance(name, str) and name not in found:
+            found.append(name)
+
+    _visit_shell(window, note)
+    return found
+
+
+def _not_yet_menu_order(window) -> list[str]:
+    """Not yet release labels as they first appear: menu bar, toolbar, tab menu."""
+    actions = window._actions
+    guides = {
+        id(actions.guides_off),
+        id(actions.guides_lines),
+        id(actions.guides_depth),
+    }
+    pending = {id(action) for action in actions._not_yet_actions()}
+    found: list[str] = []
+
+    def note(action: QAction) -> None:
+        if id(action) not in pending:
+            return
+        text = action.text()
+        if id(action) in guides:
+            text = f"Guides › {text}"
+        found.append(text)
+        pending.remove(id(action))
+
+    _visit_shell(window, note)
+    assert not pending
     return found
 
 
@@ -100,6 +146,19 @@ def _release_text(names: str) -> str:
     return (
         'Release blocked: these actions still show "Coming soon": '
         f"{names}.\n{_RELEASE_FIX}"
+    )
+
+
+def _not_yet_text(names: str) -> str:
+    return (
+        f'Release blocked: these actions still show "Not yet": {names}.\n{_NOT_YET_FIX}'
+    )
+
+
+def _clear_not_yet(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "galley.app.actions.ShellActions._not_yet_actions",
+        lambda _self: [],
     )
 
 
@@ -118,27 +177,76 @@ def test_release_check_message_is_exact_and_keeps_menu_order() -> None:
     assert "Coming soon." not in message
 
 
-def test_release_check_passes_when_the_list_is_empty(monkeypatch, capsys) -> None:
+def test_not_yet_release_check_message_is_exact_and_keeps_order() -> None:
+    message = not_yet_failure(("Escape as String", "Outdent"))
+    assert message == _not_yet_text("Escape as String, Outdent")
+    assert message is not None
+    assert message.splitlines() == [
+        'Release blocked: these actions still show "Not yet": '
+        "Escape as String, Outdent.",
+        _NOT_YET_FIX,
+    ]
+    assert not_yet_failure(()) is None
+
+
+def test_release_check_passes_when_both_lists_are_empty(monkeypatch, capsys) -> None:
     monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", ())
+    _clear_not_yet(monkeypatch)
     assert release_failure() is None
     assert release_failure(()) is None
+    assert not_yet_failure(()) is None
+    assert not_yet_failure() is None
     assert main() == 0
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
 
 
-def test_release_check_fails_with_the_live_list_in_menu_order(qtbot, capsys) -> None:
-    window = _show(qtbot)
-    order = _menu_order(window)
-    assert order == list(UNBUILT_ACTIONS)
-    assert order
+def test_release_check_fails_when_only_coming_soon_remains(monkeypatch, capsys) -> None:
+    _clear_not_yet(monkeypatch)
+    assert not_yet_failure() is None
     message = release_failure()
-    assert message == _release_text(", ".join(order))
+    assert message == _release_text(", ".join(UNBUILT_ACTIONS))
     assert main() == 1
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == message + "\n"
+    assert "Not yet" not in captured.out
+
+
+def test_release_check_fails_when_only_not_yet_remains(
+    monkeypatch, qtbot, capsys
+) -> None:
+    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", ())
+    window = _show(qtbot)
+    names = _not_yet_menu_order(window)
+    assert names == list(_NOT_YET_MENU_NAMES)
+    assert release_failure() is None
+    message = not_yet_failure()
+    assert message == _not_yet_text(", ".join(names))
+    assert main() == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == message + "\n"
+    assert "Coming soon" not in captured.out
+
+
+def test_release_check_fails_when_both_lists_remain(qtbot, capsys) -> None:
+    window = _show(qtbot)
+    coming = _menu_order(window)
+    not_yet = _not_yet_menu_order(window)
+    assert coming == list(UNBUILT_ACTIONS)
+    assert not_yet == list(_NOT_YET_MENU_NAMES)
+    assert coming
+    assert not_yet
+    coming_message = release_failure()
+    not_yet_message = not_yet_failure()
+    assert coming_message == _release_text(", ".join(coming))
+    assert not_yet_message == _not_yet_text(", ".join(not_yet))
+    assert main() == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == f"{coming_message}\n{not_yet_message}\n"
 
 
 def test_tag_release_runs_the_unbuilt_action_check_after_copyright() -> None:
