@@ -53,7 +53,7 @@ Use `Qt.ControlModifier` and `QKeySequence` standard keys for shortcuts. Never h
 
 ## UI
 
-Use the native style and `QPalette` roles for UI colors. No hard-coded hex values. Syntax colors are the only exception.
+Use the native style and `QPalette` roles for UI colors. Hard-coded colors are allowed only for syntax highlighting and the brand accent `#0080A6` (the Format button fill and the Find highlight), and both live in `theme.py`.
 
 Text contrast is at least 4.5:1. Control edges are at least 3:1. Test both light and dark mode, and have the test set the color scheme itself. CI offscreen ignores OS dark mode.
 
