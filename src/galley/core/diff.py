@@ -3,7 +3,7 @@
 This module does not import Qt. ``load_document`` parses text and records
 where each value sits. ``diff`` compares two loaded documents and returns a
 ``DiffResult``: ``Change`` records in left-document order, plus whether
-every array was aligned. Both are plain functions over picklable values,
+which arrays could not be aligned. Both are plain functions over picklable values,
 so a spawn worker can call them by import path.
 
 Value rules:
@@ -14,7 +14,7 @@ Value rules:
   key-order-independent hash with ``difflib.SequenceMatcher``, matched items
   are compared recursively, and the rest are Added or Removed. An array too
   repetitive to align within ``ALIGN_BUDGET`` compares its unmatched middle
-  by index, and the result says ``aligned=False``.
+  by index, and the result lists its path in ``unaligned``.
 - Scalars compare by type and value. ``1`` equals ``1.0``. ``"1"`` and ``1``
   are Changed. ``true`` and ``1`` are Changed: a boolean is not a number.
 - ``null`` is a value, so a key holding ``null`` is not a missing key.
@@ -171,12 +171,17 @@ class Change:
 class DiffResult:
     """The changes from left to right, in left-document order.
 
-    ``aligned`` is False when at least one array went over ``ALIGN_BUDGET``
-    and its unmatched middle was compared by index.
+    ``unaligned`` holds the left path of each array that went over
+    ``ALIGN_BUDGET`` and had its unmatched middle compared by index, in
+    left-document order. ``aligned`` is True when there are none.
     """
 
     changes: list[Change]
-    aligned: bool
+    unaligned: tuple[Path, ...] = ()
+
+    @property
+    def aligned(self) -> bool:
+        return not self.unaligned
 
 
 @dataclass(frozen=True)
@@ -224,7 +229,7 @@ def diff(left: Doc, right: Doc) -> DiffResult:
     state = _DiffState(left, right)
     found = _pair_moves(_walk(state), state)
     changes = [_change(entry, left.spans, right.spans) for entry in found]
-    return DiffResult(changes, state.aligned)
+    return DiffResult(changes, tuple(state.unaligned))
 
 
 # --- JSON ---------------------------------------------------------------
@@ -650,14 +655,14 @@ def _key_text(key: object) -> str:
 
 class _DiffState:
     """One ``diff`` call: both documents, the hasher, and the container pairs
-    the walk matched. ``aligned`` turns False when an array falls back."""
+    the walk matched. ``unaligned`` collects the arrays that fall back."""
 
     def __init__(self, left: Doc, right: Doc) -> None:
         self.left = left
         self.right = right
         self.hasher = _Hasher()
         self.matched: set[tuple[Path, Path]] = set()
-        self.aligned = True
+        self.unaligned: list[Path] = []
 
 
 def _walk(state: _DiffState) -> list[list[object]]:
@@ -801,7 +806,8 @@ def _align(
     block pairs by position within the block, and the longer side's extra
     items are Removed, then Added. When the middle would cost more than
     ``ALIGN_BUDGET`` pair visits, it is compared by index instead and the
-    result is marked not aligned.
+    array's left path joins ``unaligned``. Arrays are visited in pre-order,
+    so that list is in left-document order.
     """
     if not old or not new:
         return [(index, None) for index in range(len(old))] + [
@@ -830,7 +836,7 @@ def _align(
     middle_left = left_hashes[head:left_end]
     middle_right = right_hashes[head:right_end]
     if middle_left and middle_right and _over_budget(middle_left, middle_right):
-        state.aligned = False
+        state.unaligned.append(left_path)
         blocks = [("replace", head, left_end, head, right_end)]
     else:
         blocks = [

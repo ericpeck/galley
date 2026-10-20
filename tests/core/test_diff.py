@@ -262,9 +262,39 @@ def test_over_budget_array_falls_back_to_index_matching() -> None:
     right = [1, 0] * 3000
     result = diff(_json(left), _json(right))
     assert result.aligned is False
+    assert result.unaligned == ((),)
     assert [(c.kind, c.path) for c in result.changes] == [
         ("changed", (index,)) for index in range(6000)
     ]
+
+
+def test_fallback_names_the_nested_array_that_fell_back() -> None:
+    left = {"data": {"items": [0, 1] * 3000, "small": [1, 2]}}
+    right = {"data": {"items": [1, 0] * 3000, "small": [2, 1]}}
+    result = diff(_json(left), _json(right))
+    assert result.unaligned == (("data", "items"),)
+    assert result.aligned is False
+    assert pickle.loads(pickle.dumps(result)) == result
+
+
+def test_two_over_budget_arrays_are_both_listed_in_left_order() -> None:
+    left = load_document(
+        json.dumps({"z": [0, 1] * 3000, "a": {"b": [2, 3] * 3000}}), "json"
+    )
+    right = load_document(
+        json.dumps({"a": {"b": [3, 2] * 3000}, "z": [1, 0] * 3000}), "json"
+    )
+    result = diff(left, right)
+    assert result.unaligned == (("z",), ("a", "b"))
+
+
+def test_a_small_repetitive_middle_can_go_over_budget() -> None:
+    # 1,500 identical items between different ends: 2.25 million visits.
+    left = ["start", *([{}] * 1500), "end"]
+    right = ["START", *([{}] * 1500), "END"]
+    result = diff(_json(left), _json(right))
+    assert result.unaligned == ((),)
+    assert [change.path_text for change in result.changes] == ["[0]", "[1501]"]
 
 
 def test_fallback_keeps_the_matching_head_and_tail() -> None:
@@ -278,7 +308,9 @@ def test_fallback_keeps_the_matching_head_and_tail() -> None:
 
 
 def test_an_aligned_result_says_so() -> None:
-    assert diff(_json({"a": [1, 2]}), _json({"a": [2, 1]})).aligned is True
+    result = diff(_json({"a": [1, 2]}), _json({"a": [2, 1]}))
+    assert result.aligned is True
+    assert result.unaligned == ()
 
 
 def test_alignment_is_the_same_under_any_hash_seed() -> None:
