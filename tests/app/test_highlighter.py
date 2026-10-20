@@ -1,15 +1,18 @@
 """Syntax colors in the code editors (spec §3, §5.4)."""
 
 import pytest
-from PySide6.QtGui import QFont, QTextDocument
+from PySide6.QtGui import QColor, QFont, QPalette, QTextDocument
+from PySide6.QtWidgets import QApplication
 
 from galley.app.editor import CodeEditor
-from galley.app.highlighter import SyntaxHighlighter
+from galley.app.highlighter import DARK_SYNTAX, LIGHT_SYNTAX, SyntaxHighlighter
 from galley.app.theme import (
     ACCENT_INK,
+    COLORS,
     ERROR_TINT,
     LINE_CURRENT,
     STRING,
+    SYNTAX_DARK_KEY,
     TEXT_CODE_VALUE,
     TEXT_MUTED,
 )
@@ -30,6 +33,42 @@ _YAML = (
     "  - plain words\n"
     "flow: {a: 1, b: [x, false]}\n"
 )
+
+_MIN_CONTRAST = 4.5
+# Light: #57's seeded editor Base and current-line band.
+_LIGHT_SURFACES = (COLORS["editor.bg"], LINE_CURRENT)
+# Dark: macOS native dark Base and Midlight band (measured with the cocoa
+# platform on macOS), and the dark field #57's picker contrast tests use.
+_DARK_SURFACES = ("#171717", "#343434", "#1C1C1C")
+
+
+def _luminance(color: QColor) -> float:
+    def channel(value: int) -> float:
+        srgb = value / 255
+        if srgb <= 0.04045:
+            return srgb / 12.92
+        return ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.red())
+        + 0.7152 * channel(color.green())
+        + 0.0722 * channel(color.blue())
+    )
+
+
+def _contrast(foreground: str, background: str) -> float:
+    one = _luminance(QColor(foreground))
+    two = _luminance(QColor(background))
+    return (max(one, two) + 0.05) / (min(one, two) + 0.05)
+
+
+def _dark_palette(palette: QPalette) -> QPalette:
+    dark = QPalette(palette)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        dark.setColor(group, QPalette.ColorRole.Base, QColor("#171717"))
+        dark.setColor(group, QPalette.ColorRole.Text, QColor("#FFFFFF"))
+        dark.setColor(group, QPalette.ColorRole.Midlight, QColor("#343434"))
+    return dark
 
 
 def _style(
@@ -231,8 +270,52 @@ def test_colors_leave_line_bands_and_text_alone(qtbot) -> None:
 
     assert editor.toPlainText() == _JSON
     assert not editor.document().isModified()
+    band = editor.palette().color(QPalette.ColorRole.Midlight).name().upper()
     bands = {
         selection.format.background().color().name().upper()
         for selection in editor.extraSelections()
     }
-    assert bands == {LINE_CURRENT, ERROR_TINT}
+    assert bands == {band, ERROR_TINT}
+
+
+@pytest.mark.parametrize(
+    ("colors", "surfaces"),
+    [(LIGHT_SYNTAX, _LIGHT_SURFACES), (DARK_SYNTAX, _DARK_SURFACES)],
+    ids=["light", "dark"],
+)
+def test_syntax_colors_read_on_their_base(colors, surfaces) -> None:
+    for role, color in colors._asdict().items():
+        for surface in surfaces:
+            ratio = _contrast(color, surface)
+            assert ratio >= _MIN_CONTRAST, (role, color, surface, round(ratio, 2))
+
+
+def test_highlighter_follows_base_lightness() -> None:
+    document, highlighter = _document(_JSON, "JSON")
+
+    highlighter.follow_base(QColor("#171717"))
+
+    assert highlighter.colors() == DARK_SYNTAX
+    assert _style(document, 2, '"name"') == (SYNTAX_DARK_KEY, False)
+
+    highlighter.follow_base(QColor(COLORS["editor.bg"]))
+
+    assert highlighter.colors() == LIGHT_SYNTAX
+    assert _style(document, 2, '"name"') == KEY
+
+
+def test_editor_recolors_when_the_application_turns_dark(qtbot) -> None:
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    editor = CodeEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_JSON)
+    light = QPalette(app.palette())
+    try:
+        app.setPalette(_dark_palette(light))
+        qtbot.waitUntil(
+            lambda: _style(editor.document(), 2, '"name"') == (SYNTAX_DARK_KEY, False)
+        )
+    finally:
+        app.setPalette(light)
+    qtbot.waitUntil(lambda: _style(editor.document(), 2, '"name"') == KEY)

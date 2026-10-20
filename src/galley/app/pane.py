@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Never
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.editor import CodeEditor
+from galley.app.fonts import ui_font
+from galley.app.format_picker import FormatComboBox, PopOutButton
 from galley.app.style import (
     link_button_style,
     muted_text_style,
@@ -22,7 +25,6 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
-from galley.app.theme import TEXT, TEXT_MUTED
 
 
 class PaneRole(Enum):
@@ -101,29 +103,33 @@ class PaneWidget(QWidget):
     def _build_tab_strip(self, title: str, format_label: str) -> None:
         tab = QLabel(title)
         tab.setObjectName(f"{self.role.value}TabTitle")
-        tab.setStyleSheet(f"color: {TEXT}; font-weight: 700; padding: 4px 8px;")
+        tab.setStyleSheet("padding: 4px 8px;")
+        tab_font = ui_font()
+        tab_font.setBold(True)
+        tab.setFont(tab_font)
 
         self.close_tab_button = QPushButton("×")
         self.close_tab_button.setAccessibleName("Close")
         self.close_tab_button.setToolTip("Close")
         self.close_tab_button.setFlat(True)
         self.close_tab_button.setFixedWidth(24)
+        self.close_tab_button.setStyleSheet(muted_text_style())
 
         self.new_tab_button = QPushButton("+")
         self.new_tab_button.setAccessibleName("New tab")
         self.new_tab_button.setToolTip("New tab")
         self.new_tab_button.setFlat(True)
         self.new_tab_button.setFixedWidth(24)
+        self.new_tab_button.setStyleSheet(muted_text_style())
 
         format_caption = QLabel(format_label)
         format_caption.setStyleSheet(muted_text_style())
         self.format_combo = self._format_combo(format_label)
         format_caption.setBuddy(self.format_combo)
 
-        self.pop_out_button = QPushButton("Pop out")
+        self.pop_out_button = PopOutButton()
         self.pop_out_button.setAccessibleName("Pop out into window")
         self.pop_out_button.setToolTip("Pop out into window")
-        self.pop_out_button.setFlat(True)
 
         row = QHBoxLayout(self.tab_strip)
         row.setContentsMargins(8, 4, 8, 4)
@@ -137,7 +143,7 @@ class PaneWidget(QWidget):
         row.addWidget(self.pop_out_button)
 
     def _format_combo(self, accessible_name: str) -> QComboBox:
-        self.format_combo = QComboBox()
+        self.format_combo = FormatComboBox()
         self.format_combo.setObjectName(f"{self.role.value}Format")
         self.format_combo.setAccessibleName(accessible_name)
         self.format_combo.addItems(["JSON", "YAML"])
@@ -162,11 +168,11 @@ class PaneWidget(QWidget):
         heading.setObjectName("inputEmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700;")
+        _style_empty_heading(heading)
         hint = QLabel("⌨ ⌘V to paste · Ctrl+V on Windows")
         hint.setObjectName("inputEmptyHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet(f"color: {TEXT_MUTED};")
+        hint.setStyleSheet(muted_text_style())
 
         self.paste_button = QPushButton("Paste")
         self.paste_button.setObjectName("emptyPasteButton")
@@ -199,7 +205,7 @@ class PaneWidget(QWidget):
         heading.setObjectName("outputEmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700;")
+        _style_empty_heading(heading)
         self.paste_button = None
         self.open_button = None
         layout = QVBoxLayout(overlay)
@@ -243,6 +249,15 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(self.count_label)
         row.addWidget(self.copy_button)
+
+
+def _style_empty_heading(heading: QLabel) -> None:
+    """Center a 15 px semibold heading and keep the wrap near 360 px."""
+    font = ui_font()
+    font.setPixelSize(15)
+    font.setWeight(QFont.Weight.DemiBold)
+    heading.setFont(font)
+    heading.setMaximumWidth(360)
 
 
 def _link(text: str, object_name: str) -> QPushButton:

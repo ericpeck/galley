@@ -5,8 +5,8 @@ from galley.app.theme import COLORS, TEXT_ON_ACCENT
 # Copied from the spec table so this fails if a role drifts.
 SPEC_COLORS = {
     "window.bg": "#F3F2F2",
-    "editor.bg": "#EAE7E7",
-    "gutter.bg": "#D7D3D3",
+    "editor.bg": "#FFFFFF",
+    "gutter.bg": "#EAE7E7",
     "pane.edge": "#7D7979",
     "line.current": "#DEDBDB",
     "dialog.bg": "#EAE9E9",

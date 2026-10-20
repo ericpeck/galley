@@ -2,7 +2,8 @@
 
 Colors follow spec §3: keys ``accent.ink``, strings ``string``, numbers and
 literals ``text.code.value`` bold, punctuation and comments ``text.muted``.
-YAML uses the same colors as JSON.
+YAML uses the same colors as JSON. A dark editor Base switches to the
+lighter ``SYNTAX_DARK_*`` set from ``theme.py`` in the same hues.
 
 Highlighting works one line at a time with precompiled patterns. The only
 state carried between lines is a YAML block scalar (``|`` or ``>``), whose
@@ -10,7 +11,7 @@ indented lines are string content.
 """
 
 import re
-from typing import Final, Literal
+from typing import Final, Literal, NamedTuple
 
 from PySide6.QtGui import (
     QColor,
@@ -20,10 +21,34 @@ from PySide6.QtGui import (
     QTextDocument,
 )
 
-from galley.app.theme import ACCENT_INK, STRING, TEXT_CODE_VALUE, TEXT_MUTED
+from galley.app.theme import (
+    ACCENT_INK,
+    STRING,
+    SYNTAX_DARK_KEY,
+    SYNTAX_DARK_PUNCTUATION,
+    SYNTAX_DARK_STRING,
+    SYNTAX_DARK_VALUE,
+    TEXT_CODE_VALUE,
+    TEXT_MUTED,
+)
 
 SyntaxMode = Literal["JSON", "YAML"]
 SYNTAX_MODES: Final[tuple[SyntaxMode, ...]] = ("JSON", "YAML")
+
+
+class SyntaxColors(NamedTuple):
+    key: str
+    string: str
+    value: str
+    punctuation: str
+
+
+LIGHT_SYNTAX: Final = SyntaxColors(ACCENT_INK, STRING, TEXT_CODE_VALUE, TEXT_MUTED)
+DARK_SYNTAX: Final = SyntaxColors(
+    SYNTAX_DARK_KEY, SYNTAX_DARK_STRING, SYNTAX_DARK_VALUE, SYNTAX_DARK_PUNCTUATION
+)
+# Same cut as theme.install_light_palette: below this Base is dark.
+_DARK_LIGHTNESS: Final = 128
 
 # Block states. A YAML block scalar stores its parent column + 2, so a
 # top-level scalar (parent column -1) is still positive.
@@ -125,10 +150,8 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self._mode: SyntaxMode = mode
         self._enabled = True
         self._offsets: list[int] | None = None
-        self.key_format = _color_format(ACCENT_INK)
-        self.string_format = _color_format(STRING)
-        self.value_format = _color_format(TEXT_CODE_VALUE, bold=True)
-        self.punctuation_format = _color_format(TEXT_MUTED)
+        self._colors = LIGHT_SYNTAX
+        self._use_colors(LIGHT_SYNTAX)
 
     def mode(self) -> SyntaxMode:
         return self._mode
@@ -147,6 +170,18 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         if rehighlight and self._enabled:
             self.rehighlight()
 
+    def colors(self) -> SyntaxColors:
+        return self._colors
+
+    def follow_base(self, base: QColor) -> None:
+        """Pick the light or dark set for text drawn on ``base``."""
+        colors = DARK_SYNTAX if base.lightness() < _DARK_LIGHTNESS else LIGHT_SYNTAX
+        if colors == self._colors:
+            return
+        self._use_colors(colors)
+        if self._enabled:
+            self.rehighlight()
+
     def is_enabled(self) -> bool:
         return self._enabled
 
@@ -161,6 +196,13 @@ class SyntaxHighlighter(QSyntaxHighlighter):
             return
         self._enabled = enabled
         self.setDocument(self._target if enabled else None)
+
+    def _use_colors(self, colors: SyntaxColors) -> None:
+        self._colors = colors
+        self.key_format = _color_format(colors.key)
+        self.string_format = _color_format(colors.string)
+        self.value_format = _color_format(colors.value, bold=True)
+        self.punctuation_format = _color_format(colors.punctuation)
 
     def highlightBlock(self, text: str) -> None:
         self._offsets = _utf16_offsets(text)

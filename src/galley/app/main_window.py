@@ -7,9 +7,10 @@ from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
-    QColor,
     QKeyEvent,
     QKeySequence,
+    QPainter,
+    QPaintEvent,
     QPalette,
     QResizeEvent,
     QShowEvent,
@@ -35,9 +36,10 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.about import show_about_dialog
-from galley.app.actions import ShellActions, coming_soon_wrapper
+from galley.app.actions import ShellActions, coming_soon_wrapper, is_unbuilt
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
+from galley.app.icons import toolbar_icon
 from galley.app.pane import PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import DisplayProblem, problem_count_text
@@ -63,14 +65,6 @@ from galley.app.style import (
     status_bar_style,
 )
 from galley.app.tab_repair import replace_leading_tabs
-from galley.app.theme import (
-    EDITOR_BG,
-    GUTTER_BG,
-    SELECTION,
-    TEXT,
-    TEXT_ON_ACCENT,
-    WINDOW_BG,
-)
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.format import _has_tab
 
@@ -125,6 +119,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._initial_show_done = False
         self._split_settled = False
+        self._following_palette = False
         self._splitter: PaneSplitter | None = None
         self._formatting = False
         self._format_started_s = 0.0
@@ -149,7 +144,7 @@ class MainWindow(QMainWindow):
         self.setFont(ui_font())
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
-        self._apply_palette()
+        self.setAutoFillBackground(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -173,6 +168,7 @@ class MainWindow(QMainWindow):
         self._splitter.apply_even_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -207,6 +203,8 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._follow_editor_palette()
         if event.type() != QEvent.Type.WindowStateChange:
             return
         fullscreen = self.isFullScreen()
@@ -214,18 +212,16 @@ class MainWindow(QMainWindow):
         if action.isChecked() != fullscreen:
             action.setChecked(fullscreen)
 
-    def _apply_palette(self) -> None:
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(EDITOR_BG))
-        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(WINDOW_BG))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECTION))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_ON_ACCENT))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+    def _follow_editor_palette(self) -> None:
+        """Keep each editor on the application Base after a scheme change."""
+        if self._following_palette or not hasattr(self, "_output_pane"):
+            return
+        self._following_palette = True
+        try:
+            for editor in self._editors():
+                editor.follow_application_palette()
+        finally:
+            self._following_palette = False
 
     def _build_menus(self) -> None:
         actions = self._actions
@@ -335,13 +331,20 @@ class MainWindow(QMainWindow):
         caption.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        caption.setStyleSheet(muted_text_style() + " font-size: 11px;")
+        caption.setStyleSheet(muted_text_style())
+        font = ui_font()
+        font.setPixelSize(11)
+        caption.setFont(font)
+        width = caption.fontMetrics().horizontalAdvance("Editing Output 1")
+        caption.setMinimumWidth(width + 8)
+        caption.setMinimumHeight(caption.fontMetrics().height() + 2)
         return caption
 
     def _build_format_button(self) -> QPushButton:
         button = QPushButton()
         button.setObjectName("formatButton")
         button.setAccessibleName("Format")
+        button.setIcon(toolbar_icon("Format", pad=True))
         button.setStyleSheet(primary_button_style())
         button.setMinimumHeight(28)
         hint = self._actions.format.shortcut().toString(
@@ -368,11 +371,7 @@ class MainWindow(QMainWindow):
         indent.setToolTip("Indent size")
         indent.addItems(["2 spaces", "4 spaces", "Tab"])
 
-        tray = QFrame()
-        tray.setObjectName("undoRedoTray")
-        tray.setStyleSheet(
-            f"QFrame#undoRedoTray {{ background: {GUTTER_BG}; border-radius: 4px; }}"
-        )
+        tray = _UndoRedoTray()
         tray_row = QHBoxLayout(tray)
         tray_row.setContentsMargins(2, 2, 2, 2)
         tray_row.setSpacing(0)
@@ -419,6 +418,9 @@ class MainWindow(QMainWindow):
         message = StatusMessage("Ready")
         message.setObjectName("statusMessage")
         message.setStyleSheet(muted_text_style())
+        status_font = ui_font()
+        status_font.setPixelSize(13)
+        message.setFont(status_font)
         message.clicked.connect(self._on_status_clicked)
         self._format_spinner = QProgressBar()
         self._format_spinner.setObjectName("formatSpinner")
@@ -443,6 +445,7 @@ class MainWindow(QMainWindow):
         direction = QLabel("JSON → JSON")
         direction.setObjectName("directionLabel")
         direction.setStyleSheet(muted_text_style())
+        direction.setFont(status_font)
         status.addWidget(self._format_spinner)
         status.addWidget(message, 1)
         status.addWidget(self._write_progress)
@@ -508,6 +511,10 @@ class MainWindow(QMainWindow):
         self._output_pane.format_changed.connect(self._sync_direction)
         self._bind_pane(self._input_pane)
         self._bind_pane(self._output_pane)
+        for editor in self._editors():
+            editor.undoAvailable.connect(self._sync_undo_actions)
+            editor.redoAvailable.connect(self._sync_undo_actions)
+        self._sync_undo_actions()
 
         input_paste = self._input_pane.paste_button
         footer_paste = self._input_pane.footer_paste_button
@@ -528,10 +535,6 @@ class MainWindow(QMainWindow):
             options.clicked.connect(self._not_yet)
         if copy_output is not None:
             copy_output.clicked.connect(self._copy_output)
-
-        rail = self._splitter.rail
-        if rail is not None:
-            rail.swap_button.clicked.connect(self._not_yet)
 
         self._shield_unbuilt_controls()
         application = QApplication.instance()
@@ -977,6 +980,7 @@ class MainWindow(QMainWindow):
         if editor is not None:
             self._active_editor = editor
             self._update_caption()
+            self._sync_undo_actions()
         self._update_focus_ring()
 
     def _update_caption(self) -> None:
@@ -999,6 +1003,12 @@ class MainWindow(QMainWindow):
 
     def _editors(self) -> tuple[CodeEditor, CodeEditor]:
         return self._input_pane.editor, self._output_pane.editor
+
+    def _sync_undo_actions(self, _available: bool = False) -> None:
+        """Enable Undo and Redo from the focused editor's own undo stack."""
+        document = self._target_editor().document()
+        self._actions.undo.setEnabled(document.isUndoAvailable())
+        self._actions.redo.setEnabled(document.isRedoAvailable())
 
     def _undo(self) -> None:
         self._target_editor().undo()
@@ -1133,12 +1143,49 @@ def _add_menu(bar: QMenuBar, title: str) -> QMenu:
     return menu
 
 
+_ICON_ONLY = frozenset({"Outdent", "Indent", "Expand all", "Collapse all"})
+
+
 def _tool_button(action: QAction) -> QWidget:
     button = QToolButton()
     button.setDefaultAction(action)
-    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    icon_only = action.text() in _ICON_ONLY
+    icon = toolbar_icon(action.text(), pad=not icon_only)
+    if not icon.isNull():
+        action.setIcon(icon)
+        button.setIcon(icon)
+    if icon_only:
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setAccessibleName(action.text())
+        if not is_unbuilt(action):
+            shortcut = action.shortcut().toString(
+                QKeySequence.SequenceFormat.NativeText
+            )
+            tip = action.text() if not shortcut else f"{action.text()} ({shortcut})"
+            button.setToolTip(tip)
+    elif not icon.isNull():
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    else:
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     button.setAutoRaise(True)
     return coming_soon_wrapper(button, action)
+
+
+class _UndoRedoTray(QFrame):
+    """Shared rounded tray. No stylesheet, so the buttons keep platform text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("undoRedoTray")
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.palette().color(QPalette.ColorRole.AlternateBase))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 4, 4)
+        painter.end()
 
 
 def _monotonic() -> float:

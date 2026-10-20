@@ -16,7 +16,7 @@ Main window, top to bottom (ref: 6c):
 
 1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
 2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input 1</b>` (names the pane that has focus / is the Format target).
-3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a swap button, a layout button, and a `50 / 50` ratio readout.
+3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes.
 4. Each pane: **tab strip** (tabs + `+` new tab) with a format picker (`Input as` / `Output as`) and a pop-out button on the right; the **editor** (gutter + text); a **pane footer** row.
 5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
 
@@ -31,8 +31,8 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | Role | Hex | Where | Confidence |
 |---|---|---|---|
 | `window.bg` | `#F3F2F2` | window, toolbar, status bar, pane footers, menus, popovers, find bar | confirmed |
-| `editor.bg` | `#EAE7E7` | editor text area (deliberately light grey, not white); also dialog surface is near this (`#EAE9E9`) | confirmed |
-| `gutter.bg` | `#D7D3D3` | line-number gutter; also stale-output banner and `Stale` tag fill; progress-bar track | confirmed |
+| `editor.bg` | `#FFFFFF` | light-mode sample of the editor text area. The editor uses palette Base, not this hex | confirmed |
+| `gutter.bg` | `#EAE7E7` | light-mode sample of the line-number gutter (one step darker than the white page). The gutter uses palette AlternateBase; also the stale-output banner, `Stale` tag fill, and progress-bar track in the light samples | confirmed |
 | `pane.edge` | `#7D7979` | 1 px border around panes and under inactive tabs; ~3.9:1 vs window | confirmed |
 | `line.current` | `#DEDBDB` | current-line band in the editor | measured |
 | `dialog.bg` | `#EAE9E9` | modal dialog surface | measured |
@@ -61,7 +61,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 
 ### Contrast notes (WCAG 2.x)
 
-- `text` on `editor.bg`: 13.5:1. `text.muted` `#5E5B5B` on `editor.bg`: 5.47:1; on `window.bg`: 6.02:1; on `gutter.bg` (line numbers): 4.53:1. Line numbers were `#605D5D` (4.39:1 on `#D7D3D3`); the color is darkened along the same hue (0°, saturation about 1.6%) to `#5E5B5B`.
+- `text` on `editor.bg`: 16.6:1. `text.muted` `#5E5B5B` on `editor.bg`: 6.72:1; on `window.bg`: 6.02:1; on `gutter.bg` (line numbers): 5.47:1. Line numbers were `#605D5D` (4.39:1 on the old gutter `#D7D3D3`); the color is darkened along the same hue (0°, saturation about 1.6%) to `#5E5B5B`.
 - `string`/`error` `#AA0B56` on `editor.bg`: 5.9:1; on `error.tint`: 6.6:1.
 - `accent.ink` keys on `editor.bg`: 8.0:1.
 - `amber.ink` on `amber.tint`: 6.5:1.
@@ -88,7 +88,7 @@ Every place color carries meaning also has an icon or words:
 
 Observed in the mocks (exact families not labeled; see Open questions):
 
-- **UI font: a serif** (book/newspaper serif, consistent with "Broadsheet"). Used for toolbar labels, tabs, menus, dialogs, status bar, empty-state text. Weights seen: regular and bold (semibold/bold for tab titles, buttons, dialog titles, headings like `Convert from Python`).
+- **UI font: the platform system font**, from `QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)`, set once on `QApplication`. Used for toolbar labels, tabs, menus, dialogs, status bar, empty-state text. Do not name the family and do not bundle a font. Weights seen: regular and bold (semibold/bold for tab titles, buttons, dialog titles, headings like `Convert from Python`).
 - **Code font: monospace** for editor text, gutter numbers, find field, code snippets inside dialogs, inline code like `\u00e9`, `a.b[2]`. Has a slashed or dotted zero and distinct `l`/`1`.
 - Approximate sizes at 1x (measured from 2x mocks, ±1 px):
   - Dialog title: ~17–18 px bold.
@@ -114,7 +114,7 @@ Measured at 1x, approximate:
 - Editor: ~10 px left text inset; indent guides 1 px.
 - Pane footer: ~24 px; status bar: ~24 px.
 - Dialogs: ~16 px padding; rows inside dialogs ~8 px padding on `card.bg`, 6–8 px gap between rows; buttons bottom-right, ~32 px tall.
-- Splitter rail: 32 px wide, centered controls. Swap and layout buttons are 24 px.
+- Splitter rail: 32 px wide, centered controls. The reset button is 24 px. Layout is View › Stack Panes.
 - Corner radii: small (2–4 px) on buttons, fields, tabs; dialogs ~4–6 px. Print style: minimal shadows; dialogs have a soft shadow.
 
 ---
@@ -165,7 +165,7 @@ Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; 
 Right: direction `JSON → JSON` etc.
 
 ### 5.8 Splitter and rail
-`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: swap button (`⇆`, swaps Input/Output roles or contents — see Open questions), layout button (two-column icon `▥`, drawn in `accent`), ratio readout `50` / `50`. Dragging updates the readout. Double-click handle → reset to 50/50 (proposal; not in mocks — mark optional).
+`QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
 
 ### 5.9 Pane pop-out
 See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
@@ -177,7 +177,7 @@ See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
 
 ### 5.11 Dialogs (modal, window-modal sheet-style centered over the window with scrim)
 - Repair input (6b), Convert from Python (6i, 6j, 6k, 6l), Replace existing output? (6f). Details per screen in §7.
-- Common: title bold serif; summary line with icon; rows on `card.bg` with `Line N, column M` left, snippet (mono) + explanation middle, `Show in input →` link right; legend row; footer buttons right-aligned, primary rightmost with check icon and focus ring.
+- Common: title bold; summary line with icon; rows on `card.bg` with `Line N, column M` left, snippet (mono) + explanation middle, `Show in input →` link right; legend row; footer buttons right-aligned, primary rightmost with check icon and focus ring.
 
 ### 5.12 Output options popover (6h)
 Anchored to the `Options` footer button. Header `Output options`, right `Output 1 · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
@@ -362,7 +362,7 @@ Architecture:
 - Format from any window reads the Input pane and writes the Output pane wherever they live.
 - Splitter ratio is preserved across pop-out/bring back. Persist window geometry and splitter ratio per session (QSettings).
 - Triggers: pane pop-out button (tab strip right), tab context menu `Pop out into window`, Window menu `Pop out into window` (§12).
-- Splitter: min pane width ~240 px (proposal); readout updates live, rounded to whole percent; swap button behavior TBD.
+- Splitter: min pane width ~240 px (proposal); readout updates live, rounded to whole percent. Reset returns the split to 50/50 and is disabled while the readout already says 50/50.
 
 ---
 
@@ -384,7 +384,7 @@ Architecture:
 
 ## 11. Accessibility baseline
 
-- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, pop-out, swap, layout, close tab, find toggles `.*` `Aa` `ab`).
+- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, pop-out, reset, close tab, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
 - Visible 2 px accent focus ring on panes, fields, and buttons; default button in dialogs has a ring.
 - Full keyboard operation for every screen (§6, §7). Dialogs trap focus; Esc cancels (except 6l Close).
 - Color never the only cue (§2).
@@ -403,7 +403,7 @@ Isolate behind a `platform` module for macOS and Windows:
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
-- Fonts: bundle the UI serif and mono to keep rendering consistent (pending licensing / Eric's choice).
+- Fonts: the UI uses the platform system font (`QFontDatabase.systemFont(GeneralFont)`). The editor keeps a generic monospace. Do not name a UI family and do not bundle a UI font.
 
 ---
 
@@ -426,13 +426,13 @@ Isolate behind a `platform` module for macOS and Windows:
 ## 14. Open questions
 
 1. **Product name in chrome**: Resolved. Menus and window titles use `Galley`. The mocks showed `Formatter`.
-2. **Fonts**: exact UI serif and mono families (and licenses) are not labeled in the mocks.
+2. **Fonts**: Resolved. The UI font is the platform system font (`QFontDatabase.systemFont(GeneralFont)`), set on `QApplication`. The editor stays monospace. Families are not named or bundled.
 3. **Base yellow hex** that amber is mixed from; only the mixed tint `#F1E3BE` and ink `#6E4604` are visible.
 4. **Indent guide depth colors**: only blue `#62C5EE` and pink `#FF90B1` sampled confidently; full depth sequence unknown.
 5. **White on accent**: Resolved. Button-face `accent` is `#0080A6` (same hue as measured `#0088B0`). White on `#0080A6` is 4.53:1 against `#FFFFFF` (was 4.08:1).
-6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#D7D3D3` is 4.53:1 (was 4.39:1).
+6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#EAE7E7` is 5.47:1.
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
-8. Swap button (`⇆`) on the rail: swap pane positions, swap contents, or swap input/output formats?
+8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset split`. The readout's accessible name stays `50 / 50`.
 9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows.
 10. File and Help menu contents. Window is resolved: `Pop out into window`, `Show window`, `Bring back` (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
