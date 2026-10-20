@@ -480,7 +480,8 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
             assert ink.name() != paste_ink.name(), button.defaultAction().text()
             ratio = contrast_ratio(ink, background)
             assert DISABLED_TEXT_CONTRAST <= ratio < paste_ratio - 1.5, (
-                f"{label} {button.defaultAction().text()}: {ratio:.2f}"
+                f"{label} {button.defaultAction().text()}: {ratio:.2f}; "
+                + _render_details(button, ink, background, paste_ink, paste_bg)
             )
 
 
@@ -513,6 +514,29 @@ def test_disabled_button_text_is_3_to_1_on_the_measured_cocoa_face(
     ratio = _ratio(faded, surface)
     assert ratio >= DISABLED_TEXT_CONTRAST, f"{ratio:.2f}"
     assert _ratio(enabled, surface) - ratio >= 2.0
+
+
+def _render_details(
+    button: QToolButton,
+    ink: QColor,
+    background: QColor,
+    paste_ink: QColor,
+    paste_bg: QColor,
+) -> str:
+    """What a failing render check needs to tell platforms apart."""
+    palette = button.palette()
+    disabled = palette.color(QPalette.ColorGroup.Disabled, _R.ButtonText)
+    font = button.font()
+    return (
+        f"style={button.style().name()} "
+        f"platform={QGuiApplication.platformName()} "
+        f"font={font.family()} {font.pointSizeF()}pt/{font.pixelSize()}px "
+        f"dpr={button.devicePixelRatioF()} "
+        f"palette disabled={disabled.name(QColor.NameFormat.HexArgb)} "
+        f"light={palette.color(QPalette.ColorGroup.Disabled, _R.Light).name()} "
+        f"drawn ink={ink.name()} on {background.name()} "
+        f"paste ink={paste_ink.name()} on {paste_bg.name()}"
+    )
 
 
 def test_dark_palette_fixes_black_inactive_button_text() -> None:
