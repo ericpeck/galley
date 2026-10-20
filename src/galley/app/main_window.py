@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -56,13 +55,13 @@ from galley.app.problems_settings import (
     save_stacked_panes,
 )
 from galley.app.splitter import PaneSplitter
-from galley.app.status_message import StatusMessage
+from galley.app.status_bar import PROGRESS_WIDTH_PX as PROGRESS_WIDTH_PX
+from galley.app.status_bar import SPINNER_WIDTH_PX as SPINNER_WIDTH_PX
+from galley.app.status_bar import Busy, StatusBar
 from galley.app.style import (
     menu_style,
     muted_text_style,
     primary_button_style,
-    progress_style,
-    status_bar_style,
 )
 from galley.app.tab_repair import replace_leading_tabs
 from galley.app.toolbar import MainToolbar
@@ -89,8 +88,6 @@ SPINNER_REVEAL_MS = 500
 PROGRESS_BAR_REVEAL_MS = 2000
 ELAPSED_STATUS_MS = 10_000
 CANCELED_STATUS_MS = 3_000
-SPINNER_WIDTH_PX = 80
-PROGRESS_WIDTH_PX = 160
 
 # Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
 # 1_000_000 bytes, the same SI units the warning shows.
@@ -192,7 +189,7 @@ class MainWindow(QMainWindow):
         self._editing = self._build_caption()
         self._format_button = self._build_format_button()
         toolbar = self._build_toolbar()
-        self._status_message, self._direction = self._build_status_bar()
+        self._status = self._build_status_bar()
         self._assemble(toolbar)
         self._connect()
         self._sync_input_state()
@@ -449,50 +446,11 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> QWidget:
         return MainToolbar(self._actions, self._format_button, self._editing)
 
-    def _build_status_bar(self) -> tuple[StatusMessage, QLabel]:
-        status = self.statusBar()
-        status.setStyleSheet(status_bar_style())
-        status.setSizeGripEnabled(True)
-        message = StatusMessage("Ready")
-        message.setObjectName("statusMessage")
-        message.setStyleSheet(muted_text_style())
-        status_font = ui_font()
-        status_font.setPixelSize(13)
-        message.setFont(status_font)
-        message.clicked.connect(self._on_status_clicked)
-        self._format_spinner = QProgressBar()
-        self._format_spinner.setObjectName("formatSpinner")
-        self._format_spinner.setAccessibleName("Formatting")
-        self._format_spinner.setRange(0, 0)
-        self._format_spinner.setTextVisible(False)
-        self._format_spinner.setFixedWidth(SPINNER_WIDTH_PX)
-        self._format_spinner.setStyleSheet(progress_style())
-        self._format_spinner.hide()
-        self._write_progress = QProgressBar()
-        self._write_progress.setObjectName("writeProgress")
-        self._write_progress.setAccessibleName("Formatting")
-        self._write_progress.setRange(0, 0)
-        self._write_progress.setTextVisible(False)
-        self._write_progress.setFixedWidth(PROGRESS_WIDTH_PX)
-        self._write_progress.setStyleSheet(progress_style())
-        self._write_progress.hide()
-        self._cancel_button = QPushButton("Cancel")
-        self._cancel_button.setObjectName("cancelButton")
-        self._cancel_button.setAccessibleName("Cancel")
-        self._cancel_button.hide()
-        direction = QLabel("JSON → JSON")
-        direction.setObjectName("directionLabel")
-        direction.setStyleSheet(muted_text_style())
-        direction.setFont(status_font)
-        status.addWidget(self._format_spinner)
-        status.addWidget(message, 1)
-        status.addWidget(self._write_progress)
-        status.addWidget(self._cancel_button)
-        status.addPermanentWidget(direction)
-        layout = status.layout()
-        if layout is not None:
-            layout.setContentsMargins(8, 0, 8, 0)
-        return message, direction
+    def _build_status_bar(self) -> StatusBar:
+        status = StatusBar()
+        self.setStatusBar(status)
+        status.state_clicked.connect(self._on_status_clicked)
+        return status
 
     def _assemble(self, toolbar: QWidget) -> None:
         central = QWidget()
@@ -531,7 +489,7 @@ class MainWindow(QMainWindow):
         actions.convert_python.triggered.connect(self._convert_python)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
-        self._cancel_button.clicked.connect(self._cancel_format)
+        self._status.cancel_clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
@@ -678,7 +636,7 @@ class MainWindow(QMainWindow):
         self._formatting = True
         self._format_started_s = _monotonic()
         self._reveal_timer.stop()
-        self._status_before_format = self._status_message.text()
+        self._status_before_format = self._status.state_text()
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         self._format_target = self._output_pane.format_name()
@@ -687,9 +645,7 @@ class MainWindow(QMainWindow):
         self._size_forces_busy = size >= busy
         self._size_forces_progress = size >= progress
         self._set_editors_locked(True)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
         self._apply_deferred_reveal()
         self._accepted_job_id = None
@@ -708,27 +664,25 @@ class MainWindow(QMainWindow):
             return
         result = convert_python(text, self._output_pane.format_name())
         if isinstance(result, ConvertError):
-            self._status_message.show_text(result.message)
+            self._status.set_state(result.message)
             return
         self._output_pane.editor.setPlainText(result.text)
         if result.notices:
-            self._status_message.show_text(
+            self._status.set_state(
                 " ".join(notice.message for notice in result.notices)
             )
             return
         target = self._output_pane.format_name()
-        self._status_message.show_text(f"Converted to {target}.")
+        self._status.set_state(f"Converted to {target}.")
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker."""
         if not self._formatting:
             return
         self._restore_output()
-        self._status_message.show_text(CANCELLED_MESSAGE)
+        self._status.set_state(CANCELLED_MESSAGE)
         self._cancel_status_timer.start(CANCELED_STATUS_MS)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_busy(Busy.IDLE)
         self._formatting = False
         self._size_forces_busy = False
         self._size_forces_progress = False
@@ -738,14 +692,14 @@ class MainWindow(QMainWindow):
         self._session.cancel()
 
     def _clear_canceled_status(self) -> None:
-        if self._formatting or self._status_message.text() != CANCELLED_MESSAGE:
+        if self._formatting or self._status.state_text() != CANCELLED_MESSAGE:
             return
         restored = self._status_before_format
         count = self._problems_pane.count()
         if count and restored == problem_count_text(count):
-            self._status_message.show_problem_count(count)
+            self._status.set_problem_count(count)
             return
-        self._status_message.show_text(restored)
+        self._status.set_state(restored)
 
     def _on_write_progress(self, _written: int, _total: int) -> None:
         if not self._formatting:
@@ -764,15 +718,11 @@ class MainWindow(QMainWindow):
             SPINNER_REVEAL_MS, self._format_started_s
         )
         if progress_due:
-            self._write_progress.show()
-            self._format_spinner.hide()
-            self._cancel_button.show()
-            self._status_message.show_text(_formatting_status(elapsed))
+            self._status.set_busy(Busy.PROGRESS)
+            self._status.set_state(_formatting_status(elapsed))
         elif busy_due:
-            self._format_spinner.show()
-            self._write_progress.hide()
-            self._cancel_button.hide()
-            self._status_message.show_text(FORMATTING_MESSAGE)
+            self._status.set_busy(Busy.SPINNER)
+            self._status.set_state(FORMATTING_MESSAGE)
         self._arm_reveal_timer()
 
     def _arm_reveal_timer(self) -> None:
@@ -792,7 +742,7 @@ class MainWindow(QMainWindow):
             remaining.append(PROGRESS_BAR_REVEAL_MS - elapsed)
         if elapsed < ELAPSED_STATUS_MS:
             remaining.append(ELAPSED_STATUS_MS - elapsed)
-        elif self._write_progress.isVisible():
+        elif self._status.progress_visible():
             next_second = (int(elapsed // 1000) + 1) * 1000
             remaining.append(next_second - elapsed)
         if not remaining:
@@ -817,7 +767,7 @@ class MainWindow(QMainWindow):
         # and still owns this format, so a later success can replace the banner.
         if self._session.has_pending_job:
             self._reveal_timer.stop()
-            self._status_message.show_text(message)
+            self._status.set_state(message)
             return
         self._finish_format(message)
 
@@ -840,10 +790,8 @@ class MainWindow(QMainWindow):
         self._size_forces_busy = False
         self._size_forces_progress = False
         self._reveal_timer.stop()
-        self._status_message.show_text(status)
-        self._write_progress.hide()
-        self._format_spinner.hide()
-        self._cancel_button.hide()
+        self._status.set_state(status)
+        self._status.set_busy(Busy.IDLE)
         self._set_editors_locked(False)
         self._sync_format_button()
 
@@ -861,7 +809,7 @@ class MainWindow(QMainWindow):
         self._problems_pane.set_problems(rows)
         self._input_pane.editor.set_problem_lines({row.lineno for row in rows})
         self._layout_problems()
-        self._status_message.show_problem_count(len(rows))
+        self._status.set_problem_count(len(rows))
 
     def _clear_problems(self) -> None:
         self._problems_pane.set_problems(())
@@ -1189,7 +1137,7 @@ class MainWindow(QMainWindow):
     def _sync_direction(self) -> None:
         left = self._input_pane.format_name()
         right = self._output_pane.format_name()
-        self._direction.setText(f"{left} → {right}")
+        self._status.set_info(f"{left} → {right}")
 
 
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:
