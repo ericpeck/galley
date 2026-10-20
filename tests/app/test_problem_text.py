@@ -24,7 +24,12 @@ def test_messages_name_the_line_and_drop_column_and_char() -> None:
         '{"a": 1,}': "Trailing comma at the end of line 1.",
         '{"a": 1}}': "Unexpected } on line 1.",
         "[1]]": "Unexpected ] on line 1.",
-        '{"a": 1': "The text ends on line 1 before the JSON document finishes.",
+        "{name: 1}": "Key on line 1 needs double quotes.",
+        "{'a': 1}": "Use double quotes instead of single quotes on line 1.",
+        '{\n  "a": [1, 2\n}\n': "Missing ] to close the [ opened on line 2.",
+        '[\n  {"a": 1\n]\n': "Missing } to close the { opened on line 2.",
+        '{"a": 1': "Missing } to close the { opened on line 1.",
+        "": "The text ends on line 1 before the JSON document finishes.",
         "abc": "Couldn't read this JSON on line 1.",
     }
     for text, expected in samples.items():
