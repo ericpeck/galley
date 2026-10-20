@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.editor import CodeEditor
+from galley.app.format_picker import FormatComboBox, PopOutButton
 from galley.app.style import (
     link_button_style,
     muted_text_style,
@@ -120,10 +121,9 @@ class PaneWidget(QWidget):
         self.format_combo = self._format_combo(format_label)
         format_caption.setBuddy(self.format_combo)
 
-        self.pop_out_button = QPushButton("Pop out")
+        self.pop_out_button = PopOutButton()
         self.pop_out_button.setAccessibleName("Pop out into window")
         self.pop_out_button.setToolTip("Pop out into window")
-        self.pop_out_button.setFlat(True)
 
         row = QHBoxLayout(self.tab_strip)
         row.setContentsMargins(8, 4, 8, 4)
@@ -137,7 +137,7 @@ class PaneWidget(QWidget):
         row.addWidget(self.pop_out_button)
 
     def _format_combo(self, accessible_name: str) -> QComboBox:
-        self.format_combo = QComboBox()
+        self.format_combo = FormatComboBox()
         self.format_combo.setObjectName(f"{self.role.value}Format")
         self.format_combo.setAccessibleName(accessible_name)
         self.format_combo.addItems(["JSON", "YAML"])
