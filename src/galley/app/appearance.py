@@ -92,7 +92,10 @@ class Appearance(QObject):
         """Rebuild the application palette for the current scheme."""
         baked = _baked_styles()
         # A default palette drops the explicit one, so this reads the
-        # platform's palette for the scheme just requested.
+        # platform's palette for the scheme just requested. Qt has no other
+        # public way to read it (on macOS, style().standardPalette() returns
+        # the application palette). Both calls run before the event loop
+        # paints, so no frame shows the platform palette and repaints merge.
         self._app.setPalette(QPalette())
         platform = QPalette(self._app.palette())
         if self._wants_dark(platform):

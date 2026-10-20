@@ -343,6 +343,7 @@ def _assert_contrast(window) -> None:
         "pane edge on window": (palette.color(_R.Mid), window_bg),
         "pane edge on base": (palette.color(_R.Mid), base),
         "focus ring on window": (palette.color(_R.Accent), window_bg),
+        "focus ring on base": (palette.color(_R.Accent), base),
     }
     for name, (edge, surface) in edge_pairs.items():
         ratio = _ratio(edge, surface)

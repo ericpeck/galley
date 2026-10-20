@@ -47,7 +47,7 @@ LIGHT_SYNTAX: Final = SyntaxColors(ACCENT_INK, STRING, TEXT_CODE_VALUE, TEXT_MUT
 DARK_SYNTAX: Final = SyntaxColors(
     ACCENT_INK_DARK, STRING_DARK, TEXT_CODE_VALUE_DARK, TEXT_MUTED_DARK
 )
-# Same cut as theme.install_light_palette: below this Base is dark. Base,
+# Same 128 cut as theme.is_dark: below this lightness, Base is dark. Base,
 # not the color scheme, decides, so the colors match the page actually
 # drawn even when an app palette stays light under a dark scheme.
 _DARK_LIGHTNESS: Final = 128
