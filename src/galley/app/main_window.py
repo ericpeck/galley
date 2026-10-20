@@ -1,5 +1,6 @@
 """Galley main window: menus, toolbar, panes, and status bar."""
 
+import html
 import time
 from typing import NamedTuple
 
@@ -406,7 +407,7 @@ class MainWindow(QMainWindow):
         return splitter
 
     def _build_caption(self) -> QLabel:
-        caption = QLabel("Editing <b>Input 1</b>")
+        caption = QLabel(_editing_text(self._input_pane.title))
         caption.setObjectName("editingCaption")
         caption.setTextFormat(Qt.TextFormat.RichText)
         caption.setAlignment(
@@ -416,7 +417,10 @@ class MainWindow(QMainWindow):
         font = ui_font()
         font.setPixelSize(11)
         caption.setFont(font)
-        width = caption.fontMetrics().horizontalAdvance("Editing Output 1")
+        width = max(
+            caption.fontMetrics().horizontalAdvance(f"Editing {pane.title}")
+            for pane in (self._input_pane, self._output_pane)
+        )
         caption.setMinimumWidth(width + 8)
         caption.setMinimumHeight(caption.fontMetrics().height() + 2)
         return caption
@@ -1019,10 +1023,10 @@ class MainWindow(QMainWindow):
 
     def _update_caption(self) -> None:
         if self._active_editor is self._output_pane.editor:
-            name = "Output 1"
+            pane = self._output_pane
         else:
-            name = "Input 1"
-        self._editing.setText(f"Editing <b>{name}</b>")
+            pane = self._input_pane
+        self._editing.setText(_editing_text(pane.title))
 
     def _update_focus_ring(self) -> None:
         focused = QApplication.focusWidget()
@@ -1280,6 +1284,10 @@ def _restore_editor(editor: CodeEditor, view: _EditorView) -> None:
     editor.setTextCursor(cursor)
     editor.verticalScrollBar().setValue(view.vertical)
     editor.horizontalScrollBar().setValue(view.horizontal)
+
+
+def _editing_text(title: str) -> str:
+    return f"Editing <b>{html.escape(title)}</b>"
 
 
 def _editor_from(widget: QWidget | None) -> CodeEditor | None:
