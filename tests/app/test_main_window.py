@@ -31,6 +31,7 @@ from galley.app.main_window import (
     PROGRESS_WIDTH_PX,
     SPINNER_REVEAL_MS,
     SPINNER_WIDTH_PX,
+    _shows_own_full_screen_item,
 )
 from galley.app.pane import PaneRole
 from galley.app.parse_session import ParseSession
@@ -213,8 +214,10 @@ def test_menu_bar_matches_spec(qtbot) -> None:
 def test_view_defaults_match_spec(qtbot) -> None:
     window = _show(qtbot)
     assert _action(window, "Word Wrap").isChecked()
-    assert _action(window, "Colored by depth").isChecked()
-    assert not _action(window, "Off").isChecked()
+    # Guides are Coming soon (#91), so the ✓ sits on Off, the real state,
+    # until they ship. The spec's default is Colored by depth.
+    assert _action(window, "Off").isChecked()
+    assert not _action(window, "Colored by depth").isChecked()
     assert not _action(window, "Lines").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()
     assert not _action(window, "Stack Panes").isChecked()
@@ -879,3 +882,28 @@ def test_whitespace_only_input_counts_as_empty(qtbot) -> None:
     assert status.text() == "Ready"
     _action(window, "Convert from Python").trigger()
     assert status.text() == "Ready"
+
+
+def test_view_menu_holds_one_enter_full_screen_item(qtbot) -> None:
+    window = _show(qtbot)
+    view = _menu(window, "View")
+    ours = [action for action in view.actions() if action.text() == "Enter Full Screen"]
+    assert len(ours) == 1
+    assert ours[0] is window._actions.full_screen
+    assert ours[0].shortcut() == QKeySequence(QKeySequence.StandardKey.FullScreen)
+    # macOS adds its own item to any menu titled View, so cocoa gets none of ours.
+    assert _shows_own_full_screen_item("cocoa") is False
+    assert _shows_own_full_screen_item("offscreen") is True
+    assert _shows_own_full_screen_item("windows") is True
+    assert _shows_own_full_screen_item("xcb") is True
+
+
+def test_cocoa_leaves_enter_full_screen_to_the_system_menu(monkeypatch, qtbot) -> None:
+    monkeypatch.setattr("galley.app.main_window._platform_name", lambda: "cocoa")
+    window = _show(qtbot)
+    view = _menu(window, "View")
+    labels = _labels(view)
+    assert "Enter Full Screen" not in labels
+    assert labels[-1] == "Appearance"
+    # The action still tracks the window state for the system item.
+    assert window._actions.full_screen.isCheckable()

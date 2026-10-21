@@ -397,8 +397,9 @@ class MainWindow(QMainWindow):
         view.addAction(actions.stack_panes)
         view.addSeparator()
         self._build_appearance_menu(view)
-        view.addSeparator()
-        view.addAction(actions.full_screen)
+        if _shows_own_full_screen_item():
+            view.addSeparator()
+            view.addAction(actions.full_screen)
 
         window_menu = _add_menu(bar, "Window")
         window_menu.addAction(actions.pop_out)
@@ -1436,6 +1437,22 @@ def _set_format(pane: PaneWidget, name: str) -> None:
     index = combo.findText(name)
     if index >= 0:
         combo.setCurrentIndex(index)
+
+
+def _platform_name() -> str:
+    return QApplication.platformName()
+
+
+def _shows_own_full_screen_item(platform: str | None = None) -> bool:
+    """Whether View gets Galley's own Enter Full Screen item (#91).
+
+    macOS adds its own item to any menu titled View once the window can go
+    full screen, so cocoa would show two. There the system item stands in
+    (^⌘F still works). Offscreen and every other platform keep the spec's
+    action. Only a real macOS run shows the system item: check it by hand.
+    """
+    name = _platform_name() if platform is None else platform
+    return name != "cocoa"
 
 
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:
