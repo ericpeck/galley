@@ -11,6 +11,7 @@ from io import StringIO
 import pytest
 from ruamel.yaml import YAML
 
+from galley.core.errors import JSONDuplicateKeyError
 from galley.core.format import format_json, format_yaml
 from galley.core.keypath import PathError, lookup, parse_path, render_path
 
@@ -150,9 +151,9 @@ def test_json_key_order_is_stable() -> None:
     assert format_json(formatted) == formatted
 
 
-def test_json_duplicate_key_path_uses_the_last_value() -> None:
-    formatted = format_json('{"a": {"b": 1}, "a": {"b": 2}}')
-    assert lookup(json.loads(formatted), "a.b") == 2
+def test_json_duplicate_key_is_rejected_before_any_path() -> None:
+    with pytest.raises(JSONDuplicateKeyError):
+        format_json('{"a": {"b": 1}, "a": {"b": 2}}')
 
 
 def test_yaml_paths_match_json_and_round_trip() -> None:

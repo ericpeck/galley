@@ -4,8 +4,13 @@
 caret when the problem has one. ``details`` holds the structured facts the UI
 needs (a byte offset, a depth, or an escape). Banner sentences live in
 ``galley.app``.
+
+``JSONDuplicateKeyError`` is a syntax-level problem, not an ``InputError``:
+it can list several places at once, so it reaches the Problems pane as one
+row per repeated key.
 """
 
+from dataclasses import dataclass
 from typing import Literal
 
 MAX_DEPTH = 512
@@ -55,6 +60,36 @@ def _restore_input_error(
 ) -> InputError:
     """Rebuild an ``InputError`` after it crosses a process boundary."""
     return InputError(kind, lineno=lineno, colno=colno, details=details)
+
+
+@dataclass(frozen=True)
+class DuplicateKey:
+    """One repeated key, at the occurrence after the first. 1-based."""
+
+    key: str
+    lineno: int
+    colno: int
+
+
+class JSONDuplicateKeyError(ValueError):
+    """A JSON object names the same key more than once.
+
+    ``duplicates`` lists every repeat in text order. Each one sits where the
+    key appears again, because that is the line to fix. ``lineno`` and
+    ``colno`` are the first repeat, like ``json.JSONDecodeError``.
+    """
+
+    def __init__(self, duplicates: tuple[DuplicateKey, ...]) -> None:
+        if not duplicates:
+            raise ValueError("JSONDuplicateKeyError needs at least one duplicate.")
+        super().__init__("duplicate_key")
+        self.duplicates = duplicates
+        self.lineno = duplicates[0].lineno
+        self.colno = duplicates[0].colno
+
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        """Pickle the duplicates, not the ``args`` text, for a spawn child."""
+        return (JSONDuplicateKeyError, (self.duplicates,))
 
 
 def utf8_input_error(data: bytes, offset: int) -> InputError:
