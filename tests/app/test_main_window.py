@@ -34,6 +34,7 @@ from galley.app.main_window import (
 )
 from galley.app.pane import PaneRole
 from galley.app.parse_session import ParseSession
+from galley.app.problems_pane import ProblemsPane
 from galley.app.theme import ACCENT, ACCENT_DISABLED
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
@@ -821,3 +822,60 @@ def test_format_keeps_its_width_while_working(qtbot, monkeypatch) -> None:
     assert button.sizeHint().width() == idle_width
     window._cancel_format()
     assert button.sizeHint().width() == idle_width
+
+
+def test_clear_resets_status_problems_and_counts(qtbot) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    counts = window.findChild(QLabel, "statusCounts")
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(editor, CodeEditor)
+    assert status is not None and counts is not None
+    assert isinstance(pane, ProblemsPane)
+    editor.setPlainText('{\n  "price": 4.5\n  "qty": 3\n}\n')
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: status.text() == "1 problem", timeout=15000)
+    qtbot.waitUntil(lambda: pane.isVisible() and pane.count() == 1, timeout=15000)
+    assert editor.problem_lines() == {2}
+    window.statusBar().set_counts("5 differences")
+    assert counts.isVisible()
+
+    clear = window.findChild(QPushButton, "clearButton")
+    assert clear is not None
+    clear.click()
+    assert editor.toPlainText() == ""
+    assert status.text() == "Ready"
+    assert pane.count() == 0
+    qtbot.waitUntil(lambda: not pane.isVisible())
+    assert editor.problem_lines() == set()
+    assert counts.text() == ""
+    assert not counts.isVisible()
+
+
+def test_whitespace_only_input_counts_as_empty(qtbot) -> None:
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    count = window.findChild(QLabel, "inputCount")
+    title = window.findChild(QLabel, "inputEmptyTitle")
+    format_button = window.findChild(QPushButton, "formatButton")
+    assert isinstance(editor, CodeEditor)
+    assert status is not None and count is not None and title is not None
+    assert format_button is not None
+    editor.setPlainText("abc")
+    assert _action(window, "Format").isEnabled()
+    assert _action(window, "Convert from Python").isEnabled()
+    assert not title.isVisible()
+
+    editor.setPlainText("  \n\t\n  ")
+    assert count.text() == "Empty"
+    assert title.isVisible()
+    assert not format_button.isEnabled()
+    assert not _action(window, "Format").isEnabled()
+    assert not _action(window, "Convert from Python").isEnabled()
+    _action(window, "Format").trigger()
+    qtbot.wait(200)
+    assert status.text() == "Ready"
+    _action(window, "Convert from Python").trigger()
+    assert status.text() == "Ready"

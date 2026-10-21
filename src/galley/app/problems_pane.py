@@ -35,6 +35,9 @@ class ProblemsPane(ResultsPanel):
 
     jump_requested = Signal(int)
     replace_tabs_requested = Signal()
+    # Esc in the list: the window puts focus back in the editor that owns
+    # the problems. The pane stays open.
+    focus_editor_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("problems", parent)
@@ -43,6 +46,7 @@ class ProblemsPane(ResultsPanel):
 
         self._list = ResultsList("Problems", "problemsList")
         self._list.activated.connect(self._jump)
+        self._list.escape_pressed.connect(self.focus_editor_requested.emit)
 
         self._replace = QPushButton("Replace tabs with spaces")
         self._replace.setObjectName("replaceTabsButton")

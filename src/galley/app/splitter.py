@@ -1,7 +1,7 @@
 """Input / Output splitter with a rail that reads the split ratio."""
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtGui import QMouseEvent, QPalette
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QMouseEvent, QPalette, QResizeEvent
 from PySide6.QtWidgets import (
     QBoxLayout,
     QLabel,
@@ -99,7 +99,13 @@ class SplitterRail(QSplitterHandle):
 
 
 class PaneSplitter(QSplitter):
-    """Input and Output, equal stretch, with one rail handle."""
+    """Input and Output, equal stretch, with one rail handle.
+
+    ``split_changed`` fires after a drag and after ``setSizes``, so a reset
+    from the rail counts as a change too.
+    """
+
+    split_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(Qt.Orientation.Horizontal, parent)
@@ -107,6 +113,7 @@ class PaneSplitter(QSplitter):
         self.setHandleWidth(RAIL_WIDTH)
         self.setChildrenCollapsible(False)
         self.rail: SplitterRail | None = None
+        self.splitterMoved.connect(self._emit_split_changed)
 
     def createHandle(self) -> QSplitterHandle:
         rail = SplitterRail(self.orientation(), self)
@@ -132,10 +139,20 @@ class PaneSplitter(QSplitter):
         super().setSizes(sizes)
         if self.rail is not None:
             self.rail.refresh_ratio()
+        self.split_changed.emit()
+
+    def _emit_split_changed(self, _pos: int = 0, _index: int = 0) -> None:
+        self.split_changed.emit()
 
     def apply_even_split(self) -> None:
         """Give Input and Output the same share of the splitter."""
         self.setSizes([1, 1])
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Keep the readout right: a pane minimum can bend the split as it grows."""
+        super().resizeEvent(event)
+        if self.rail is not None:
+            self.rail.refresh_ratio()
 
 
 def _rail_button(text: str, name: str, object_name: str) -> QToolButton:

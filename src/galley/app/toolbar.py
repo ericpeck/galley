@@ -117,6 +117,12 @@ class MainToolbar(QWidget):
         indent.addItems(list(_INDENT_CHOICES))
         self._indent = indent
         self._indent_menu = self._build_indent_menu()
+        # Nothing reads the picker until Indent ships (#91). It follows the
+        # Indent entry of UNBUILT_ACTIONS, like the Indent button.
+        self._indent_host = coming_soon_wrapper(indent, actions.indent)
+        if is_unbuilt(actions.indent):
+            self._indent_menu.menuAction().setEnabled(False)
+            self._indent_menu.menuAction().setToolTip(COMING_SOON)
 
         tray = _UndoRedoTray()
         tray_row = QHBoxLayout(tray)
@@ -138,7 +144,7 @@ class MainToolbar(QWidget):
         self._add_left(_control(tray, group=1), gap=20)
         self._add_left(_control(_tool_button(actions.outdent), group=2), gap=20)
         self._add_left(_control(_tool_button(actions.indent), group=2), gap=4)
-        self._add_left(_control(indent, group=2, textual=False), gap=4)
+        self._add_left(_control(self._indent_host, group=2, textual=False), gap=4)
         self._add_left(_control(_tool_button(actions.sort_keys), group=3), gap=20)
         self._add_left(_control(_tool_button(actions.minify), group=3), gap=4)
         self._add_left(_control(_tool_button(actions.expand_all), group=4), gap=20)
@@ -297,7 +303,7 @@ class MainToolbar(QWidget):
         for control in self._controls:
             if id(control) not in hidden_ids:
                 continue
-            if control.widget is self._indent:
+            if control.widget is self._indent_host:
                 menu.addMenu(self._indent_menu)
                 continue
             for action in control.actions:

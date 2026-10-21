@@ -1,4 +1,4 @@
-"""Remember Problems pane state and whether Input and Output are stacked."""
+"""Remember Problems pane state, the Input / Output split, and stacking."""
 
 from PySide6.QtCore import QSettings
 
@@ -12,6 +12,7 @@ STRIP_WIDTH = 28
 _STATE_KEY = "problems/state"
 _WIDTH_KEY = "problems/width"
 _STACKED_KEY = "view/stackPanes"
+_SPLIT_KEY = "view/splitSizes"
 _STATES = frozenset({STATE_OPEN, STATE_MINIMIZED, STATE_CLOSED})
 
 
@@ -52,6 +53,28 @@ def save_stacked_panes(stacked: bool) -> None:
     """Store the pane layout so the next launch can restore it."""
     settings = problems_settings()
     settings.setValue(_STACKED_KEY, bool(stacked))
+    settings.sync()
+
+
+def load_split_sizes() -> list[int] | None:
+    """Return the saved Input and Output sizes, or None for an even split."""
+    value = problems_settings().value(_SPLIT_KEY)
+    if value is None:
+        return None
+    parts = value if isinstance(value, list) else str(value).split(",")
+    try:
+        sizes = [int(str(part)) for part in parts]
+    except (TypeError, ValueError):
+        return None
+    if len(sizes) != 2 or min(sizes) <= 0:
+        return None
+    return sizes
+
+
+def save_split_sizes(sizes: list[int]) -> None:
+    """Store the Input and Output sizes so the next launch keeps the ratio."""
+    settings = problems_settings()
+    settings.setValue(_SPLIT_KEY, ",".join(str(int(size)) for size in sizes))
     settings.sync()
 
 

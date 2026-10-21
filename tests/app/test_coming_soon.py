@@ -5,7 +5,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPushButton, QToolButton, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QMenu,
+    QPushButton,
+    QToolButton,
+    QToolTip,
+    QWidget,
+)
 
 from galley.app.actions import (
     _ACTION_ATTRS,
@@ -451,3 +458,37 @@ def test_deleting_a_name_from_the_list_turns_that_action_on(monkeypatch, qtbot) 
     assert find.isEnabled()
     assert find.toolTip() != COMING_SOON
     assert not is_unbuilt(find)
+
+
+def test_indent_size_picker_is_coming_soon_until_indent_ships(qtbot) -> None:
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isVisible()
+    assert not picker.isEnabled()
+    assert picker.toolTip() == COMING_SOON
+    assert picker.accessibleDescription() == COMING_SOON
+    assert picker.focusPolicy() == Qt.FocusPolicy.NoFocus
+    host = picker.parentWidget()
+    assert isinstance(host, QWidget)
+    assert host.property("comingSoonHost") is True
+    assert host.isEnabled()
+    assert host.toolTip() == COMING_SOON
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert not submenu.menuAction().isEnabled()
+    assert submenu.menuAction().toolTip() == COMING_SOON
+
+
+def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
+    without_indent = tuple(name for name in UNBUILT_ACTIONS if name != "Indent")
+    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", without_indent)
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isEnabled()
+    assert picker.toolTip() == "Indent size"
+    assert picker.accessibleDescription() == ""
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert submenu.menuAction().isEnabled()
