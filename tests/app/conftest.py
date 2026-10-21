@@ -22,6 +22,19 @@ def isolated_settings(qapp, tmp_path: Path) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def cancelled_file_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests off the platform file dialog. Open tests replace this."""
+
+    def _cancel(*_args: object, **_kwargs: object) -> tuple[str, str]:
+        return "", ""
+
+    monkeypatch.setattr(
+        "galley.app.main_window.QFileDialog.getOpenFileName",
+        _cancel,
+    )
+
+
 _SCHEMES = {
     "light": {
         QPalette.ColorRole.Window: "#F3F2F2",

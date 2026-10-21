@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Never
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 from galley.app.editor import CodeEditor
 from galley.app.fonts import ui_font
 from galley.app.format_picker import FormatComboBox, PopOutButton
+from galley.app.open_file import InputDocument
 from galley.app.style import (
     link_button_style,
     muted_text_style,
@@ -64,6 +66,8 @@ class PaneWidget(QWidget):
     def __init__(self, spec: PaneSpec, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.spec = spec
+        self.document: InputDocument | None = None
+        self.source_path: Path | None = None
         self.setObjectName(f"{spec.name}Pane")
         self.setMinimumWidth(240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -115,6 +119,18 @@ class PaneWidget(QWidget):
         self.setProperty("paneFocused", focused)
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def set_document(self, document: InputDocument | None) -> None:
+        """Record the file now in this pane, or None for typed or pasted text."""
+        self.document = document
+        self.set_source(None if document is None else document.path)
+
+    def set_source(self, path: Path | None) -> None:
+        """Remember where this pane's text came from.
+
+        A later tab title and tooltip read it. Nothing on screen shows it yet.
+        """
+        self.source_path = path
 
     def _build_tab_strip(self) -> None:
         tab = QLabel(self.spec.title)
@@ -180,7 +196,7 @@ class PaneWidget(QWidget):
         overlay = QWidget()
         overlay.setObjectName(f"empty{self.spec.name.capitalize()}")
         overlay.setStyleSheet("background: transparent;")
-        heading = QLabel("Paste JSON or YAML, or drop a file here")
+        heading = QLabel(_source_empty_heading())
         heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -265,6 +281,16 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(self.count_label)
         row.addWidget(self.copy_button)
+
+
+def _source_empty_heading() -> str:
+    """Empty Input heading with this platform's Open shortcut."""
+    shortcut = QKeySequence(QKeySequence.StandardKey.Open).toString(
+        QKeySequence.SequenceFormat.NativeText
+    )
+    if not shortcut:
+        return "Paste JSON or YAML, or drop a file here."
+    return f"Paste JSON or YAML, or drop a file here. {shortcut} to open."
 
 
 def _style_empty_heading(heading: QLabel) -> None:

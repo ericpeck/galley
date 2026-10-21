@@ -3,6 +3,8 @@
 ``run_worker`` is a module-level function so a spawn child can import it by
 name. This module does not import Qt. The child writes a temp file beside
 the destination and never replaces that destination; the UI process commits.
+A ``CompareJob`` loads two documents and diffs them. It has no output file,
+so it writes no temp.
 """
 
 import os
@@ -10,8 +12,9 @@ import tempfile
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 
+from galley.core.diff import DiffResult, diff, load_document
 from galley.core.errors import InputError
 from galley.core.format import format_document
 from galley.core.problems import Problem, collect_problems
@@ -78,6 +81,50 @@ class FailureEvent:
     problems: tuple[Problem, ...] = ()
 
 
+@dataclass(frozen=True)
+class CompareJob:
+    """Two documents to compare. The bodies are copies; the worker does not share them.
+
+    ``hold_s`` pauses after both sides load and before ``diff`` runs, so a
+    test can cancel mid-compare. The app leaves it at 0.
+    """
+
+    job_id: int
+    left_text: str
+    left_format: str
+    right_text: str
+    right_format: str
+    hold_s: float = 0.0
+
+
+CompareSide = Literal["left", "right"]
+
+
+@dataclass(frozen=True)
+class CompareEvent:
+    """Comparing finished. ``result`` is the engine's ``DiffResult``."""
+
+    job_id: int
+    result: DiffResult
+
+
+@dataclass(frozen=True)
+class CompareFailureEvent:
+    """Comparing failed.
+
+    ``side`` names the document that did not load. It is ``None`` when both
+    loaded and ``diff`` itself failed. ``error`` and ``problems`` are filled
+    the way :class:`FailureEvent` fills them, with lines in that side's
+    document. The words are chosen in the app.
+    """
+
+    job_id: int
+    side: CompareSide | None
+    message: str
+    error: InputError | None = None
+    problems: tuple[Problem, ...] = ()
+
+
 def run_worker(job_queue: Queue, event_queue: Queue) -> None:
     """Format jobs until the queue yields ``None``.
 
@@ -88,6 +135,9 @@ def run_worker(job_queue: Queue, event_queue: Queue) -> None:
         job = job_queue.get()
         if job is None:
             return
+        if isinstance(job, CompareJob):
+            _execute_compare(job, event_queue)
+            continue
         if not isinstance(job, FormatJob):
             continue
         _execute(job, event_queue)
@@ -217,6 +267,50 @@ def _failure_message(exc: Exception) -> str:
     if message:
         return message
     return exc.__class__.__name__
+
+
+def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
+    """Load both sides, then diff them. Left is checked before right.
+
+    This is the whole compare job without the queue, so it also runs
+    in-process. A side that fails stops the job before ``diff`` runs.
+    """
+    sides: tuple[tuple[CompareSide, str, str], ...] = (
+        ("left", job.left_text, job.left_format),
+        ("right", job.right_text, job.right_format),
+    )
+    docs = []
+    for side, text, source in sides:
+        early = collect_problems(text, source)
+        if early:
+            return CompareFailureEvent(job.job_id, side, "", None, early)
+        try:
+            docs.append(load_document(text, source))
+        except Exception as exc:
+            return _compare_failure(job.job_id, side, text, source, exc)
+    if job.hold_s > 0:
+        time.sleep(job.hold_s)
+    try:
+        result = diff(docs[0], docs[1])
+    except Exception as exc:
+        error = exc if isinstance(exc, InputError) else None
+        return CompareFailureEvent(job.job_id, None, _failure_message(exc), error)
+    return CompareEvent(job.job_id, result)
+
+
+def _execute_compare(job: CompareJob, event_queue: Queue) -> None:
+    event_queue.put(ProgressEvent(job.job_id, "read", 0, 0, None))
+    event_queue.put(run_compare(job))
+
+
+def _compare_failure(
+    job_id: int, side: CompareSide, text: str, source: str, exc: Exception
+) -> CompareFailureEvent:
+    error = exc if isinstance(exc, InputError) else None
+    problems: tuple[Problem, ...] = ()
+    if error is None:
+        problems = collect_problems(text, source, exc)
+    return CompareFailureEvent(job_id, side, _failure_message(exc), error, problems)
 
 
 def _is_temp_name(path: str) -> bool:
