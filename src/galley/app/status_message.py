@@ -13,7 +13,8 @@ class StatusMessage(QLabel):
     Text too long for the slot is elided on screen only. ``text()`` and
     ``full_text()`` return the full message; ``displayed_text()`` is what
     the label paints. The full text also goes in the tooltip and the
-    accessible description while it is elided.
+    accessible description while it is elided. A ``detail``, such as an
+    opened file's full path, goes in both and never on screen.
     """
 
     clicked = Signal()
@@ -21,12 +22,14 @@ class StatusMessage(QLabel):
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
         self._full_text = text
+        self._detail = ""
         self._clickable = False
         self.setContentsMargins(8, 0, 8, 0)
         self.setCursor(Qt.CursorShape.ArrowCursor)
 
-    def show_text(self, text: str) -> None:
+    def show_text(self, text: str, detail: str = "") -> None:
         """Show ordinary status text that does not open the pane."""
+        self._detail = detail
         self._clickable = False
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self._set_full_text(text)
@@ -35,6 +38,7 @@ class StatusMessage(QLabel):
     def show_problem_count(self, count: int) -> None:
         """Show ``N problems`` and accept a click."""
         label = problem_count_text(count)
+        self._detail = ""
         self._clickable = True
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._set_full_text(label)
@@ -50,6 +54,10 @@ class StatusMessage(QLabel):
 
     def setText(self, text: str) -> None:
         self._set_full_text(text)
+
+    def detail(self) -> str:
+        """Off-screen detail for the tooltip and accessible description."""
+        return self._detail
 
     def displayed_text(self) -> str:
         """The text the label paints, elided when the slot is too narrow."""
@@ -96,5 +104,8 @@ class StatusMessage(QLabel):
         elided = shown != self._full_text
         if self.displayed_text() != shown:
             QLabel.setText(self, shown)
-        self.setToolTip(self._full_text if elided else "")
-        self.setAccessibleDescription(self._full_text if elided else "")
+        parts = [self._full_text] if elided else []
+        if self._detail:
+            parts.append(self._detail)
+        self.setToolTip("\n".join(parts))
+        self.setAccessibleDescription("\n".join(parts))

@@ -13,12 +13,18 @@ job retires the replacement beside any child still being reaped. Each
 retired child keeps its own process, queues, reap clock, and temp paths.
 The poll reads ``exitcode`` and does not join. When one child exits, only
 that child's temps are deleted.
+
+Compare runs on the same worker and queues as Format, one job at a time.
+While either kind of job is active, a second submit of either kind is
+ignored. Cancel kills a compare the same way it kills a Format, and the
+compare's result is dropped with that child's queues.
 """
 
 import atexit
 import multiprocessing
 import os
 import time
+from dataclasses import dataclass
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue
 from queue import Empty
@@ -33,6 +39,10 @@ from galley.app.problem_text import (
 )
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
+    CompareEvent,
+    CompareFailureEvent,
+    CompareJob,
+    CompareSide,
     FailureEvent,
     FormatJob,
     ProgressEvent,
@@ -157,6 +167,28 @@ class _Active:
         self.total = 0
 
 
+class _CompareActive(_Active):
+    """Bookkeeping for a compare job. It has no destination and no temp."""
+
+    def __init__(self, job_id: int) -> None:
+        super().__init__(job_id, None)
+
+
+@dataclass(frozen=True)
+class CompareFailure:
+    """Why a compare did not finish, as ``compare_failed`` delivers it.
+
+    ``side`` is the document that did not load, or ``None`` when both
+    loaded and the comparison itself failed. ``problems`` are Problems-pane
+    rows with lines in that side's document. ``message`` is the raw failure
+    text, used only when ``problems`` is empty.
+    """
+
+    side: CompareSide | None
+    problems: tuple[DisplayProblem, ...]
+    message: str
+
+
 class ParseSession(QObject):
     """One warm worker and the queues that belong to it."""
 
@@ -164,6 +196,12 @@ class ParseSession(QObject):
     succeeded = Signal(str)
     failed = Signal(str)
     problems_found = Signal(object)
+    # Compare: job id, then a ``DiffResult``, a ``CompareFailure``, or nothing.
+    compare_finished = Signal(int, object)
+    compare_failed = Signal(int, object)
+    compare_cancelled = Signal(int)
+    # The worker exited while comparing. A replacement has already started.
+    compare_stopped = Signal(int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -178,7 +216,7 @@ class ParseSession(QObject):
         self._reaped_process: BaseProcess | None = None
         self._resource: _RunningWorker | None = None
         self._active: _Active | None = None
-        self._pending: FormatJob | None = None
+        self._pending: FormatJob | CompareJob | None = None
         self._report_abandoned_reap = False
         self._job_ids = 0
         self._closing = False
@@ -208,7 +246,7 @@ class ParseSession(QObject):
 
     @property
     def active_job_id(self) -> int | None:
-        """Job id of the format run the session is waiting on, if any."""
+        """Job id of the format or compare run the session is waiting on."""
         if self._active is None:
             return None
         return self._active.job_id
@@ -292,6 +330,43 @@ class ParseSession(QObject):
             self.start()
         self._flush_pending()
 
+    def submit_compare(
+        self,
+        left_text: str,
+        left_format: str,
+        right_text: str,
+        right_format: str,
+        *,
+        hold_s: float = 0.0,
+    ) -> int | None:
+        """Send one compare job and return its id.
+
+        Returns ``None`` and sends nothing while a Format or a compare is
+        active, the same way a second :meth:`submit` is ignored. A compare
+        that has to wait out a reap deadline stays quiet and then runs on
+        the replacement. ``hold_s`` is for tests (see ``CompareJob``).
+        """
+        if self._shut_down or self._active is not None:
+            return None
+        if not self._retired:
+            self._replace_dead_worker()
+        self._job_ids += 1
+        job = CompareJob(
+            job_id=self._job_ids,
+            left_text=left_text,
+            left_format=left_format,
+            right_text=right_text,
+            right_format=right_format,
+            hold_s=hold_s,
+        )
+        self._active = _CompareActive(job.job_id)
+        self._pending = job
+        self._report_abandoned_reap = False
+        if self._process is None and not self._retired:
+            self.start()
+        self._flush_pending()
+        return job.job_id
+
     def cancel(self) -> None:
         """Kill the current worker without joining it or reading its queues.
 
@@ -307,6 +382,7 @@ class ParseSession(QObject):
         """
         if self._shut_down or self._active is None:
             return
+        cancelled = self._active
         temp_path = self._active.temp_path
         if temp_path:
             self.last_temp_path = temp_path
@@ -316,11 +392,13 @@ class ParseSession(QObject):
         process = self._process
         if process is None:
             self._release_unsent_temp(temp_path)
+            self._report_compare_cancelled(cancelled)
             return
         self._retire_current(temp_path)
         _kill(process)
         if not self._timer.isActive():
             self._timer.start()
+        self._report_compare_cancelled(cancelled)
 
     def shutdown(self) -> None:
         """Stop the timer, kill any child, and drop its queues.
@@ -495,7 +573,9 @@ class ParseSession(QObject):
         self._event_queue = None
         if resource is not None:
             _release_without_join(resource)
-        if had_job and not self._closing:
+        if isinstance(active, _CompareActive) and not self._closing:
+            self.compare_stopped.emit(active.job_id)
+        elif had_job and not self._closing:
             self.failed.emit(FORMATTER_STOPPED)
         if not self._closing and not self._shut_down:
             self._spawn()
@@ -548,6 +628,10 @@ class ParseSession(QObject):
                 self._handle_success(event)
             elif isinstance(event, FailureEvent):
                 self._handle_failure(event)
+            elif isinstance(event, CompareEvent):
+                self._handle_compare(event)
+            elif isinstance(event, CompareFailureEvent):
+                self._handle_compare_failure(event)
 
     def _handle_progress(self, event: ProgressEvent) -> None:
         active = self._active
@@ -598,6 +682,31 @@ class ParseSession(QObject):
             return
         self.failed.emit(_failure_text(event))
 
+    def _handle_compare(self, event: CompareEvent) -> None:
+        if not self._expects_compare(event.job_id):
+            return
+        self._active = None
+        self._pending = None
+        self.compare_finished.emit(event.job_id, event.result)
+
+    def _handle_compare_failure(self, event: CompareFailureEvent) -> None:
+        if not self._expects_compare(event.job_id):
+            return
+        self._active = None
+        self._pending = None
+        failure = CompareFailure(event.side, _displayed_problems(event), event.message)
+        self.compare_failed.emit(event.job_id, failure)
+
+    def _expects_compare(self, job_id: int) -> bool:
+        """True for the compare the session is waiting on. Older results are dropped."""
+        active = self._active
+        return isinstance(active, _CompareActive) and active.job_id == job_id
+
+    def _report_compare_cancelled(self, cancelled: _Active) -> None:
+        """Emit after the kill, so a slot that submits waits for the new worker."""
+        if isinstance(cancelled, _CompareActive):
+            self.compare_cancelled.emit(cancelled.job_id)
+
     def _release_unsent_temp(self, temp_path: str | None) -> None:
         """Delete a temp that no worker has opened.
 
@@ -645,7 +754,9 @@ def _elapsed_ms(started_s: float) -> float:
     return (time.monotonic() - started_s) * 1000
 
 
-def _displayed_problems(event: FailureEvent) -> tuple[DisplayProblem, ...]:
+def _displayed_problems(
+    event: FailureEvent | CompareFailureEvent,
+) -> tuple[DisplayProblem, ...]:
     """Pane rows for a located failure. Empty when the failure has no line."""
     if event.error is not None:
         return (display_input_error(event.error),)

@@ -2,9 +2,10 @@
 
 import html
 import time
+from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QKeyEvent,
@@ -16,6 +17,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -29,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.about import show_about_dialog
-from galley.app.actions import ShellActions, coming_soon_wrapper
+from galley.app.actions import ShellActions, coming_soon_wrapper, is_unbuilt
 from galley.app.appearance import (
     MODE_DARK,
     MODE_LIGHT,
@@ -39,7 +41,26 @@ from galley.app.appearance import (
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
-from galley.app.pane import PaneRole, PaneWidget
+from galley.app.open_file import (
+    OPEN_DIALOG_CAPTION,
+    OPEN_FILE_FILTER,
+    OPEN_WHILE_FORMATTING_TOOLTIP,
+    OPENED_STATUS_MS,
+    REPLACE_BUTTON,
+    FileReader,
+    InputDocument,
+    input_needs_replace,
+    load_last_open_dir,
+    save_last_open_dir,
+)
+from galley.app.open_text import (
+    input_window_title,
+    open_error_text,
+    opened_text,
+    opening_text,
+    replace_input_text,
+)
+from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import DisplayProblem, problem_count_text
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
@@ -72,6 +93,7 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
+from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
 NOTHING_TO_FOLD = "nothing to fold"
@@ -94,6 +116,9 @@ SPINNER_REVEAL_MS = 500
 PROGRESS_BAR_REVEAL_MS = 2000
 ELAPSED_STATUS_MS = 10_000
 CANCELED_STATUS_MS = 3_000
+# "Opening file.json…" waits as long as the format spinner (ADR 0001).
+OPEN_REVEAL_MS = SPINNER_REVEAL_MS
+OPENING_ACCESSIBLE_NAME = "Opening"
 
 # Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
 # 1_000_000 bytes, the same SI units the warning shows.
@@ -148,7 +173,16 @@ class _FormatButton(QPushButton):
 
 
 class MainWindow(QMainWindow):
-    """The single Galley window in its empty, ready state."""
+    """The single Galley window in its empty, ready state.
+
+    ``open_started``, ``open_finished(InputDocument)`` and
+    ``open_failed(kind, name)`` report each Open for loading and error
+    visuals. ``kind`` is a :class:`~galley.core.load.LoadErrorKind` value.
+    """
+
+    open_started = Signal()
+    open_finished = Signal(object)
+    open_failed = Signal(str, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -163,6 +197,18 @@ class MainWindow(QMainWindow):
         self._accepted_job_id: int | None = None
         self._size_warning_accepted = False
         self._size_warning: QMessageBox | None = None
+        self._replace_box: QMessageBox | None = None
+        self._loading_path: Path | None = None
+        self._open_job = 0
+        self._reader = FileReader(self)
+        self._reader.finished.connect(self._on_file_read)
+        self._open_reveal_timer = QTimer(self)
+        self._open_reveal_timer.setSingleShot(True)
+        self._open_reveal_timer.timeout.connect(self._show_opening)
+        self._opened_status_timer = QTimer(self)
+        self._opened_status_timer.setSingleShot(True)
+        self._opened_status_timer.timeout.connect(self._clear_opened_status)
+        self._opened_status = ""
         self._status_before_format = "Ready"
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setSingleShot(True)
@@ -217,6 +263,7 @@ class MainWindow(QMainWindow):
         self._session.shutdown()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.cancel_open()
         self._session.shutdown()
         super().closeEvent(event)
 
@@ -289,6 +336,7 @@ class MainWindow(QMainWindow):
         galley.addAction(actions.quit)
 
         file_menu = _add_menu(bar, "File")
+        file_menu.setToolTipsVisible(True)
         file_menu.addAction(actions.open_file)
 
         edit = _add_menu(bar, "Edit")
@@ -493,6 +541,7 @@ class MainWindow(QMainWindow):
     def _connect(self) -> None:
         actions = self._actions
         actions.about.triggered.connect(self._show_about)
+        actions.open_file.triggered.connect(self._open_file)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -627,6 +676,8 @@ class MainWindow(QMainWindow):
 
     def _format(self) -> None:
         if self._formatting or self._size_warning is not None:
+            return
+        if self._loading_path is not None:
             return
         text = self._input_pane.editor.toPlainText()
         if text == "":
@@ -1000,10 +1051,20 @@ class MainWindow(QMainWindow):
         return "Valid JSON"
 
     def _focus_input(self) -> None:
-        self._input_pane.editor.setFocus()
-        self._active_editor = self._input_pane.editor
+        editor = self._input_pane.editor
+        self.activateWindow()
+        editor.setFocus()
+        self._active_editor = editor
         self._update_caption()
         self._update_focus_ring()
+
+    def _return_focus_to_input(self) -> None:
+        """Focus Input after the dialog that held it has closed.
+
+        A message box clears focus while it is tearing down. Asking on the
+        next turn puts the caret back in Input.
+        """
+        QTimer.singleShot(0, self, self._focus_input)
 
     def _on_focus_changed(self, _old: QWidget | None, new: QWidget | None) -> None:
         editor = _editor_from(new)
@@ -1066,6 +1127,184 @@ class MainWindow(QMainWindow):
         self._input_pane.editor.clear()
         self._input_pane.editor.setFocus()
 
+    def can_open(self) -> bool:
+        """True when a file may replace the source pane's text now.
+
+        Never while a format job runs, a file is loading, or a sheet is up.
+        Menu, shortcut, button, and later drop and recents all ask this.
+        """
+        return not (
+            self._formatting
+            or self._loading_path is not None
+            or self._replace_box is not None
+            or self._size_warning is not None
+        )
+
+    def open_path(self, path: Path) -> None:
+        """Load ``path`` into the source pane. Opening never formats.
+
+        Every way of opening a file comes through here. Unsaved edits are
+        confirmed first.
+        """
+        if not self.can_open():
+            return
+        pane = self._source_pane()
+        if input_needs_replace(pane.editor.toPlainText(), pane.document):
+            self._ask_replace_input(path)
+            return
+        self._start_loading(path)
+
+    def cancel_open(self) -> None:
+        """Drop the file being read. The read itself runs to its end."""
+        if self._loading_path is None:
+            return
+        self._open_job += 1
+        self._open_reveal_timer.stop()
+        self._loading_path = None
+        self._status.set_busy(Busy.IDLE)
+        self._sync_format_button()
+
+    def _source_pane(self) -> PaneWidget:
+        """The pane Open fills: the one whose spec is a source (#73)."""
+        for pane in (self._input_pane, self._output_pane):
+            if pane.spec.kind is PaneKind.SOURCE:
+                return pane
+        raise AssertionError("no source pane")
+
+    def _open_file(self) -> None:
+        if not self.can_open():
+            return
+        chosen = self._choose_open_path()
+        if chosen is None:
+            self._return_focus_to_input()
+            return
+        save_last_open_dir(chosen.parent)
+        self.open_path(chosen)
+
+    def _choose_open_path(self) -> Path | None:
+        filename, _selected = QFileDialog.getOpenFileName(
+            self,
+            OPEN_DIALOG_CAPTION,
+            load_last_open_dir(),
+            OPEN_FILE_FILTER,
+        )
+        if not filename:
+            return None
+        return Path(filename)
+
+    def _ask_replace_input(self, path: Path) -> None:
+        """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
+        box = QMessageBox(self)
+        box.setObjectName("replaceInput")
+        # QMessageBox drops its title on macOS; keep one for screen readers.
+        QWidget.setWindowTitle(box, "Galley")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(replace_input_text(path.name))
+        replace = box.addButton(REPLACE_BUTTON, QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        replace.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        cancel.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        QWidget.setTabOrder(replace, cancel)
+        box.setDefaultButton(replace)
+        box.setEscapeButton(cancel)
+        self._replace_box = box
+        self._sync_open_actions()
+
+        def _choose() -> None:
+            accepted = box.clickedButton() is replace
+            self._replace_box = None
+            box.deleteLater()
+            self._sync_open_actions()
+            if not accepted or not self.can_open():
+                self._return_focus_to_input()
+                return
+            self._start_loading(path)
+
+        box.finished.connect(_choose)
+        box.open()
+
+    def _start_loading(self, path: Path) -> None:
+        """Read ``path`` off the UI thread. Open and Format wait for it."""
+        self._opened_status_timer.stop()
+        self._open_job += 1
+        self._loading_path = path
+        self._sync_format_button()
+        self._open_reveal_timer.start(OPEN_REVEAL_MS)
+        self.open_started.emit()
+        self._reader.read(self._open_job, path)
+
+    def _show_opening(self) -> None:
+        path = self._loading_path
+        if path is None:
+            return
+        self._status.set_busy(Busy.SPINNER, OPENING_ACCESSIBLE_NAME)
+        self._status.set_state(opening_text(path.name), str(path))
+
+    def _on_file_read(self, job: int, result: object) -> None:
+        path = self._loading_path
+        if job != self._open_job or path is None:
+            return
+        self._open_reveal_timer.stop()
+        self._loading_path = None
+        self._status.set_busy(Busy.IDLE)
+        self._sync_format_button()
+        if isinstance(result, LoadError):
+            self._status.set_state(open_error_text(path.name, result), str(path))
+            self.open_failed.emit(result.kind.value, path.name)
+            self._return_focus_to_input()
+            return
+        if isinstance(result, LoadedDocument):
+            self._apply_opened_file(path, result)
+
+    def _apply_opened_file(self, path: Path, loaded: LoadedDocument) -> None:
+        """Put the text in the source pane as one undo step.
+
+        The output and the Problems pane are cleared. Format's size answer
+        is left alone; Format asks for itself.
+        """
+        pane = self._source_pane()
+        editor = pane.editor
+        _replace_as_one_undo(editor, loaded.text)
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        editor.setTextCursor(cursor)
+        self._output_pane.editor.clear()
+        self._clear_problems()
+        if loaded.fmt is not None:
+            _set_format(pane, loaded.fmt)
+        document = InputDocument(
+            path, editor.toPlainText(), loaded.had_bom, loaded.newline
+        )
+        pane.set_document(document)
+        self.setWindowTitle(input_window_title(path.name))
+        self.setWindowFilePath(str(path))
+        status = opened_text(path.name, si_size(loaded.size))
+        self._opened_status = status
+        self._status.set_state(status, str(path))
+        self._opened_status_timer.start(OPENED_STATUS_MS)
+        self.open_finished.emit(document)
+        self._return_focus_to_input()
+
+    def _clear_opened_status(self) -> None:
+        if self._formatting or self._status.state_text() != self._opened_status:
+            return
+        self._status.set_state("Ready")
+
+    def _sync_open_actions(self) -> None:
+        """Block Open while a file loads or a format runs, and say why."""
+        action = self._actions.open_file
+        if is_unbuilt(action):
+            return
+        available = self.can_open()
+        action.setEnabled(available)
+        action.setToolTip(OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else "")
+        open_button = self._source_pane().open_button
+        if open_button is not None:
+            open_button.setEnabled(available)
+            open_button.setToolTip(action.toolTip())
+
     def _copy_output(self) -> None:
         QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
 
@@ -1127,7 +1366,8 @@ class MainWindow(QMainWindow):
         ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
         """
         has_input = self._input_pane.editor.toPlainText() != ""
-        available = has_input and not self._formatting
+        loading = self._loading_path is not None
+        available = has_input and not self._formatting and not loading
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
@@ -1146,6 +1386,7 @@ class MainWindow(QMainWindow):
             button.setToolTip(self._format_idle_tooltip)
             button.unsetCursor()
         self._actions.convert_python.setEnabled(available)
+        self._sync_open_actions()
         self._sync_fold_actions()
 
     def _sync_fold_actions(self) -> None:
@@ -1225,6 +1466,13 @@ class MainWindow(QMainWindow):
         self._status.set_info(f"{left} → {right}")
 
 
+def _set_format(pane: PaneWidget, name: str) -> None:
+    combo = pane.format_combo
+    index = combo.findText(name)
+    if index >= 0:
+        combo.setCurrentIndex(index)
+
+
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:
     menu = bar.addMenu(title)
     menu.setObjectName("menu" + title.replace(" ", ""))
@@ -1269,6 +1517,19 @@ def _warning_bytes(source: str) -> int:
     if source.casefold() == "yaml":
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
+
+
+def compare_needs_size_warning(
+    left_text: str, left_source: str, right_text: str, right_source: str
+) -> bool:
+    """True when Compare should ask first, using Format's warning limits.
+
+    The larger side decides when both sides share a format. With mixed
+    formats, each side is held to its own format's limit, so a YAML side
+    past ``YAML_WARNING_BYTES`` still asks beside a larger JSON side.
+    """
+    sides = ((left_text, left_source), (right_text, right_source))
+    return any(_utf8_size(text) >= _warning_bytes(source) for text, source in sides)
 
 
 def si_size(num_bytes: int) -> str:
