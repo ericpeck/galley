@@ -17,6 +17,12 @@ is importable; this checkout does not invent one.
 The hard checks are the JSON busy spinner, the progress bar, and the size
 warning. Those follow ``JSON_BUSY_BYTES``, ``JSON_PROGRESS_BYTES``, and
 ``JSON_WARNING_BYTES``.
+
+A second table times the same content on one line: 1.6 MB of compact JSON
+in a single block, the shape that stalled the editor (#91). It records
+setText and a keystroke with Show Whitespace and colors wanted and with
+both off. The long-line guard in ``editor.py`` keeps the two close; the
+hard budget for that keystroke lives in ``test_long_line_guard.py``.
 """
 
 import gc
@@ -51,6 +57,8 @@ from galley.core.format import format_json
 
 # SI megabytes, matching the size warning (1 MB is 1_000_000 bytes).
 _BYTES = {"1 MB": 1_000_000, "2 MB": 2_000_000}
+_ONE_LINE_LABEL = "1.6 MB line"
+_ONE_LINE_BYTES = 1_600_000
 _NEEDLE = "galley-stress-needle"
 _UNICODE = "café — 日本語"
 _EMOJI = "😀"
@@ -205,6 +213,45 @@ def test_large_documents_are_timed(qtbot) -> None:
         _print_timings(samples, compare_note)
 
 
+def test_one_line_document_is_timed(qtbot, qapp) -> None:
+    """Log setText and a keystroke on one 1.6 MB line, options wanted or off."""
+    text = _build_one_line(_ONE_LINE_BYTES)
+    assert len(text.encode("utf-8")) == _ONE_LINE_BYTES
+    assert "\n" not in text
+    samples: dict[str, dict[str, float]] = {}
+    try:
+        for wanted in (True, False):
+            state = "wanted" if wanted else "off"
+            editor = CodeEditor()
+            qtbot.addWidget(editor)
+            editor.resize(800, 600)
+            editor.show()
+            qtbot.waitExposed(editor)
+            editor.set_syntax_mode("JSON")
+            editor.set_whitespace_wanted(wanted)
+            editor.set_syntax_colors_wanted(wanted)
+
+            def set_text() -> None:
+                editor.setPlainText(text)
+                qapp.processEvents()
+
+            _record(samples, f"setText ({state})", _ONE_LINE_LABEL, _elapsed(set_text))
+            assert editor.blockCount() == 1
+            assert editor.display_limited() == wanted
+            cursor = editor.textCursor()
+            cursor.setPosition(len(text) // 2)
+            editor.setTextCursor(cursor)
+
+            def keystroke() -> None:
+                editor.insertPlainText(" ")
+                qapp.processEvents()
+
+            best = min(_elapsed(keystroke) for _ in range(3))
+            _record(samples, f"keystroke ({state})", _ONE_LINE_LABEL, best)
+    finally:
+        _print_one_line_timings(samples)
+
+
 def test_indicators_follow_the_json_size_thresholds(qtbot, monkeypatch) -> None:
     """Busy, progress, and the size warning follow the JSON byte thresholds."""
     assert JSON_BUSY_BYTES == 5_000_000
@@ -311,6 +358,16 @@ def _print_timings(samples: dict[str, dict[str, float]], compare_note: str) -> N
     print("\n".join(lines), flush=True)
 
 
+def _print_one_line_timings(samples: dict[str, dict[str, float]]) -> None:
+    lines = [
+        "one-line timings (seconds; informational, not a pass/fail gate)",
+        f"{'operation':<20}{_ONE_LINE_LABEL:>14}",
+    ]
+    for operation, row in samples.items():
+        lines.append(f"{operation:<20}{row[_ONE_LINE_LABEL]:14.4f}")
+    print("\n".join(lines), flush=True)
+
+
 def _elapsed(operation) -> float:
     gc.collect()
     started = time.perf_counter()
@@ -403,6 +460,51 @@ def _build(target: int, seed: int = FIXTURE_SEED) -> str:
     if gap < 0:
         raise RuntimeError(f"fixture wrapper exceeds {target} bytes")
     text = _render(items, "x" * gap)
+    size = _utf8_len(text)
+    if size != target:
+        raise RuntimeError(f"fixture is {size} bytes, wanted {target}")
+    return text
+
+
+def _build_one_line(target: int, seed: int = FIXTURE_SEED) -> str:
+    """Return compact JSON of exactly ``target`` UTF-8 bytes on one line.
+
+    The same items as ``_build``, without indentation. The pad is ASCII.
+    """
+
+    def render_one_line(items: list[dict[str, object]], pad: str) -> str:
+        payload = {
+            "kind": "galley-stress",
+            "unicode": _UNICODE,
+            "emoji": _EMOJI,
+            "items": items,
+            "tail": {"pad": pad, "marker": _NEEDLE},
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def bare_size(count: int) -> int:
+        return _utf8_len(render_one_line(_items(count, seed), ""))
+
+    lo = 0
+    hi = 1
+    while bare_size(hi) <= target:
+        lo = hi
+        hi *= 2
+        if hi > 200_000:
+            raise RuntimeError(f"fixture item count exceeded 200_000 for {target}")
+    best = lo
+    while lo + 1 < hi:
+        mid = (lo + hi) // 2
+        if bare_size(mid) <= target:
+            best = mid
+            lo = mid
+        else:
+            hi = mid
+    items = _items(best, seed)
+    gap = target - bare_size(best)
+    if gap < 0:
+        raise RuntimeError(f"fixture wrapper exceeds {target} bytes")
+    text = render_one_line(items, "x" * gap)
     size = _utf8_len(text)
     if size != target:
         raise RuntimeError(f"fixture is {size} bytes, wanted {target}")
