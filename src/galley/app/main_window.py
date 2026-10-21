@@ -1444,6 +1444,19 @@ def _warning_bytes(source: str) -> int:
     return JSON_WARNING_BYTES
 
 
+def compare_needs_size_warning(
+    left_text: str, left_source: str, right_text: str, right_source: str
+) -> bool:
+    """True when Compare should ask first, using Format's warning limits.
+
+    The larger side decides when both sides share a format. With mixed
+    formats, each side is held to its own format's limit, so a YAML side
+    past ``YAML_WARNING_BYTES`` still asks beside a larger JSON side.
+    """
+    sides = ((left_text, left_source), (right_text, right_source))
+    return any(_utf8_size(text) >= _warning_bytes(source) for text, source in sides)
+
+
 def si_size(num_bytes: int) -> str:
     """Return ``num_bytes`` in SI units, such as ``1.2 MB``."""
     if num_bytes < _SI_KB:
