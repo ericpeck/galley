@@ -4,7 +4,14 @@ import json
 
 import pytest
 
-from galley.app.problem_text import accessible_text, message_for, problem_count_text
+from galley.app.problem_text import (
+    KEY_DISPLAY_LIMIT,
+    accessible_text,
+    message_for,
+    problem_count_text,
+    quoted_key,
+)
+from galley.core.errors import JSONDuplicateKeyError
 from galley.core.format import format_json, format_yaml
 from galley.core.problems import Problem, collect_problems
 
@@ -50,7 +57,7 @@ def test_yaml_messages_match_the_plain_style() -> None:
         "Line 2: Starts with a tab. YAML needs spaces for indenting."
     )
     duplicate = _yaml("a: 1\na: 2\n")
-    assert message_for(duplicate) == "A key is repeated on line 2."
+    assert message_for(duplicate) == 'Remove the repeated key "a" on line 2.'
     ended = _yaml('a: "hi\n')
     assert message_for(ended) == (
         "The text ends on line 1 before the YAML document finishes."
@@ -87,3 +94,61 @@ def _yaml(text: str) -> Problem:
     found = collect_problems(text, "YAML", caught.value)
     assert len(found) == 1
     return found[0]
+
+
+def test_duplicate_key_messages_quote_the_key() -> None:
+    text = '{\n  "name": "a",\n  "tags": [{"id": 1, "id": 2}],\n  "name": "b"\n}\n'
+    with pytest.raises(JSONDuplicateKeyError) as caught:
+        format_json(text)
+    problems = collect_problems(text, "JSON", caught.value)
+    assert [message_for(problem) for problem in problems] == [
+        'Remove the repeated key "id" on line 3.',
+        'Remove the repeated key "name" on line 4.',
+    ]
+    assert (
+        accessible_text(problems[1])
+        == 'Line 4: Remove the repeated key "name" on line 4.'
+    )
+
+
+def test_json_and_yaml_duplicates_share_the_wording() -> None:
+    json_row = message_for(Problem("json_duplicate", 2, "a"))
+    yaml_row = message_for(Problem("yaml_duplicate", 2, "a"))
+    assert json_row == yaml_row == 'Remove the repeated key "a" on line 2.'
+
+
+@pytest.mark.parametrize(
+    ("key", "shown"),
+    [
+        ('say "hi"', '"say \\"hi\\""'),
+        ("back\\slash", '"back\\\\slash"'),
+        ("two\nlines", '"two\\nlines"'),
+        ("tab\there", '"tab\\there"'),
+        ("zero​width", '"zero\\u200bwidth"'),
+        ("right‮left", '"right\\u202eleft"'),
+        ("café 日本語 😀", '"café 日本語 😀"'),
+        ("k" * KEY_DISPLAY_LIMIT, '"' + "k" * KEY_DISPLAY_LIMIT + '"'),
+        ("k" * (KEY_DISPLAY_LIMIT + 1), '"' + "k" * KEY_DISPLAY_LIMIT + '…"'),
+    ],
+)
+def test_duplicate_keys_are_escaped_and_truncated(key: str, shown: str) -> None:
+    assert quoted_key(key) == shown
+    message = message_for(Problem("json_duplicate", 7, key))
+    assert message == f"Remove the repeated key {shown} on line 7."
+    assert "\n" not in message
+
+
+def test_long_key_is_cut_before_escaping() -> None:
+    key = "a" * (KEY_DISPLAY_LIMIT - 1) + '"' + "z" * 100
+    assert quoted_key(key) == '"' + "a" * (KEY_DISPLAY_LIMIT - 1) + '\\"…"'
+
+
+def test_duplicate_without_a_key_still_names_the_line() -> None:
+    assert (
+        message_for(Problem("yaml_duplicate", 3))
+        == "Remove the repeated key on line 3."
+    )
+    assert (
+        message_for(Problem("json_duplicate", 1, ""))
+        == "Remove the repeated key on line 1."
+    )

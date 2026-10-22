@@ -1,8 +1,9 @@
 """Structured syntax problems.
 
 The codes here are stable ids. The sentences a person reads are chosen in
-``galley.app``. A YAML indent scan reports every leading tab at once.
-Other parsers still stop at the first problem, so those stay a single code.
+``galley.app``. A YAML indent scan reports every leading tab at once, and
+a JSON document reports every repeated key at once. Other parsers still
+stop at the first problem, so those stay a single code.
 """
 
 import json
@@ -10,7 +11,11 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from ruamel.yaml.tokens import KeyToken, ScalarToken
+
+from galley.core.errors import JSONDuplicateKeyError
 
 # A complete JSON string or one bracket. The unrolled string body stays
 # linear, and strings are skipped so brackets inside them do not count.
@@ -26,6 +31,7 @@ ProblemCode = Literal[
     "single_quotes",
     "missing_close",
     "incomplete",
+    "json_duplicate",
     "json_other",
     "yaml_tab",
     "yaml_incomplete",
@@ -37,7 +43,11 @@ ProblemCode = Literal[
 
 @dataclass(frozen=True)
 class Problem:
-    """One located syntax problem. ``lineno`` is 1-based."""
+    """One located syntax problem. ``lineno`` is 1-based.
+
+    ``token`` is the bracket for a close problem, or the repeated key for
+    a duplicate (empty when a YAML key is not a plain or quoted scalar).
+    """
 
     code: ProblemCode
     lineno: int
@@ -52,7 +62,8 @@ def collect_problems(
     """Return problems to show before, or instead of, a raw parser message.
 
     YAML leading tabs are collected up front and the parser is not asked
-    to continue. Any other failure contributes at most one problem.
+    to continue. Repeated JSON keys give one problem per key and line. Any
+    other failure contributes at most one problem.
     """
     if source.strip().casefold() == "yaml":
         tabs = tuple(Problem("yaml_tab", line) for line in leading_tab_lines(text))
@@ -60,6 +71,8 @@ def collect_problems(
             return tabs
     if exc is None:
         return ()
+    if isinstance(exc, JSONDuplicateKeyError):
+        return duplicate_key_problems(exc)
     found = classify_failure(exc, text)
     if found is None:
         return ()
@@ -78,8 +91,24 @@ def leading_tab_lines(text: str) -> list[int]:
     return found
 
 
+def duplicate_key_problems(exc: JSONDuplicateKeyError) -> tuple[Problem, ...]:
+    """One problem per repeated key, in text order.
+
+    Repeats of one key on one line are one row, because the line and the
+    words would be the same.
+    """
+    found: dict[tuple[int, str], Problem] = {}
+    for duplicate in exc.duplicates:
+        place = (duplicate.lineno, duplicate.key)
+        if place not in found:
+            found[place] = Problem("json_duplicate", duplicate.lineno, duplicate.key)
+    return tuple(found.values())
+
+
 def classify_failure(exc: BaseException, text: str) -> Problem | None:
     """Map a parser exception to one problem, or ``None`` when it is not syntax."""
+    if isinstance(exc, JSONDuplicateKeyError):
+        return duplicate_key_problems(exc)[0]
     if isinstance(exc, json.JSONDecodeError):
         return _classify_json(exc, text)
     if isinstance(exc, YAMLError):
@@ -154,7 +183,7 @@ def _classify_yaml(exc: YAMLError, text: str) -> Problem:
     ):
         return Problem("yaml_tab", line)
     if "duplicate key" in detail:
-        return Problem("yaml_duplicate", line)
+        return Problem("yaml_duplicate", line, _yaml_key_at(text, line, column))
     if _expects_delimiter(detail) and _at_line_start(text, line, column):
         line = _previous_nonblank(text, line)
     if "unexpected end of stream" in detail:
@@ -162,6 +191,35 @@ def _classify_yaml(exc: YAMLError, text: str) -> Problem:
     if "expected ':'" in detail:
         return Problem("yaml_colon", line)
     return Problem("yaml_other", line)
+
+
+def _yaml_key_at(text: str, line: int, column: int) -> str:
+    """Return the scalar key that starts at ``line`` and ``column``, or "".
+
+    The loader names a repeated key only inside its message, unescaped, so
+    the key is read back from the tokens instead. Only a scalar right after
+    a key token counts, so a mark on a value never names that value. This
+    runs only after the loader reported a repeat, and stops at that place.
+    """
+    target = (line, column)
+    previous: object = None
+    try:
+        for token in YAML(typ="safe", pure=True).scan(text):
+            mark = token.start_mark
+            place = (mark.line + 1, mark.column + 1)
+            if place > target:
+                return ""
+            if (
+                place == target
+                and isinstance(token, ScalarToken)
+                and isinstance(previous, KeyToken)
+                and isinstance(token.value, str)
+            ):
+                return token.value
+            previous = token
+    except YAMLError:
+        return ""
+    return ""
 
 
 def _expects_delimiter(detail: str) -> bool:
