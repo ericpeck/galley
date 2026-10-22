@@ -27,6 +27,7 @@ from galley.core.diff import (
     Summary,
     _yaml_document,
     diff,
+    diff_with_pairs,
     load_document,
 )
 from galley.core.errors import MAX_DEPTH, InputError
@@ -271,6 +272,19 @@ def test_many_identical_items_align_around_an_insert() -> None:
     result = diff(_json(items), _json([*items[:5000], {"x": 1}, *items[5000:]]))
     assert result.aligned is True
     assert [(c.kind, c.path_text) for c in result.changes] == [("added", "[5000]")]
+
+
+def test_diff_with_pairs_returns_the_diff_and_the_compared_containers() -> None:
+    left = _json({"items": [{"id": 1}, {"id": 2}], "name": "a"})
+    right = _json({"items": [{"id": 0}, {"id": 1}, {"id": 2}], "name": "b"})
+    result, pairs = diff_with_pairs(left, right)
+    assert result == diff(left, right)
+    assert pairs == {
+        (): (),
+        ("items",): ("items",),
+        ("items", 0): ("items", 1),
+        ("items", 1): ("items", 2),
+    }
 
 
 def test_over_budget_array_falls_back_to_index_matching() -> None:

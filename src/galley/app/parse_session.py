@@ -196,7 +196,8 @@ class ParseSession(QObject):
     succeeded = Signal(str)
     failed = Signal(str)
     problems_found = Signal(object)
-    # Compare: job id, then a ``DiffResult``, a ``CompareFailure``, or nothing.
+    # Compare: job id, then a ``CompareEvent`` (``result``, ``report``, and
+    # the formatted texts after ``reformat``), a ``CompareFailure``, or nothing.
     compare_finished = Signal(int, object)
     compare_failed = Signal(int, object)
     compare_cancelled = Signal(int)
@@ -337,6 +338,7 @@ class ParseSession(QObject):
         right_text: str,
         right_format: str,
         *,
+        reformat: bool = False,
         hold_s: float = 0.0,
     ) -> int | None:
         """Send one compare job and return its id.
@@ -344,7 +346,8 @@ class ParseSession(QObject):
         Returns ``None`` and sends nothing while a Format or a compare is
         active, the same way a second :meth:`submit` is ignored. A compare
         that has to wait out a reap deadline stays quiet and then runs on
-        the replacement. ``hold_s`` is for tests (see ``CompareJob``).
+        the replacement. ``reformat`` formats both sides in the same job and
+        never sorts keys; ``hold_s`` is for tests (see ``CompareJob``).
         """
         if self._shut_down or self._active is not None:
             return None
@@ -358,6 +361,7 @@ class ParseSession(QObject):
             right_text=right_text,
             right_format=right_format,
             hold_s=hold_s,
+            reformat=reformat,
         )
         self._active = _CompareActive(job.job_id)
         self._pending = job
@@ -687,7 +691,7 @@ class ParseSession(QObject):
             return
         self._active = None
         self._pending = None
-        self.compare_finished.emit(event.job_id, event.result)
+        self.compare_finished.emit(event.job_id, event)
 
     def _handle_compare_failure(self, event: CompareFailureEvent) -> None:
         if not self._expects_compare(event.job_id):

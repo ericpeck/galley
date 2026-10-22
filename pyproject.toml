@@ -57,3 +57,6 @@ select = ["E", "F", "I", "UP", "S102", "S307", "TID251"]
 testpaths = ["tests"]
 pythonpath = ["."]
 qt_api = "pyside6"
+markers = [
+    "perf: a timed budget; loose in gating CI, tight on a local run (#65, Erik point 6)",
+]
