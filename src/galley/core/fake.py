@@ -3,7 +3,7 @@
 This module does not import Qt and uses no fake-data library. Each value
 keeps its Python type and about its length. The default source is
 ``random.SystemRandom``, so every copy gets new values. Tests pass a seeded
-``random.Random``. ``galley.core.mask`` reuses the number and date helpers.
+``random.Random``.
 """
 
 import datetime as dt
