@@ -17,7 +17,7 @@ Nothing here runs the text. Both directions use ``json`` and the formatter.
 import json
 from typing import Literal
 
-from galley.core.errors import InputError
+from galley.core.errors import DuplicateKey, InputError, JSONDuplicateKeyError
 from galley.core.format import (
     _load_rendered_yaml,
     _normalize_format,
@@ -26,7 +26,7 @@ from galley.core.format import (
     load_document,
 )
 
-UnescapeKind = Literal["not_string", "not_json"]
+UnescapeKind = Literal["not_string", "not_json", "duplicate_key"]
 
 
 class EscapeError(Exception):
@@ -41,13 +41,19 @@ class UnescapeError(Exception):
     """The text isn't one escaped JSON string.
 
     ``kind`` is ``not_string`` when the text isn't a single JSON string
-    literal, and ``not_json`` when the string's contents aren't JSON. The
-    words shown to the user are chosen in ``galley.app``.
+    literal, ``not_json`` when the string's contents aren't JSON, and
+    ``duplicate_key`` when they are JSON but an object repeats a key.
+    ``duplicates`` then lists every repeat, with lines and columns counted in
+    the string's contents. The words shown to the user are chosen in
+    ``galley.app``.
     """
 
-    def __init__(self, kind: UnescapeKind) -> None:
+    def __init__(
+        self, kind: UnescapeKind, duplicates: tuple[DuplicateKey, ...] = ()
+    ) -> None:
         super().__init__(kind)
         self.kind = kind
+        self.duplicates = duplicates
 
 
 def escape_document(text: str | bytes, source: str) -> str:
@@ -92,5 +98,7 @@ def unescape_document(text: str, target: str) -> str:
         raise UnescapeError("not_string")
     try:
         return format_document(inner, "json", target)
+    except JSONDuplicateKeyError as exc:
+        raise UnescapeError("duplicate_key", exc.duplicates) from None
     except (json.JSONDecodeError, InputError):
         raise UnescapeError("not_json") from None

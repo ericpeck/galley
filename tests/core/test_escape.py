@@ -168,6 +168,17 @@ def test_unescape_rejects_a_string_whose_contents_are_not_json(text: str) -> Non
     assert raised.value.kind == "not_json"
 
 
+def test_unescape_reports_a_repeated_key_in_the_string_contents() -> None:
+    text = '"{\\"a\\":1,\\"b\\":{\\"c\\":2,\\"c\\":3},\\"a\\":4}"'
+    with pytest.raises(UnescapeError) as raised:
+        unescape_document(text, "json")
+    assert raised.value.kind == "duplicate_key"
+    assert [(item.key, item.lineno) for item in raised.value.duplicates] == [
+        ("c", 1),
+        ("a", 1),
+    ]
+
+
 def test_unescape_peels_one_layer_of_a_double_escaped_string() -> None:
     once = escape_document('{"a": "b"}', "json")
     twice = escape_value(json.loads(once))

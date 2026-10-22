@@ -148,6 +148,11 @@ def test_unescape_formats_with_the_output_picker(qtbot) -> None:
         ('"unclosed', NOT_ESCAPED_STRING_MESSAGE),
         ('"hello"', NOT_ESCAPED_JSON_MESSAGE),
         ('"{\\"a\\":}"', NOT_ESCAPED_JSON_MESSAGE),
+        ('"{\\"a\\":1,\\"a\\":2}"', 'Remove the repeated key "a" on line 1.'),
+        (
+            '"{\\n  \\"a\\": 1,\\n  \\"a\\": 2\\n}"',
+            'Remove the repeated key "a" on line 3.',
+        ),
     ],
 )
 def test_unescape_errors_leave_output_and_input_alone(qtbot, text, message) -> None:

@@ -10,6 +10,7 @@ from galley.app.problem_text import (
     DisplayProblem,
     display_input_error,
     display_problem,
+    message_for,
 )
 from galley.core.errors import InputError
 from galley.core.escape import (
@@ -18,7 +19,7 @@ from galley.core.escape import (
     escape_document,
     unescape_document,
 )
-from galley.core.problems import collect_problems
+from galley.core.problems import Problem, collect_problems
 
 ESCAPED_MESSAGE = "Escaped as a JSON string."
 NOT_ESCAPED_STRING_MESSAGE = "The input isn't an escaped JSON string."
@@ -83,5 +84,9 @@ def unescape_input(text: str, target: str) -> StringResult:
     except UnescapeError as exc:
         if exc.kind == "not_string":
             return StringResult(None, NOT_ESCAPED_STRING_MESSAGE)
+        if exc.kind == "duplicate_key":
+            first = exc.duplicates[0]
+            repeated = Problem("json_duplicate", first.lineno, first.key)
+            return StringResult(None, message_for(repeated))
         return StringResult(None, NOT_ESCAPED_JSON_MESSAGE)
     return StringResult(formatted, unescaped_message(target))
