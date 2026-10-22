@@ -40,17 +40,23 @@ from galley.app.theme import ACCENT, ACCENT_DISABLED
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 
-# Portable text. Ctrl is Command on macOS.
+# Portable text. Ctrl is Command on macOS. ⇧⌘[ switches tabs on macOS, so
+# only macOS keeps ⌥⌘ for Fold and Unfold (#95).
+_FOLD = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
 CUSTOM_SHORTCUTS = {
-    "Word Wrap": ["Ctrl+Alt+W"],
-    "Close others": ["Ctrl+Alt+Shift+W"],
+    "Word Wrap": ["Alt+Z"],
+    "Close others": ["Ctrl+K, Ctrl+Shift+W"],
     "Escape as String": ["Ctrl+Shift+E"],
-    "Unescape String": ["Ctrl+Alt+Shift+E"],
+    "Unescape String": ["Ctrl+K, Ctrl+E"],
     "Show Whitespace": ["Ctrl+Shift+8"],
     "Actual Size": ["Ctrl+0"],
     "Format": ["Ctrl+Return"],
     "Show Problems": ["Ctrl+Shift+M"],
-    "Stack Panes": ["Ctrl+Alt+L"],
+    "Stack Panes": ["Ctrl+\\", "Ctrl+Shift+L"],
+    "Fold": [_FOLD + "["],
+    "Unfold": [_FOLD + "]"],
+    "Collapse all": ["Ctrl+K, Ctrl+0"],
+    "Expand all": ["Ctrl+K, Ctrl+J"],
 }
 
 STANDARD_SHORTCUTS = {
@@ -260,6 +266,32 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
     assert _portable(_action(window, "Word Wrap")) != _portable(
         _action(window, "Close others")
     )
+
+
+def test_custom_shortcuts_avoid_standard_keys_and_chord_prefixes(qtbot) -> None:
+    window = _show(qtbot)
+    standard: dict[tuple[int, ...], str] = {}
+    for key in QKeySequence.StandardKey:
+        for sequence in QKeySequence.keyBindings(key):
+            if not sequence.isEmpty():
+                standard[_sequence_id(sequence)] = key.name
+    whole: dict[tuple[int, ...], str] = {}
+    for action in window.findChildren(QAction):
+        for sequence in action.shortcuts():
+            if not sequence.isEmpty():
+                whole[_sequence_id(sequence)] = action.text()
+
+    clashes: list[str] = []
+    for text in CUSTOM_SHORTCUTS:
+        for sequence in _action(window, text).shortcuts():
+            ident = _sequence_id(sequence)
+            for end in range(1, len(ident) + 1):
+                if ident[:end] in standard:
+                    clashes.append(f"{text}: {standard[ident[:end]]}")
+            for end in range(1, len(ident)):
+                if ident[:end] in whole:
+                    clashes.append(f"{text}: prefix is {whole[ident[:end]]}")
+    assert clashes == []
 
 
 def test_splitter_starts_even(qtbot) -> None:
