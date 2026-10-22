@@ -27,6 +27,9 @@ Fold and Unfold differ by platform. On Windows and Linux they are
 Collapse all is the chord ``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all
 ``Ctrl+K, Ctrl+J`` (⌘K ⌘J). Actual Size is ``Ctrl+0`` on its own, so the
 chord does not clash with it.
+
+Next Problem is F8 and Previous Problem Shift+F8 (Bill's #78 spec). They
+have no modifier to map, so they are the same on every platform.
 """
 
 import sys
@@ -51,6 +54,8 @@ FOLD = QKeySequence(_FOLD_MODIFIERS + "[", _PORTABLE)
 UNFOLD = QKeySequence(_FOLD_MODIFIERS + "]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
+NEXT_PROBLEM = QKeySequence("F8", _PORTABLE)
+PREVIOUS_PROBLEM = QKeySequence("Shift+F8", _PORTABLE)
 
 
 def native_chord_text(sequence: QKeySequence) -> str:
