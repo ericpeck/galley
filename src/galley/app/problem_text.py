@@ -4,11 +4,15 @@ Core reports a code and a line. The words live here, with no column and
 no character offset.
 """
 
+import json
 from typing import assert_never
 
 from galley.app.banner import banner_text
 from galley.core.errors import InputError
 from galley.core.problems import Problem, ProblemCode
+
+# Longer keys are cut to this many characters and end with "…".
+KEY_DISPLAY_LIMIT = 40
 
 
 def message_for(problem: Problem) -> str:
@@ -34,19 +38,39 @@ def message_for(problem: Problem) -> str:
         return f"Missing {closer} for the {opener} opened on line {line}."
     if code == "incomplete":
         return f"The text ends on line {line} before the JSON document finishes."
+    if code in ("json_duplicate", "yaml_duplicate"):
+        return _duplicate_key_text(problem.token, line)
     if code == "json_other":
         return f"Couldn't read this JSON on line {line}."
     if code == "yaml_tab":
         return f"Line {line} starts with a tab. YAML needs spaces for indenting."
     if code == "yaml_incomplete":
         return f"The text ends on line {line} before the YAML document finishes."
-    if code == "yaml_duplicate":
-        return f"A key is repeated on line {line}."
     if code == "yaml_colon":
         return f"Missing colon after the key on line {line}."
     if code == "yaml_other":
         return f"Couldn't read this YAML on line {line}."
     assert_never(code)
+
+
+def _duplicate_key_text(key: str, line: int) -> str:
+    if not key:
+        return f"Remove the repeated key on line {line}."
+    return f"Remove the repeated key {quoted_key(key)} on line {line}."
+
+
+def quoted_key(key: str) -> str:
+    """Return ``key`` in double quotes, escaped the way JSON writes it.
+
+    Characters that do not print, such as a zero-width space or a
+    direction mark, are shown as ``\\uXXXX`` so the key reads as typed.
+    """
+    if len(key) > KEY_DISPLAY_LIMIT:
+        key = key[:KEY_DISPLAY_LIMIT] + "…"
+    quoted = json.dumps(key, ensure_ascii=False)
+    return "".join(
+        char if char.isprintable() else f"\\u{ord(char):04x}" for char in quoted
+    )
 
 
 def accessible_text(problem: Problem) -> str:
