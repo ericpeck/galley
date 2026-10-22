@@ -6,43 +6,56 @@ macOS to Control on Windows and Linux.
 Other commands use portable shortcut text. In that format ``Ctrl`` means
 Command on macOS and Control on Windows and Linux.
 
-Word Wrap is portable ``Ctrl+Alt+W`` (⌥⌘W on macOS, Ctrl+Alt+W on Windows).
-Close Others is portable ``Ctrl+Alt+Shift+W`` (⇧⌥⌘W on macOS,
-Ctrl+Alt+Shift+W on Windows). The two sequences are different, so Word Wrap
-keeps Ctrl+Alt+W. Show Problems is portable ``Ctrl+Shift+M``
-(⌘⇧M on macOS, Ctrl+Shift+M on Windows). Stack Panes is
-``Qt.ControlModifier | Qt.AltModifier`` with L, so Qt maps it to ⌘⌥L
-on macOS and Ctrl+Alt+L on Windows.
+Windows treats AltGr as Ctrl+Alt, so no shortcut uses Ctrl+Alt on Windows or
+Linux. On a German layout AltGr types ``[``, ``]``, ``{``, ``}``, ``@``, ``\\``
+and ``€``, and a Ctrl+Alt shortcut would fire while someone types those.
+Ctrl+Alt is fine on macOS, where it is ⌘⌥ and there is no AltGr.
 
-The fold commands follow Bill's #64 spec. Fold is portable ``Ctrl+Alt+[``
-(⌥⌘[ on macOS) and Unfold ``Ctrl+Alt+]`` (⌥⌘]). Collapse all is the chord
-``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all ``Ctrl+K, Ctrl+J`` (⌘K ⌘J).
-Actual Size is ``Ctrl+0`` on its own, so the chord does not clash with it.
+Word Wrap is portable ``Alt+Z`` (⌥Z on macOS, Alt+Z on Windows), as in
+VS Code. Qt maps Alt to Option on macOS, so one sequence covers both.
+Close Others is the chord ``Ctrl+K, Ctrl+Shift+W`` (⌘K ⇧⌘W on macOS) and
+Unescape String is ``Ctrl+K, Ctrl+E`` (⌘K ⌘E). Unescape pairs with Escape as
+String, portable ``Ctrl+Shift+E`` (⇧⌘E). Show Problems is portable
+``Ctrl+Shift+M`` (⇧⌘M on macOS, Ctrl+Shift+M on Windows). Stack Panes is
+portable ``Ctrl+\\`` (⌘\\ on macOS, Ctrl+\\ on Windows), with ``Ctrl+Shift+L``
+(⇧⌘L) as a second key: ``\\`` needs AltGr on German layouts. The menu shows
+the first.
+
+Fold and Unfold differ by platform. On Windows and Linux they are
+``Ctrl+Shift+[`` and ``Ctrl+Shift+]``, as in VS Code. macOS keeps ⌥⌘[ and
+⌥⌘] (portable ``Ctrl+Alt+[``), because ⇧⌘[ and ⇧⌘] switch tabs there.
+Collapse all is the chord ``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all
+``Ctrl+K, Ctrl+J`` (⌘K ⌘J). Actual Size is ``Ctrl+0`` on its own, so the
+chord does not clash with it.
 
 Next Problem is F8 and Previous Problem Shift+F8 (Bill's #78 spec). They
 have no modifier to map, so they are the same on every platform.
 """
 
-from PySide6.QtCore import Qt
+import sys
+
 from PySide6.QtGui import QAction, QKeySequence
 
 _PORTABLE = QKeySequence.SequenceFormat.PortableText
+# ⇧⌘[ and ⇧⌘] switch tabs on macOS, so only macOS keeps ⌥⌘.
+_FOLD_MODIFIERS = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
 
-WORD_WRAP = QKeySequence("Ctrl+Alt+W", _PORTABLE)
-CLOSE_OTHERS = QKeySequence("Ctrl+Alt+Shift+W", _PORTABLE)
+WORD_WRAP = QKeySequence("Alt+Z", _PORTABLE)
+CLOSE_OTHERS = QKeySequence("Ctrl+K, Ctrl+Shift+W", _PORTABLE)
 ESCAPE_AS_STRING = QKeySequence("Ctrl+Shift+E", _PORTABLE)
-UNESCAPE_STRING = QKeySequence("Ctrl+Alt+Shift+E", _PORTABLE)
+UNESCAPE_STRING = QKeySequence("Ctrl+K, Ctrl+E", _PORTABLE)
 SHOW_WHITESPACE = QKeySequence("Ctrl+Shift+8", _PORTABLE)
 ACTUAL_SIZE = QKeySequence("Ctrl+0", _PORTABLE)
 FORMAT = QKeySequence("Ctrl+Return", _PORTABLE)
 SHOW_PROBLEMS = QKeySequence("Ctrl+Shift+M", _PORTABLE)
-STACK_PANES = QKeySequence(Qt.ControlModifier | Qt.AltModifier | Qt.Key.Key_L)
-FOLD = QKeySequence("Ctrl+Alt+[", _PORTABLE)
-UNFOLD = QKeySequence("Ctrl+Alt+]", _PORTABLE)
+STACK_PANES = QKeySequence("Ctrl+\\", _PORTABLE)
+STACK_PANES_ALT = QKeySequence("Ctrl+Shift+L", _PORTABLE)
+FOLD = QKeySequence(_FOLD_MODIFIERS + "[", _PORTABLE)
+UNFOLD = QKeySequence(_FOLD_MODIFIERS + "]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
-NEXT_PROBLEM = QKeySequence(Qt.Key.Key_F8)
-PREVIOUS_PROBLEM = QKeySequence(Qt.KeyboardModifier.ShiftModifier | Qt.Key.Key_F8)
+NEXT_PROBLEM = QKeySequence("F8", _PORTABLE)
+PREVIOUS_PROBLEM = QKeySequence("Shift+F8", _PORTABLE)
 
 
 def native_chord_text(sequence: QKeySequence) -> str:

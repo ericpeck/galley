@@ -29,6 +29,7 @@ from galley.app.shortcuts import (
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     STACK_PANES,
+    STACK_PANES_ALT,
     UNESCAPE_STRING,
     UNFOLD,
     WORD_WRAP,
@@ -310,6 +311,7 @@ class ShellActions:
             shortcut=STACK_PANES,
             checkable=True,
         )
+        self.stack_panes.setShortcuts([STACK_PANES, STACK_PANES_ALT])
         self.stack_panes.setObjectName("stackPanes")
         # Keys only: Bill's #78 spec gives no menu item, so the window owns
         # these two and no menu lists them.
