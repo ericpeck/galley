@@ -48,6 +48,7 @@ from galley.core.errors import (
     nesting_error,
     utf8_input_error,
 )
+from galley.core.formats import format_named
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
 # Past this depth a document that is still within MAX_DEPTH would hit
@@ -1034,10 +1035,7 @@ def dump_value(value: object, target: str) -> str:
 
 
 def _normalize_format(name: str) -> str:
-    kind = name.strip().lower()
-    if kind not in {"json", "yaml"}:
-        raise ValueError(f"Unsupported format: {name}")
-    return kind
+    return format_named(name).name
 
 
 def _dump_json(value: object) -> str:
