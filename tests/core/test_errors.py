@@ -30,6 +30,8 @@ _BANNER_PHRASES = (
     "before the JSON document finishes",
     "before the YAML document finishes",
     "A key is repeated",
+    "Duplicate key",
+    "Remove the repeated key",
     "Missing colon",
 )
 

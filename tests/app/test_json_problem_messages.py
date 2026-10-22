@@ -62,6 +62,11 @@ _CASES = {
         2,
         "Unclosed quote on line 2.",
     ),
+    "duplicate key": (
+        '{\n  "name": "a",\n  "age": 1,\n  "name": "b"\n}\n',
+        4,
+        'Remove the repeated key "name" on line 4.',
+    ),
     "several could apply": (
         '{\n  "name": "Galley",\n  version: 2,\n  "tags": ["json"\n}\n',
         3,
@@ -99,18 +104,81 @@ def test_missing_bracket_row_jumps_to_the_opener_line(qtbot, name: str) -> None:
     assert _marker_rows(editor) == {line}
 
 
-def _format(qtbot, text: str) -> tuple[QMainWindow, CodeEditor, ProblemsPane]:
+_DUPLICATES = (
+    "{\n"
+    '  "name": "Galley",\n'
+    '  "tags": [\n'
+    '    {"id": 1, "id": 2}\n'
+    "  ],\n"
+    '  "owner": {\n'
+    '    "team": "a",\n'
+    '    "team": "b"\n'
+    "  },\n"
+    '  "name": "Galley 2"\n'
+    "}\n"
+)
+
+
+def test_every_duplicate_key_gets_a_row_and_a_gutter_marker(qtbot) -> None:
+    window, editor, pane = _format(qtbot, _DUPLICATES, "3 problems")
+    output = window.findChild(CodeEditor, "outputEditor")
+    assert isinstance(output, CodeEditor)
+    assert pane.messages() == [
+        'Remove the repeated key "id" on line 4.',
+        'Remove the repeated key "team" on line 8.',
+        'Remove the repeated key "name" on line 10.',
+    ]
+    assert pane.lines() == [4, 8, 10]
+    assert editor.problem_lines() == {4, 8, 10}
+    assert _marker_rows(editor) == {4, 8, 10}
+    assert editor.toPlainText() == _DUPLICATES
+    assert output.toPlainText() == ""
+
+
+def test_format_with_a_duplicate_leaves_both_editors_unchanged(qtbot) -> None:
+    window = _show(qtbot)
+    editor, output, status = _editors(window)
+    editor.setPlainText('{"a": 1}')
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: output.toPlainText() == '{\n  "a": 1\n}\n', timeout=15000)
+    formatted = output.toPlainText()
+    text = '{\n  "a": 1,\n  "a": 2\n}\n'
+    editor.setPlainText(text)
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: status.text() == "1 problem", timeout=15000)
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(pane, ProblemsPane)
+    assert pane.messages() == ['Remove the repeated key "a" on line 3.']
+    assert editor.toPlainText() == text
+    assert output.toPlainText() == formatted
+
+
+def _show(qtbot) -> QMainWindow:
     window = create_main_window()
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
+    return window
+
+
+def _editors(window: QMainWindow) -> tuple[CodeEditor, CodeEditor, StatusMessage]:
     editor = window.findChild(CodeEditor, "inputEditor")
-    assert isinstance(editor, CodeEditor)
+    output = window.findChild(CodeEditor, "outputEditor")
     status = window.findChild(StatusMessage, "statusMessage")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
     assert isinstance(status, StatusMessage)
+    return editor, output, status
+
+
+def _format(
+    qtbot, text: str, count: str = "1 problem"
+) -> tuple[QMainWindow, CodeEditor, ProblemsPane]:
+    window = _show(qtbot)
+    editor, _output, status = _editors(window)
     editor.setPlainText(text)
     _action(window, "Format").trigger()
-    qtbot.waitUntil(lambda: status.text() == "1 problem", timeout=15000)
+    qtbot.waitUntil(lambda: status.text() == count, timeout=15000)
     pane = window.findChild(ProblemsPane, "problemsPane")
     assert isinstance(pane, ProblemsPane)
     qtbot.waitUntil(pane.isVisible, timeout=15000)
