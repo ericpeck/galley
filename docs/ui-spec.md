@@ -138,7 +138,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Tab = title + close `×`. New tab `+` after the last tab.
 - File-backed tabs show the file name (`orders-2026-10.json`, `deploy.yaml`).
 - Unsaved/edited output tab: dot `●` replaces the close button.
-- Right-click menu: `Rename`, `Duplicate`, `Pop out into window` | `Close` (⌘W), `Close others` (⇧⌥⌘W), `Close tabs to the right`.
+- Right-click menu: `Rename`, `Duplicate`, `Pop out into window` | `Close` (⌘W), `Close others` (⌘K ⇧⌘W), `Close tabs to the right`.
 - Rename is inline: the tab becomes a text field with accent focus ring.
 - Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`), then pop-out button (window-with-arrow icon).
 
@@ -147,7 +147,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
 - Indent guides: View → Indent Guides → `Off` / `Lines` / `Colored by depth` (default shown checked: Colored by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
-- Word wrap toggle (⌥⌘W on macOS, Ctrl+Alt+W on Windows), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §12).
+- Word wrap toggle (⌥Z on macOS, Alt+Z on Windows), Show Whitespace (⇧⌘8). Close Others is the chord ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Both bindings are swappable per platform (§6, §12).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` after `Copy` (#66) and the fold commands.
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
@@ -184,9 +184,9 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 
 ### 5.13 Menus
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
-- Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
+- Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌘K ⌘E.
 - Copy As ▸ (#66): `Original`, `Masked`, `Random fake`, with no shortcuts. Each copies Output, or its selection, to the clipboard and leaves Output unchanged. Original is the text as it is. Masked replaces values under matched keys, and values that are an email or phone number, with `•••`. Random fake replaces the same values with new ones of the same type on every copy. The status bar names what was copied (`Copied original (unmasked)`, `Copied masked (N values hidden)`, `Copied random fake (N values replaced)`), or says `Nothing copied.` and why. Disabled while Output is empty or a job is running.
-- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
+- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
 - `File` includes `Open file…` (6c). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
 ---
@@ -201,16 +201,19 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Windo
 | Find and Replace | ⌥⌘F | standard Replace |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Close tab | ⌘W | Ctrl+W |
-| Close others | ⇧⌥⌘W | Ctrl+Alt+Shift+W |
-| Escape / Unescape String | ⇧⌘E / ⌥⇧⌘E | Ctrl+Shift+E / Ctrl+Alt+Shift+E |
+| Close others | ⌘K ⇧⌘W | Ctrl+K, Ctrl+Shift+W |
+| Escape / Unescape String | ⇧⌘E / ⌘K ⌘E | Ctrl+Shift+E / Ctrl+K, Ctrl+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
-| Word wrap | ⌥⌘W | Ctrl+Alt+W |
+| Word wrap | ⌥Z | Alt+Z |
 | Show whitespace | ⇧⌘8 | Ctrl+Shift+8 |
+| Stack Panes | ⌘\ (also ⇧⌘L) | Ctrl+\ (also Ctrl+Shift+L) |
+| Fold | ⌥⌘[ | Ctrl+Shift+[ |
+| Unfold | ⌥⌘] | Ctrl+Shift+] |
 | Full screen | ^⌘F | F11 |
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). Close Others does not use ⌥⌘W or Ctrl+Alt+W; those shortcuts stay Word Wrap. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap is ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Both are swappable in the platform layer (§12). ⇧⌥⌘W is unused elsewhere in this spec and leaves ⇧⌘W free for a later Close Window binding.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. All are swappable in the platform layer (§12). ⇧⌘W stays free for a later Close Window binding.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions. Ctrl+Tab cycles tabs within the focused pane (proposal).
 
@@ -400,7 +403,7 @@ Architecture:
 
 Isolate behind a `platform` module for macOS and Windows:
 - **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About, Preferences, and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Format on Windows is Ctrl+Return.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
@@ -434,7 +437,7 @@ Isolate behind a `platform` module for macOS and Windows:
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#EAE7E7` is 5.47:1.
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset split`. The readout's accessible name stays `50 / 50`.
-9. **⌥⌘W conflict**: Resolved. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows.
+9. **⌥⌘W conflict**: Resolved by #95. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows.
 10. File and Help menu contents. Window is resolved: `Pop out into window`, `Show window`, `Bring back` (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
 12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.
