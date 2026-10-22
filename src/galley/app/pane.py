@@ -120,6 +120,17 @@ class PaneWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_drop_highlight(self, on: bool) -> None:
+        """Show the focus-style ring while a file is dragged over (#86)."""
+        if bool(self.property("paneDropTarget")) is on:
+            return
+        self.setProperty("paneDropTarget", on)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def drop_highlighted(self) -> bool:
+        return bool(self.property("paneDropTarget"))
+
     def set_document(self, document: InputDocument | None) -> None:
         """Record the file now in this pane, or None for typed or pasted text."""
         self.document = document

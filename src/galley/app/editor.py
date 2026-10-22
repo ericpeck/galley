@@ -16,6 +16,9 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QFont,
     QFontMetrics,
     QHelpEvent,
@@ -43,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.file_drop import dropped_files
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.limits import JSON_BUSY_BYTES
@@ -433,6 +437,26 @@ class CodeEditor(QPlainTextEdit):
             return
         self.follow_application_palette()
         self._highlighter.follow_base(self.palette().color(QPalette.ColorRole.Base))
+
+    # A dragged file is left for the window to open (#86), so its path is
+    # never typed in as text. Other drags, such as text, drop as usual.
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if dropped_files(event.mimeData()):
+            event.ignore()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if dropped_files(event.mimeData()):
+            event.ignore()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if dropped_files(event.mimeData()):
+            event.ignore()
+            return
+        super().dropEvent(event)
 
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
