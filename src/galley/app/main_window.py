@@ -116,6 +116,7 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
+from galley.core.formats import YAML, format_named
 from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
@@ -1636,7 +1637,7 @@ def _utf8_size(text: str) -> int:
 
 
 def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         if _has_tab(text):
             return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
@@ -1644,7 +1645,7 @@ def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
 
 
 def _warning_bytes(source: str) -> int:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
 

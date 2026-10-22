@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QStatusBar, QWi
 from galley.app.fonts import ui_font
 from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style, progress_style, status_bar_style
+from galley.core.formats import FORMAT_LABELS
 
 SPINNER_WIDTH_PX = 80
 PROGRESS_WIDTH_PX = 160
@@ -33,7 +34,7 @@ PROGRESS_ACCESSIBLE_NAME = "Formatting progress"
 
 # The widest text each slot expects. The slot reserves that width up front.
 COUNTS_RESERVE = ("99999 differences",)
-_FORMAT_NAMES = ("JSON", "YAML", "Python")
+_FORMAT_NAMES = (*FORMAT_LABELS, "Python")
 INFO_RESERVE = (
     *(f"{left} → {right}" for left in _FORMAT_NAMES for right in _FORMAT_NAMES),
     "Ln 99999, Col 999",
