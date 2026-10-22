@@ -13,7 +13,6 @@ from PySide6.QtGui import (
     QResizeEvent,
     QShowEvent,
     QTextCursor,
-    QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,6 +40,21 @@ from galley.app.appearance import (
 from galley.app.editor import CodeEditor
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
+
+# The size thresholds live in limits.py so the editor can read them too.
+# Tests and callers still import them from here.
+from galley.app.limits import (
+    _SI_KB,
+    _SI_MB,
+    JSON_BUSY_BYTES,
+    JSON_PROGRESS_BYTES,
+    JSON_WARNING_BYTES,
+    YAML_BUSY_BYTES,
+    YAML_PROGRESS_BYTES,
+    YAML_TAB_BUSY_BYTES,
+    YAML_TAB_PROGRESS_BYTES,
+    YAML_WARNING_BYTES,
+)
 from galley.app.open_file import (
     OPEN_DIALOG_CAPTION,
     OPEN_FILE_FILTER,
@@ -115,22 +129,6 @@ CANCELED_STATUS_MS = 3_000
 # "Opening file.json…" waits as long as the format spinner (ADR 0001).
 OPEN_REVEAL_MS = SPINNER_REVEAL_MS
 OPENING_ACCESSIBLE_NAME = "Opening"
-
-# Final size thresholds, in bytes. 1 KB is 1000 bytes and 1 MB is
-# 1_000_000 bytes, the same SI units the warning shows.
-# YAML busy and progress limits depend on the document: a tab takes the
-# pure parser, so those documents reach each state at a smaller size.
-# The warning limit is the same either way.
-_SI_KB = 1000
-_SI_MB = 1_000_000
-YAML_BUSY_BYTES = 192 * _SI_KB
-YAML_TAB_BUSY_BYTES = 96 * _SI_KB
-YAML_PROGRESS_BYTES = 704 * _SI_KB
-YAML_TAB_PROGRESS_BYTES = 352 * _SI_KB
-YAML_WARNING_BYTES = 352 * _SI_KB
-JSON_BUSY_BYTES = 5 * _SI_MB
-JSON_PROGRESS_BYTES = 20 * _SI_MB
-JSON_WARNING_BYTES = 100 * _SI_MB
 
 
 class _EditorView(NamedTuple):
@@ -240,6 +238,7 @@ class MainWindow(QMainWindow):
         self._status = self._build_status_bar()
         self._assemble(toolbar)
         self._connect()
+        self._set_syntax_colors(True)
         self._sync_input_state()
         self._sync_output_state()
         self._sync_direction()
@@ -1284,12 +1283,18 @@ class MainWindow(QMainWindow):
             editor.setLineWrapMode(mode)
 
     def _set_show_whitespace(self, checked: bool) -> None:
-        flag = QTextOption.Flag.ShowTabsAndSpaces
+        """Record the View choice. Each editor shows dots when its lines allow."""
         for editor in self._editors():
-            option = editor.document().defaultTextOption()
-            flags = option.flags()
-            option.setFlags(flags | flag if checked else flags & ~flag)
-            editor.document().setDefaultTextOption(option)
+            editor.set_whitespace_wanted(checked)
+
+    def _set_syntax_colors(self, checked: bool) -> None:
+        """Record whether colors are wanted; the editors gate very long lines.
+
+        There is no View toggle yet. The long-line notice's "Turn on anyway"
+        will call this with True.
+        """
+        for editor in self._editors():
+            editor.set_syntax_colors_wanted(checked)
 
     def _zoom_in(self) -> None:
         self._zoom(1)
@@ -1325,13 +1330,17 @@ class MainWindow(QMainWindow):
     def _on_format_action_enabled(self, _enabled: bool) -> None:
         self._sync_format_button()
 
-    def _sync_format_button(self) -> None:
+    def _sync_format_button(self, text: str | None = None) -> None:
         """Block Format and Convert for the whole job.
 
         The button keeps its full accent face while working and reads
         ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        ``text`` is the input when the caller already has it; copying a
+        long document out of the editor is not free.
         """
-        has_input = self._input_pane.editor.toPlainText() != ""
+        if text is None:
+            text = self._input_pane.editor.toPlainText()
+        has_input = text != ""
         loading = self._loading_path is not None
         available = has_input and not self._formatting and not loading
         action = self._actions.format
@@ -1360,7 +1369,7 @@ class MainWindow(QMainWindow):
         empty = text == ""
         if empty:
             self._size_warning_accepted = False
-        self._sync_format_button()
+        self._sync_format_button(text)
         clear_button = self._input_pane.clear_button
         if clear_button is not None:
             clear_button.setEnabled(not empty)

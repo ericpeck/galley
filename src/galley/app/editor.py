@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QResizeEvent,
     QTextCursor,
     QTextFormat,
+    QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
+from galley.app.limits import JSON_BUSY_BYTES
 from galley.app.theme import error_color, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
@@ -44,6 +46,31 @@ _ERROR_MARKER_INSET = 4
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
 FOLD_MARKERS = "fold"
+
+# Display gates for very long lines, in characters of one block (#91).
+#
+# QPlainTextEdit lays out a whole block on every edit to it, so one giant
+# line costs what a whole document would. Measured on main with a 1.6 MB
+# one-line JSON document in an offscreen editor, wrap on:
+#
+#   Show Whitespace on, colors on    setText 21.0 s  keystroke 10.4 s
+#   Show Whitespace off, colors on   setText  1.2 s  keystroke 0.54 s
+#   both off                         setText 0.67 s  keystroke 0.36 s
+#   same text pretty-printed         setText 0.14 s  keystroke 0.011 s
+#
+# Plain layout is linear in the line: 0.1 MB is 31 ms a keystroke, 0.5 MB
+# is 114 ms, 1.6 MB is 364 ms. Whitespace dots grow faster than that: they
+# double a keystroke at 50_000 characters (49 ms against 26 ms) and
+# multiply it by about 20 at 1.6 MB, so they stop at 50_000. Colors add
+# about the layout cost again (130 ms against 61 ms at 250_000), so they
+# stop at 250_000. Wrap stays as the user set it: wrap off is slower on a
+# long line.
+WHITESPACE_LONG_LINE_CHARS = 50_000
+COLORS_LONG_LINE_CHARS = 250_000
+
+# Which display limit applies. ``display_limits`` lists these.
+WHITESPACE_LIMIT = "whitespace"
+COLORS_LIMIT = "colors"
 
 
 @dataclass(frozen=True)
@@ -215,8 +242,17 @@ class CodeEditor(QPlainTextEdit):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.document().setDocumentMargin(10)
         self._syntax_mode_set = False
+        self._whitespace_wanted = False
+        self._colors_wanted = True
+        # Longest line, in characters, and which block holds it. See
+        # _track_longest_line for when the length is an upper bound.
+        self._longest_chars = 0
+        self._longest_block = 0
+        self._block_count = 1
         # Connected before the highlighter so a mode change from detection
-        # lands before the highlighter reformats the same edit.
+        # lands before the highlighter reformats the same edit, and so a
+        # long line detaches the highlighter before it colors that edit.
+        self.document().contentsChange.connect(self._track_longest_line)
         self.document().contentsChange.connect(self._detect_syntax)
         self._highlighter = SyntaxHighlighter(self.document())
         self._highlighter.follow_base(self.palette().color(QPalette.ColorRole.Base))
@@ -398,11 +434,90 @@ class CodeEditor(QPlainTextEdit):
         self._highlighter.set_mode(mode)
 
     def syntax_colors_enabled(self) -> bool:
+        """Whether the highlighter is attached: wanted, and no limit applies."""
         return self._highlighter.is_enabled()
 
     def set_syntax_colors_enabled(self, enabled: bool) -> None:
-        """Turn syntax colors on or off, for example for large documents."""
-        self._highlighter.set_enabled(enabled)
+        """Turn syntax colors on or off. The same as ``set_syntax_colors_wanted``."""
+        self.set_syntax_colors_wanted(enabled)
+
+    def syntax_colors_wanted(self) -> bool:
+        return self._colors_wanted
+
+    def set_syntax_colors_wanted(self, wanted: bool) -> None:
+        """Record that the user wants colors. Long lines still switch them off."""
+        self._colors_wanted = wanted
+        self._apply_display_options()
+
+    def whitespace_wanted(self) -> bool:
+        return self._whitespace_wanted
+
+    def set_whitespace_wanted(self, wanted: bool) -> None:
+        """Record the Show Whitespace choice. Long lines still hide the dots."""
+        self._whitespace_wanted = wanted
+        self._apply_display_options()
+
+    def whitespace_shown(self) -> bool:
+        """Whether the document draws tabs and spaces right now."""
+        flags = self.document().defaultTextOption().flags()
+        return bool(flags & QTextOption.Flag.ShowTabsAndSpaces)
+
+    def display_limits(self) -> tuple[str, ...]:
+        """The display choices this document's size overrides, if any.
+
+        ``WHITESPACE_LIMIT`` means Show Whitespace is on but a line is longer
+        than ``WHITESPACE_LONG_LINE_CHARS``. ``COLORS_LIMIT`` means colors
+        are wanted but a line is longer than ``COLORS_LONG_LINE_CHARS`` or
+        the document is over ``JSON_BUSY_BYTES``. The long-line notice will
+        read this.
+        """
+        limits: list[str] = []
+        if self._whitespace_wanted and self._whitespace_limited():
+            limits.append(WHITESPACE_LIMIT)
+        if self._colors_wanted and self._colors_limited():
+            limits.append(COLORS_LIMIT)
+        return tuple(limits)
+
+    def display_limited(self) -> bool:
+        """True when a wanted display option is off because of the document."""
+        return bool(self.display_limits())
+
+    def longest_line_chars(self) -> int:
+        """Characters in the longest line, as the display gates see it.
+
+        Exact after a full replace or a recount. After an edit shortens the
+        longest line without crossing a gate, this keeps the old length, an
+        upper bound, rather than walk every block to find the next longest.
+        """
+        return self._longest_chars
+
+    def _whitespace_limited(self) -> bool:
+        return self._longest_chars > WHITESPACE_LONG_LINE_CHARS
+
+    def _colors_limited(self) -> bool:
+        # characterCount is a lower bound on the UTF-8 size and costs nothing
+        # to read; the exact byte count would mean copying the document.
+        over_bytes = self.document().characterCount() - 1 > JSON_BUSY_BYTES
+        return self._longest_chars > COLORS_LONG_LINE_CHARS or over_bytes
+
+    def _apply_display_options(self) -> None:
+        """Apply the effective display state: what is wanted, less the gates.
+
+        Each option changes only when its effective state differs from what
+        the document shows, because turning the whitespace flag lays the
+        whole document out again.
+        """
+        show_whitespace = self._whitespace_wanted and not self._whitespace_limited()
+        if show_whitespace != self.whitespace_shown():
+            document = self.document()
+            option = document.defaultTextOption()
+            flags = option.flags()
+            flag = QTextOption.Flag.ShowTabsAndSpaces
+            option.setFlags(flags | flag if show_whitespace else flags & ~flag)
+            document.setDefaultTextOption(option)
+        self._highlighter.set_enabled(
+            self._colors_wanted and not self._colors_limited()
+        )
 
     def reveal_line(self, lineno: int) -> None:
         """Move the cursor to ``lineno``, scroll it into view, and focus."""
@@ -509,6 +624,70 @@ class CodeEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
 
+    def _track_longest_line(self, position: int, removed: int, added: int) -> None:
+        """Keep the longest line current from the blocks an edit touched.
+
+        A full walk of the document happens only when the whole text is
+        replaced or cleared, or when the longest line shrinks across a
+        display gate and another line may now be the longest. A keystroke
+        reads the block it landed in and nothing else.
+        """
+        document = self.document()
+        count = document.characterCount()
+        if position == 0 and added >= count - 1:
+            self._rescan_longest_line()
+        else:
+            self._track_changed_blocks(position, added)
+        # A cheap compare: each option moves only when its effective state
+        # differs from what the document shows.
+        self._apply_display_options()
+
+    def _track_changed_blocks(self, position: int, added: int) -> None:
+        document = self.document()
+        new_count = document.blockCount()
+        delta = new_count - self._block_count
+        self._block_count = new_count
+        first_block = document.findBlock(position)
+        first = first_block.blockNumber()
+        last = document.findBlock(position + added).blockNumber()
+        changed_chars = 0
+        changed_block = first
+        block = first_block
+        while block.isValid() and block.blockNumber() <= last:
+            chars = block.length() - 1
+            if chars > changed_chars:
+                changed_chars, changed_block = chars, block.blockNumber()
+            block = block.next()
+        if changed_chars >= self._longest_chars:
+            self._longest_chars, self._longest_block = changed_chars, changed_block
+            return
+        if self._longest_block < first:
+            return
+        if self._longest_block > last - delta:
+            # After the edit: the block kept its text and moved by ``delta``.
+            self._longest_block += delta
+            return
+        # The longest line was edited and is shorter now. If it crossed a
+        # gate, another line may now set the display state: recount. If
+        # not, the old length stays as an upper bound and no gate moves.
+        if _gate_level(changed_chars) != _gate_level(self._longest_chars):
+            self._rescan_longest_line()
+            return
+        self._longest_block = changed_block
+
+    def _rescan_longest_line(self) -> None:
+        """Walk every block. Only for a full replace or a gate crossing."""
+        document = self.document()
+        self._block_count = document.blockCount()
+        longest, number = 0, 0
+        block = document.firstBlock()
+        while block.isValid():
+            chars = block.length() - 1
+            if chars > longest:
+                longest, number = chars, block.blockNumber()
+            block = block.next()
+        self._longest_chars, self._longest_block = longest, number
+
     def _detect_syntax(self, position: int, _removed: int, added: int) -> None:
         if self._syntax_mode_set:
             return
@@ -587,6 +766,11 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor = cursor
         selection.cursor.clearSelection()
         return selection
+
+
+def _gate_level(chars: int) -> int:
+    """How many of the two long-line gates ``chars`` is past."""
+    return (chars > WHITESPACE_LONG_LINE_CHARS) + (chars > COLORS_LONG_LINE_CHARS)
 
 
 def _first_marker(

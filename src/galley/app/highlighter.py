@@ -131,9 +131,11 @@ def _color_format(color: str, *, bold: bool = False) -> QTextCharFormat:
 def _utf16_offsets(text: str) -> list[int] | None:
     """Map code-point indexes to the UTF-16 indexes ``setFormat`` expects.
 
-    Returns None when every character is in the BMP and the two agree.
+    Returns None when every character is in the BMP and the two agree. The
+    list is built only when the astral regex matches; ASCII text, the common
+    case for JSON, skips the regex too.
     """
-    if _ASTRAL.search(text) is None:
+    if text.isascii() or _ASTRAL.search(text) is None:
         return None
     offsets = [0]
     for ch in text:
