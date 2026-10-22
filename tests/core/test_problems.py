@@ -149,7 +149,7 @@ def test_tabs_after_content_are_not_indent_errors() -> None:
 
 
 def test_yaml_errors_use_a_line_and_plain_codes() -> None:
-    assert _yaml_problem("a: 1\na: 2\n") == Problem("yaml_duplicate", 2)
+    assert _yaml_problem("a: 1\na: 2\n") == Problem("yaml_duplicate", 2, "a")
     assert _yaml_problem('a: "hi\n') == Problem("yaml_incomplete", 1)
     assert _yaml_problem("a: 1\nb\n") == Problem("yaml_colon", 2)
     other = _yaml_problem("a: [1, 2\n")
