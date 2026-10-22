@@ -136,8 +136,16 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     window = _show(qtbot)
     labels = _labels(_menu(window, "View"))
     show = labels.index("Show Problems")
-    assert labels[show + 1] == "|"
-    assert labels[show + 2] == "Stack Panes"
+    # The fold section (#64) sits between Show Problems and Stack Panes.
+    assert labels[show + 1 : show + 8] == [
+        "|",
+        "Expand all",
+        "Collapse all",
+        "Fold",
+        "Unfold",
+        "|",
+        "Stack Panes",
+    ]
     action = _action(window, "Stack Panes")
     assert action.isCheckable()
     assert not action.isChecked()

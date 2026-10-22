@@ -222,6 +222,8 @@ class ParseSession(QObject):
         self._closing = False
         self._shut_down = False
         self.finished_job_id: int | None = None
+        # Packed fold ranges of the last success, read in ``succeeded``.
+        self.finished_folds = b""
         self.reaped_pid: int | None = None
         self.reaped_exitcode: int | None = None
         self.last_temp_path: str | None = None
@@ -652,6 +654,7 @@ class ParseSession(QObject):
             unlink_temp(event.temp_path)
             return
         self.finished_job_id = event.job_id
+        self.finished_folds = event.folds
         self._active = None
         self._pending = None
         if event.temp_path is not None and active.destination is not None:

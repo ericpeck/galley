@@ -10,7 +10,6 @@ choices and applies them only while every line is under the gates in
 import gc
 import json
 import random
-import sys
 import time
 
 from PySide6.QtGui import QAction, QTextCursor, QTextOption
@@ -31,10 +30,11 @@ _LONG_CHARS = COLORS_LONG_LINE_CHARS + 50_000
 _WHITESPACE_ONLY_CHARS = WHITESPACE_LONG_LINE_CHARS + 10_000
 _BUDGET_CHARS = 1_600_000
 # A keystroke on the 1.6 MB line with both options wanted. Local runs are
-# about 0.4 s and macOS CI fits in 1.5 s. The Windows runner measured
-# 1.78-1.81 s on all three tries at 5d6e261, so Chief set 3 s there on #94.
-# Without the guard a keystroke takes about 10 s, so both still gate it.
-_KEYSTROKE_BUDGET_S = 3.0 if sys.platform == "win32" else 1.5
+# 0.4-0.6 s. CI runners went over the first 1.5 s budget: Windows measured
+# 1.78-1.81 s at 5d6e261 (#94) and macOS 1.55-1.92 s at 595f435 (#84), so
+# Chief set 3 s on both. Without the guard a keystroke takes about 10 s, so
+# 3 s still catches a regression.
+_KEYSTROKE_BUDGET_S = 3.0
 _SHOW_TABS_AND_SPACES = QTextOption.Flag.ShowTabsAndSpaces
 
 
@@ -337,7 +337,7 @@ def test_random_edits_keep_the_gates_right(qtbot, monkeypatch) -> None:
 
 
 def test_a_keystroke_on_a_long_line_stays_under_budget(qtbot, qapp) -> None:
-    """1.6 MB on one line, both options wanted: a keystroke takes under 1.5 s."""
+    """1.6 MB on one line, both options wanted: a keystroke takes under 3 s."""
     text = _one_line(_BUDGET_CHARS)
     editor = CodeEditor()
     qtbot.addWidget(editor)

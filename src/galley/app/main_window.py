@@ -37,7 +37,7 @@ from galley.app.appearance import (
     MODE_SYSTEM,
     application_appearance,
 )
-from galley.app.editor import CodeEditor
+from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
     escape_input,
@@ -98,6 +98,8 @@ from galley.app.problems_settings import (
     save_split_sizes,
     save_stacked_panes,
 )
+from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
+from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
 
 # Re-exported: tests and callers import the slot widths from here.
@@ -112,10 +114,12 @@ from galley.app.style import (
 from galley.app.tab_repair import replace_leading_tabs
 from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
 from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
+NOTHING_TO_FOLD = "nothing to fold"
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
 FORMAT_ACCESSIBLE_NAME = "Format"
@@ -235,6 +239,8 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
         self._output_pane = PaneWidget(PaneRole.OUTPUT)
+        # Only Output folds in v1 (#64).
+        self._output_pane.editor.set_folding_enabled(True)
         self._active_editor = self._input_pane.editor
         self._splitter = self._build_splitter()
         self._problems_state, self._problems_width = load_problems_preferences()
@@ -400,6 +406,11 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_depth)
         view.addAction(actions.show_problems)
         view.addSeparator()
+        view.addAction(actions.expand_all)
+        view.addAction(actions.collapse_all)
+        view.addAction(actions.fold)
+        view.addAction(actions.unfold)
+        view.addSeparator()
         view.addAction(actions.stack_panes)
         view.addSeparator()
         self._build_appearance_menu(view)
@@ -436,6 +447,16 @@ class MainWindow(QMainWindow):
         self._editor_menu.addAction(actions.copy)
         self._editor_menu.addAction(actions.paste)
         self._editor_menu.addAction(actions.select_all)
+
+        # Output's menu adds the fold commands; Input does not fold.
+        self._output_editor_menu = QMenu(self)
+        self._output_editor_menu.setObjectName("outputEditorMenu")
+        self._output_editor_menu.addActions(self._editor_menu.actions())
+        self._output_editor_menu.addSeparator()
+        self._output_editor_menu.addAction(actions.fold)
+        self._output_editor_menu.addAction(actions.unfold)
+        self._output_editor_menu.addAction(actions.expand_all)
+        self._output_editor_menu.addAction(actions.collapse_all)
 
     def _build_appearance_menu(self, view: QMenu) -> None:
         """View › Appearance: System, Light, Dark. Shared by every window."""
@@ -577,6 +598,12 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.expand_all.triggered.connect(self._expand_all)
+        actions.collapse_all.triggered.connect(self._collapse_all)
+        actions.fold.triggered.connect(self._output_pane.editor.fold_at_cursor)
+        actions.unfold.triggered.connect(self._output_pane.editor.unfold_at_cursor)
+        self._output_pane.editor.folds_changed.connect(self._sync_fold_actions)
+        self._output_pane.editor.fold_toggled.connect(self._announce_fold)
         self._status.cancel_clicked.connect(self._cancel_format)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
@@ -672,8 +699,12 @@ class MainWindow(QMainWindow):
 
     def _show_editor_menu(self, pos: QPoint) -> None:
         source = self.sender()
-        if isinstance(source, QWidget):
-            self._editor_menu.popup(source.mapToGlobal(pos))
+        if not isinstance(source, QWidget):
+            return
+        menu = self._editor_menu
+        if source is self._output_pane.editor.viewport():
+            menu = self._output_editor_menu
+        menu.popup(source.mapToGlobal(pos))
 
     def _show_about(self) -> None:
         show_about_dialog(self)
@@ -902,7 +933,10 @@ class MainWindow(QMainWindow):
         if self._session.finished_job_id != self._accepted_job_id:
             return
         self._set_editors_locked(False)
-        _replace_as_one_undo(self._output_pane.editor, text)
+        output = self._output_pane.editor
+        _replace_as_one_undo(output, text)
+        # The worker found the fold ranges with the text (Erik's #64 plan).
+        output.set_fold_ranges(*unpack_ranges(self._session.finished_folds))
         self._clear_problems()
         self._finish_format(self._success_status())
 
@@ -1461,6 +1495,47 @@ class MainWindow(QMainWindow):
         self._actions.escape_string.setEnabled(available)
         self._actions.unescape_string.setEnabled(available)
         self._sync_open_actions()
+        self._sync_fold_actions()
+
+    def _sync_fold_actions(self) -> None:
+        """Fold commands work on Output while it has blocks and no job runs."""
+        editor = self._output_pane.editor
+        foldable = editor.has_fold_ranges()
+        actions = self._actions
+        for action in (actions.fold, actions.unfold):
+            action.setEnabled(foldable and not self._formatting)
+        for action, keys in (
+            (actions.expand_all, EXPAND_ALL),
+            (actions.collapse_all, COLLAPSE_ALL),
+        ):
+            action.setEnabled(foldable and not self._formatting)
+            if foldable:
+                tip = f"{action.text()} blocks in Output ({chord_text(keys)})"
+            else:
+                tip = f"{action.text()}: {NOTHING_TO_FOLD}"
+            if action.toolTip() != tip:
+                action.setToolTip(tip)
+        description = ""
+        if foldable:
+            description = (
+                f"Fold ({chord_text(FOLD)}) and Unfold ({chord_text(UNFOLD)}) "
+                "act on the line with the caret."
+            )
+        if editor.accessibleDescription() != description:
+            editor.setAccessibleDescription(description)
+
+    def _expand_all(self) -> None:
+        count = self._output_pane.editor.expand_all()
+        self._status.set_state(f"Expanded {_blocks(count)}")
+
+    def _collapse_all(self) -> None:
+        count = self._output_pane.editor.collapse_all()
+        self._status.set_state(f"Collapsed {_blocks(count)}")
+
+    def _announce_fold(self, item: object, folded: bool) -> None:
+        """Say what a fold did in the status bar, which screen readers read."""
+        if isinstance(item, FoldRange):
+            self._status.set_state(fold_status_text(item, folded))
 
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
@@ -1653,6 +1728,10 @@ def _is_inside(widget: QWidget | None, ancestor: QWidget) -> bool:
             return True
         widget = widget.parentWidget()
     return False
+
+
+def _blocks(count: int) -> str:
+    return f"{count} block" if count == 1 else f"{count} blocks"
 
 
 def _line_label(count: int) -> str:

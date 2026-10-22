@@ -19,12 +19,16 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
     CLOSE_OTHERS,
+    COLLAPSE_ALL,
     ESCAPE_AS_STRING,
+    EXPAND_ALL,
+    FOLD,
     FORMAT,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     STACK_PANES,
     UNESCAPE_STRING,
+    UNFOLD,
     WORD_WRAP,
     apply_standard,
 )
@@ -40,7 +44,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Indent",
     "Sort keys",
     "Minify",
-    "Expand",
     "Validate",
     "Tabs",
 )
@@ -328,8 +331,10 @@ class ShellActions:
         self.indent = _action(parent, "Indent")
         self.sort_keys = _action(parent, "Sort keys")
         self.minify = _action(parent, "Minify")
-        self.expand_all = _action(parent, "Expand all")
-        self.collapse_all = _action(parent, "Collapse all")
+        self.expand_all = _action(parent, "Expand all", shortcut=EXPAND_ALL)
+        self.collapse_all = _action(parent, "Collapse all", shortcut=COLLAPSE_ALL)
+        self.fold = _action(parent, "Fold", shortcut=FOLD)
+        self.unfold = _action(parent, "Unfold", shortcut=UNFOLD)
         self.validate = _action(parent, "Validate")
         self.format = _action(
             parent,
@@ -400,8 +405,6 @@ class ShellActions:
             self.indent,
             self.sort_keys,
             self.minify,
-            self.expand_all,
-            self.collapse_all,
             self.validate,
         ]
 

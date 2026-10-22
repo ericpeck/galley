@@ -429,11 +429,17 @@ def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
     elif icon_only and action.text() not in _ICON_ONLY:
         button.setToolTip(action.text())
     elif icon_only:
-        shortcut = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-        tip = action.text() if not shortcut else f"{action.text()} ({shortcut})"
-        button.setToolTip(tip)
+        button.setToolTip(_icon_tip(action))
     else:
         button.setToolTip("")
+
+
+def _icon_tip(action: QAction) -> str:
+    """The action's own tooltip, or its text and shortcut."""
+    if action.toolTip() != action.text():
+        return action.toolTip()
+    shortcut = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+    return action.text() if not shortcut else f"{action.text()} ({shortcut})"
 
 
 def _takes_tab(widget: QWidget) -> bool:
@@ -489,11 +495,7 @@ def _tool_button(action: QAction) -> QWidget:
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         button.setAccessibleName(action.text())
         if not is_unbuilt(action):
-            shortcut = action.shortcut().toString(
-                QKeySequence.SequenceFormat.NativeText
-            )
-            tip = action.text() if not shortcut else f"{action.text()} ({shortcut})"
-            button.setToolTip(tip)
+            button.setToolTip(_icon_tip(action))
     elif not icon.isNull():
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     else:
