@@ -18,6 +18,9 @@ The fold commands follow Bill's #64 spec. Fold is portable ``Ctrl+Alt+[``
 (⌥⌘[ on macOS) and Unfold ``Ctrl+Alt+]`` (⌥⌘]). Collapse all is the chord
 ``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all ``Ctrl+K, Ctrl+J`` (⌘K ⌘J).
 Actual Size is ``Ctrl+0`` on its own, so the chord does not clash with it.
+
+Next Problem is F8 and Previous Problem Shift+F8 (Bill's #78 spec). They
+have no modifier to map, so they are the same on every platform.
 """
 
 from PySide6.QtCore import Qt
@@ -38,6 +41,8 @@ FOLD = QKeySequence("Ctrl+Alt+[", _PORTABLE)
 UNFOLD = QKeySequence("Ctrl+Alt+]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
+NEXT_PROBLEM = QKeySequence(Qt.Key.Key_F8)
+PREVIOUS_PROBLEM = QKeySequence(Qt.KeyboardModifier.ShiftModifier | Qt.Key.Key_F8)
 
 
 def native_chord_text(sequence: QKeySequence) -> str:
