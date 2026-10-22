@@ -21,3 +21,8 @@ YAML_WARNING_BYTES = 352 * _SI_KB
 JSON_BUSY_BYTES = 5 * _SI_MB
 JSON_PROGRESS_BYTES = 20 * _SI_MB
 JSON_WARNING_BYTES = 100 * _SI_MB
+# Convert from Python runs on the UI thread with no busy indicator. Above
+# these UTF-8 sizes of Input, it is refused so the window stays responsive.
+# The size bench rows ``python_to_json`` and ``python_to_yaml`` time them.
+PYTHON_TO_JSON_BYTES = 1 * _SI_MB
+PYTHON_TO_YAML_BYTES = YAML_BUSY_BYTES
