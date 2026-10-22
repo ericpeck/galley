@@ -7,7 +7,7 @@ that is, as a whole, an email address or a phone number, wherever it is,
 including inside arrays with no keys. Text that only contains one, like
 ``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
 three Copy As trees from the same rules. Serializing a tree is
-``format.dump_value``.
+``format.dump_value``, and ``copy_as.copy_as_text`` does both for a text.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -399,10 +399,23 @@ def copy_as_tree(
     ``mask_tree`` would replace through ``fake_value`` instead, emails and
     phone numbers found by value included.
     """
+    return copy_as_result(value, mode, rules, rng).value
+
+
+def copy_as_result(
+    value: object,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> MaskResult:
+    """Return ``copy_as_tree`` with the number of scalars it replaced.
+
+    ``original`` replaces none, so its count is 0.
+    """
     if mode == "original":
-        return value
+        return MaskResult(value, 0)
     if mode == "masked":
-        return mask_tree(value, rules).value
+        return mask_tree(value, rules)
     if mode != "fake":
         raise ValueError(f"Unknown Copy As mode: {mode}")
     chooser = rng if rng is not None else random.SystemRandom()
@@ -410,7 +423,7 @@ def copy_as_tree(
     def replace(scalar: object, key: object) -> object:
         return fake_value(scalar, detect_kind(key, scalar), chooser)
 
-    return _rewrite(value, rules or MaskRules(), replace).value
+    return _rewrite(value, rules or MaskRules(), replace)
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:

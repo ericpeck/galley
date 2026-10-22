@@ -148,7 +148,7 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Indent guides: View → Indent Guides → `Off` / `Lines` / `Colored by depth` (default shown checked: Colored by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
 - Word wrap toggle (⌥⌘W on macOS, Ctrl+Alt+W on Windows), Show Whitespace (⇧⌘8). Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows, so it does not share Word Wrap's shortcut. That binding is swappable per platform (§6, §12).
-- Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`.
+- Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` after `Copy` (#66) and the fold commands.
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
 
@@ -184,7 +184,8 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 
 ### 5.13 Menus
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
-- Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
+- Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌥⇧⌘E.
+- Copy As ▸ (#66): `Original`, `Masked`, `Random fake`, with no shortcuts. Each copies Output, or its selection, to the clipboard and leaves Output unchanged. Original is the text as it is. Masked replaces values under matched keys, and values that are an email or phone number, with `•••`. Random fake replaces the same values with new ones of the same type on every copy. The status bar names what was copied (`Copied original (unmasked)`, `Copied masked (N values hidden)`, `Copied random fake (N values replaced)`), or says `Nothing copied.` and why. Disabled while Output is empty or a job is running.
 - View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥⌘W (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
 - `File` includes `Open file…` (6c). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
@@ -398,7 +399,7 @@ Architecture:
 ## 12. Platform-swappable layer
 
 Isolate behind a `platform` module for macOS and Windows:
-- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About, Preferences, and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All` (§5.4).
+- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About, Preferences, and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
 - **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⇧⌥⌘W on macOS and Ctrl+Alt+Shift+W on Windows. Word Wrap keeps ⌥⌘W on macOS and Ctrl+Alt+W on Windows. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).

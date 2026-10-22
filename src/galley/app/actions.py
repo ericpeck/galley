@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 
+from galley.app.copy_as import COPY_AS_LABELS
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
     CLOSE_OTHERS,
@@ -32,6 +33,7 @@ from galley.app.shortcuts import (
     WORD_WRAP,
     apply_standard,
 )
+from galley.core.mask import CopyAsMode
 
 COMING_SOON = "Coming soon"
 
@@ -246,6 +248,13 @@ class ShellActions:
         self.redo = _action(parent, "Redo", standard=QKeySequence.StandardKey.Redo)
         self.cut = _action(parent, "Cut", standard=QKeySequence.StandardKey.Cut)
         self.copy = _action(parent, "Copy", standard=QKeySequence.StandardKey.Copy)
+        # Edit › Copy As and the Output right-click menu (#66). Each one
+        # copies from Output, so all three stay disabled until it has text.
+        self.copy_as_original = _action(
+            parent, COPY_AS_LABELS["original"], enabled=False
+        )
+        self.copy_as_masked = _action(parent, COPY_AS_LABELS["masked"], enabled=False)
+        self.copy_as_fake = _action(parent, COPY_AS_LABELS["fake"], enabled=False)
         self.paste = _action(parent, "Paste", standard=QKeySequence.StandardKey.Paste)
         self.select_all = _action(
             parent,
@@ -348,6 +357,14 @@ class ShellActions:
             enabled=False,
         )
         self._apply_unbuilt()
+
+    def copy_as_actions(self) -> dict[CopyAsMode, QAction]:
+        """The Copy As items by mode, in menu order."""
+        return {
+            "original": self.copy_as_original,
+            "masked": self.copy_as_masked,
+            "fake": self.copy_as_fake,
+        }
 
     def _apply_unbuilt(self) -> None:
         for name in UNBUILT_ACTIONS:

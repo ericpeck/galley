@@ -3,8 +3,9 @@
 ``run_worker`` is a module-level function so a spawn child can import it by
 name. This module does not import Qt. The child writes a temp file beside
 the destination and never replaces that destination; the UI process commits.
-A ``CompareJob`` loads two documents and diffs them. It has no output file,
-so it writes no temp.
+A ``CompareJob`` loads two documents and diffs them. A ``CopyAsJob`` builds
+the Masked or Random fake copy of a large Output. Neither has an output file,
+so neither writes a temp.
 """
 
 import os
@@ -14,10 +15,12 @@ from dataclasses import dataclass
 from multiprocessing.queues import Queue
 from typing import BinaryIO, Literal
 
+from galley.core.copy_as import CopyAsError, CopyAsResult, copy_as_text
 from galley.core.diff import DiffResult, diff, load_document
 from galley.core.errors import InputError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
+from galley.core.mask import CopyAsMode, MaskRules
 from galley.core.problems import Problem, collect_problems
 
 TEMP_PREFIX = ".galley-"
@@ -130,6 +133,37 @@ class CompareFailureEvent:
     problems: tuple[Problem, ...] = ()
 
 
+@dataclass(frozen=True)
+class CopyAsJob:
+    """One Copy As text to build. The body is a copy; the worker does not share it.
+
+    ``fmt`` is the Output format, for reading and writing.
+    """
+
+    job_id: int
+    text: str
+    fmt: str
+    mode: CopyAsMode
+    rules: MaskRules | None = None
+
+
+@dataclass(frozen=True)
+class CopyAsEvent:
+    """Copy As finished. ``result`` holds the text for the clipboard."""
+
+    job_id: int
+    result: CopyAsResult
+
+
+@dataclass(frozen=True)
+class CopyAsFailureEvent:
+    """Copy As built no text. ``invalid`` is :attr:`CopyAsError.invalid`."""
+
+    job_id: int
+    invalid: bool
+    message: str
+
+
 def run_worker(job_queue: Queue, event_queue: Queue) -> None:
     """Format jobs until the queue yields ``None``.
 
@@ -142,6 +176,9 @@ def run_worker(job_queue: Queue, event_queue: Queue) -> None:
             return
         if isinstance(job, CompareJob):
             _execute_compare(job, event_queue)
+            continue
+        if isinstance(job, CopyAsJob):
+            event_queue.put(run_copy_as(job))
             continue
         if not isinstance(job, FormatJob):
             continue
@@ -323,6 +360,15 @@ def _compare_failure(
     if error is None:
         problems = collect_problems(text, source, exc)
     return CompareFailureEvent(job_id, side, _failure_message(exc), error, problems)
+
+
+def run_copy_as(job: CopyAsJob) -> CopyAsEvent | CopyAsFailureEvent:
+    """Build the Copy As text without the queue, so it also runs in-process."""
+    try:
+        result = copy_as_text(job.text, job.fmt, job.mode, job.rules)
+    except CopyAsError as exc:
+        return CopyAsFailureEvent(job.job_id, exc.invalid, str(exc))
+    return CopyAsEvent(job.job_id, result)
 
 
 def _is_temp_name(path: str) -> bool:
