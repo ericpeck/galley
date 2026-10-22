@@ -39,7 +39,6 @@ COMING_SOON = "Coming soon"
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
-    "Find",
     "Guides",
     "Indent",
     "Sort keys",
@@ -253,6 +252,12 @@ class ShellActions:
             standard=QKeySequence.StandardKey.SelectAll,
         )
         self.find = _action(parent, "Find…", standard=QKeySequence.StandardKey.Find)
+        self.find_next = _action(
+            parent, "Find Next", standard=QKeySequence.StandardKey.FindNext
+        )
+        self.find_previous = _action(
+            parent, "Find Previous", standard=QKeySequence.StandardKey.FindPrevious
+        )
         self.find_replace = _action(
             parent,
             "Find and Replace…",
@@ -392,7 +397,6 @@ class ShellActions:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
             self.preferences,
-            self.find,
             self.guides_off,
             self.guides_lines,
             self.guides_depth,

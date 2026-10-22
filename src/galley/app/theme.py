@@ -10,7 +10,7 @@ here.
 """
 
 from collections.abc import Sequence
-from typing import Final
+from typing import Final, NamedTuple
 
 from PySide6.QtGui import QColor, QPalette
 
@@ -174,6 +174,34 @@ def selected_problem_palette(palette: QPalette) -> QPalette:
 def find_highlight_color() -> QColor:
     """Brand color for a find match. Same hex as the Format button fill."""
     return QColor(ACCENT)
+
+
+# #52: the current match is the accent at 40% opacity. The other matches
+# take a neutral share of Text over Base, darker than the current-line band
+# so a match on the caret's line still shows.
+FIND_CURRENT_OPACITY: Final = 0.4
+_FIND_OTHER_SHARE: Final = 0.25
+
+
+class FindColors(NamedTuple):
+    """Opaque fills for find matches and the text drawn on them."""
+
+    current: QColor
+    other: QColor
+    ink: QColor
+
+
+def find_match_colors(palette: QPalette) -> FindColors:
+    """Match fills over the editor Base, and Text as the ink on both.
+
+    Syntax colors fall under 4.5:1 on these fills (the light string color is
+    about 4.2:1 on the current match), so matched text is drawn in Text.
+    """
+    base = palette.color(QPalette.ColorRole.Base)
+    ink = composite(palette.color(QPalette.ColorRole.Text), base)
+    current = mix(base, find_highlight_color(), FIND_CURRENT_OPACITY)
+    other = mix(base, ink, _FIND_OTHER_SHARE)
+    return FindColors(current, other, ink)
 
 
 def light_palette(current: QPalette) -> QPalette:
