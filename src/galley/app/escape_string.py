@@ -58,6 +58,14 @@ def unescape_too_large_message(size: str, limit: str) -> str:
     return f"This document is too large to unescape ({size}). The limit is {limit}."
 
 
+def convert_python_too_large_message(size: str, limit: str) -> str:
+    """Status when Input is too large for Convert from Python on the UI thread."""
+    return (
+        f"This document is too large to convert from Python ({size}). "
+        f"The limit is {limit}."
+    )
+
+
 def escape_input(text: str, source: str) -> StringResult:
     """Escape Input read as ``source``. A parse failure lists Input problems."""
     early = collect_problems(text, source)
