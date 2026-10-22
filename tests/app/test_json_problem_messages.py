@@ -65,7 +65,7 @@ _CASES = {
     "duplicate key": (
         '{\n  "name": "a",\n  "age": 1,\n  "name": "b"\n}\n',
         4,
-        'Duplicate key "name" on line 4.',
+        'Remove the repeated key "name" on line 4.',
     ),
     "several could apply": (
         '{\n  "name": "Galley",\n  version: 2,\n  "tags": ["json"\n}\n',
@@ -124,9 +124,9 @@ def test_every_duplicate_key_gets_a_row_and_a_gutter_marker(qtbot) -> None:
     output = window.findChild(CodeEditor, "outputEditor")
     assert isinstance(output, CodeEditor)
     assert pane.messages() == [
-        'Duplicate key "id" on line 4.',
-        'Duplicate key "team" on line 8.',
-        'Duplicate key "name" on line 10.',
+        'Remove the repeated key "id" on line 4.',
+        'Remove the repeated key "team" on line 8.',
+        'Remove the repeated key "name" on line 10.',
     ]
     assert pane.lines() == [4, 8, 10]
     assert editor.problem_lines() == {4, 8, 10}
@@ -148,7 +148,7 @@ def test_format_with_a_duplicate_leaves_both_editors_unchanged(qtbot) -> None:
     qtbot.waitUntil(lambda: status.text() == "1 problem", timeout=15000)
     pane = window.findChild(ProblemsPane, "problemsPane")
     assert isinstance(pane, ProblemsPane)
-    assert pane.messages() == ['Duplicate key "a" on line 3.']
+    assert pane.messages() == ['Remove the repeated key "a" on line 3.']
     assert editor.toPlainText() == text
     assert output.toPlainText() == formatted
 

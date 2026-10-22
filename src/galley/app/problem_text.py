@@ -55,8 +55,8 @@ def message_for(problem: Problem) -> str:
 
 def _duplicate_key_text(key: str, line: int) -> str:
     if not key:
-        return f"Duplicate key on line {line}."
-    return f"Duplicate key {quoted_key(key)} on line {line}."
+        return f"Remove the repeated key on line {line}."
+    return f"Remove the repeated key {quoted_key(key)} on line {line}."
 
 
 def quoted_key(key: str) -> str:
