@@ -10,6 +10,7 @@ choices and applies them only while every line is under the gates in
 import gc
 import json
 import random
+import sys
 import time
 
 from PySide6.QtGui import QAction, QTextCursor, QTextOption
@@ -30,8 +31,10 @@ _LONG_CHARS = COLORS_LONG_LINE_CHARS + 50_000
 _WHITESPACE_ONLY_CHARS = WHITESPACE_LONG_LINE_CHARS + 10_000
 _BUDGET_CHARS = 1_600_000
 # A keystroke on the 1.6 MB line with both options wanted. Local runs are
-# about 0.4 s; CI is two to three times slower. This is a regression gate.
-_KEYSTROKE_BUDGET_S = 1.5
+# about 0.4 s and macOS CI fits in 1.5 s. The Windows runner measured
+# 1.78-1.81 s on all three tries at 5d6e261, so Chief set 3 s there on #94.
+# Without the guard a keystroke takes about 10 s, so both still gate it.
+_KEYSTROKE_BUDGET_S = 3.0 if sys.platform == "win32" else 1.5
 _SHOW_TABS_AND_SPACES = QTextOption.Flag.ShowTabsAndSpaces
 
 
