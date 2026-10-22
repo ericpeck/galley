@@ -205,8 +205,6 @@ _UNBUILT_ICON_NAMES = (
     "Indent",
     "Sort keys",
     "Minify",
-    "Expand all",
-    "Collapse all",
     "Validate",
     "Find…",
 )

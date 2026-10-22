@@ -6,13 +6,14 @@ Nothing large is written into the tree. Timings are printed as one table.
 They are not a pass/fail gate. One sample from each CI runner is not a
 median, and a shared runner is too noisy to fail the job on raw seconds.
 
-Parse and format go through ``format_json``. Collapse hides nested lines in
-the editor document: Expand all and Collapse all are still Coming soon, so
-there is no fold command to call. Search uses the editor's find on a marker
-planted at the end of the fixture. Syntax coloring is the editor highlighter
-turning on for that document. Change markers use the gutter API from the
-Compare prep work. The diff engine is timed only when ``galley.core.diff.diff``
-is importable; this checkout does not invent one.
+Parse and format go through ``format_json``. Collapse is the editor's
+Collapse all (#64), with folding turned on as it is for Output; the fold
+scan runs before the clock starts, as the Format worker runs it. Search uses
+the editor's find on a marker planted at the end of the fixture. Syntax
+coloring is the editor highlighter turning on for that document. Change
+markers use the gutter API from the Compare prep work. The diff engine is
+timed only when ``galley.core.diff.diff`` is importable; this checkout does
+not invent one.
 
 The hard checks are the JSON busy spinner, the progress bar, and the size
 warning. Those follow ``JSON_BUSY_BYTES``, ``JSON_PROGRESS_BYTES``, and
@@ -177,6 +178,7 @@ def test_large_documents_are_timed(qtbot) -> None:
             _record(samples, "search", label, _elapsed(search))
             assert found_block >= editor.blockCount() * 9 // 10
 
+            editor.set_folding_enabled(True)
             hidden = 0
 
             def collapse() -> None:

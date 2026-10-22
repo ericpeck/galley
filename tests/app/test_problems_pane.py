@@ -692,3 +692,21 @@ def test_the_dark_selection_is_the_native_highlight(qtbot, install_scheme) -> No
     assert tinted.name() == native.name()
     image = row.grab().toImage()
     assert _near(image.pixelColor(image.width() - 4, image.height() - 4), native)
+
+
+def test_escape_in_the_list_returns_focus_to_input_and_keeps_the_pane(qtbot) -> None:
+    window = _show(qtbot)
+    status = _format(qtbot, window, _MISSING)
+    _wait_status(qtbot, status, "1 problem")
+    pane = _pane(window)
+    qtbot.waitUntil(lambda: pane.isVisible() and pane.width() >= 200, timeout=15000)
+    problems = pane.list_widget()
+    problems.setFocus()
+    qtbot.waitUntil(problems.hasFocus)
+    qtbot.keyClick(problems, Qt.Key.Key_Escape)
+    editor = _editor(window)
+    qtbot.waitUntil(editor.hasFocus)
+    assert pane.isVisible()
+    assert pane.count() == 1
+    assert status.text() == "1 problem"
+    assert _action(window, "Show Problems").isChecked()

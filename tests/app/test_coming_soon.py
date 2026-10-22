@@ -5,7 +5,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPushButton, QToolButton, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QMenu,
+    QPushButton,
+    QToolButton,
+    QToolTip,
+    QWidget,
+)
 
 from galley.app.actions import (
     _ACTION_ATTRS,
@@ -28,9 +35,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Guides › Off",
-    "Guides › Lines",
-    "Guides › Colored by depth",
     "Pop out into window",
     "Show window",
     "Bring back",
@@ -351,7 +355,7 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     assert all(
         host is not None and host.property("comingSoonHost") is True for host in hosts
     )
-    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Expand", "Validate"}
+    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Validate"}
 
 
 def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
@@ -421,18 +425,9 @@ def test_every_stub_action_is_covered_by_an_unbuilt_entry(qtbot) -> None:
     for action in actions._stub_actions():
         assert action.property("unbuiltName") == covered[id(action)]
         assert action.property("unbuiltName") in UNBUILT_ACTIONS
-    collapse = actions.collapse_all
-    assert covered[id(collapse)] == "Expand"
-    assert collapse.property("unbuiltName") == "Expand"
-    assert collapse.toolTip() == COMING_SOON
-    assert not collapse.isEnabled()
-    assert collapse.isVisible()
-    assert "Collapse" not in UNBUILT_ACTIONS
     message = release_failure()
     assert message == _release_text(", ".join(UNBUILT_ACTIONS))
     assert message is not None
-    assert message.count("Expand") == 1
-    assert "Collapse" not in message
     not_yet = {id(action) for action in actions._not_yet_actions()}
     assert not_yet
     assert not_yet.isdisjoint(covered)
@@ -449,3 +444,83 @@ def test_deleting_a_name_from_the_list_turns_that_action_on(monkeypatch, qtbot) 
     assert find.isEnabled()
     assert find.toolTip() != COMING_SOON
     assert not is_unbuilt(find)
+
+
+def test_expand_and_collapse_all_shipped(qtbot) -> None:
+    """#64 built Expand all and Collapse all, so the release check drops them."""
+    window = _show(qtbot)
+    actions = window._actions
+    assert "Expand" not in UNBUILT_ACTIONS
+    stubs = {id(action) for action in actions._stub_actions()}
+    for action in (actions.expand_all, actions.collapse_all):
+        assert not is_unbuilt(action)
+        assert id(action) not in stubs
+        assert action.toolTip() != COMING_SOON
+    message = release_failure()
+    assert message is not None
+    assert "Expand" not in message
+    assert "Collapse" not in message
+    assert "Minify" in message
+
+
+def test_indent_size_picker_is_coming_soon_until_indent_ships(qtbot) -> None:
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isVisible()
+    assert not picker.isEnabled()
+    assert picker.toolTip() == COMING_SOON
+    assert picker.accessibleDescription() == COMING_SOON
+    assert picker.focusPolicy() == Qt.FocusPolicy.NoFocus
+    host = picker.parentWidget()
+    assert isinstance(host, QWidget)
+    assert host.property("comingSoonHost") is True
+    assert host.isEnabled()
+    assert host.toolTip() == COMING_SOON
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert not submenu.menuAction().isEnabled()
+    assert submenu.menuAction().toolTip() == COMING_SOON
+
+
+def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
+    without_indent = tuple(name for name in UNBUILT_ACTIONS if name != "Indent")
+    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", without_indent)
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isEnabled()
+    assert picker.toolTip() == "Indent size"
+    assert picker.accessibleDescription() == ""
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert submenu.menuAction().isEnabled()
+
+
+def test_indent_guides_are_coming_soon_and_off_stays_checked(qtbot) -> None:
+    window = _show(qtbot)
+    actions = window._actions
+    off, lines, depth = actions.guides_off, actions.guides_lines, actions.guides_depth
+    assert "Guides" in UNBUILT_ACTIONS
+    for action in (off, lines, depth):
+        assert is_unbuilt(action)
+        assert action.property("unbuiltName") == "Guides"
+        assert not action.isEnabled()
+        assert action.isVisible()
+        assert action.toolTip() == COMING_SOON
+        assert action.isCheckable()
+    assert off.isChecked()
+    assert not lines.isChecked()
+    assert not depth.isChecked()
+    lines.trigger()
+    depth.trigger()
+    assert off.isChecked()
+    assert not lines.isChecked()
+    assert not depth.isChecked()
+    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
+    message = release_failure()
+    assert message is not None
+    assert "Guides" in message
+    not_yet = not_yet_failure()
+    assert not_yet is not None
+    assert "Guides" not in not_yet
