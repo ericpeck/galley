@@ -40,6 +40,7 @@ COMING_SOON = "Coming soon"
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
     "Find",
+    "Guides",
     "Indent",
     "Sort keys",
     "Minify",
@@ -53,6 +54,8 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Preferences": ("preferences",),
     "Open": ("open_file",),
     "Find": ("find",),
+    # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
+    "Guides": ("guides_off", "guides_lines", "guides_depth"),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -282,14 +285,9 @@ class ShellActions:
             shortcut=SHOW_WHITESPACE,
             checkable=True,
         )
-        self.guides_off = _action(parent, "Off", checkable=True)
+        self.guides_off = _action(parent, "Off", checkable=True, checked=True)
         self.guides_lines = _action(parent, "Lines", checkable=True)
-        self.guides_depth = _action(
-            parent,
-            "Colored by depth",
-            checkable=True,
-            checked=True,
-        )
+        self.guides_depth = _action(parent, "Colored by depth", checkable=True)
         self.indent_guides = self._exclusive_guides(parent)
         self.full_screen = _action(
             parent,
@@ -395,6 +393,9 @@ class ShellActions:
         return [
             self.preferences,
             self.find,
+            self.guides_off,
+            self.guides_lines,
+            self.guides_depth,
             self.rename,
             self.duplicate,
             self.close_tab,
@@ -412,13 +413,10 @@ class ShellActions:
 
         Menu order: menu bar, then the toolbar. Delete a command here when it
         ships. The release check prints each menu label and fails while this
-        list is non-empty. Guide commands are printed with their parent menu.
+        list is non-empty.
         """
         return [
             self.find_replace,
-            self.guides_off,
-            self.guides_lines,
-            self.guides_depth,
             self.pop_out,
             self.show_window,
             self.bring_back,
@@ -436,10 +434,8 @@ def _qapplication() -> QApplication:
 
 
 def _not_yet_release_name(shell: ShellActions, action: QAction) -> str:
-    """Release-check label. Guide commands name their parent menu."""
-    guides = (shell.guides_off, shell.guides_lines, shell.guides_depth)
-    if any(action is item for item in guides):
-        return f"Guides › {action.text()}"
+    """Release-check label: the menu text."""
+    del shell
     return action.text()
 
 

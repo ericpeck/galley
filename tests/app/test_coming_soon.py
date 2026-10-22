@@ -5,7 +5,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPushButton, QToolButton, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QMenu,
+    QPushButton,
+    QToolButton,
+    QToolTip,
+    QWidget,
+)
 
 from galley.app.actions import (
     _ACTION_ATTRS,
@@ -28,9 +35,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Guides › Off",
-    "Guides › Lines",
-    "Guides › Colored by depth",
     "Pop out into window",
     "Show window",
     "Bring back",
@@ -457,3 +461,66 @@ def test_expand_and_collapse_all_shipped(qtbot) -> None:
     assert "Expand" not in message
     assert "Collapse" not in message
     assert "Minify" in message
+
+
+def test_indent_size_picker_is_coming_soon_until_indent_ships(qtbot) -> None:
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isVisible()
+    assert not picker.isEnabled()
+    assert picker.toolTip() == COMING_SOON
+    assert picker.accessibleDescription() == COMING_SOON
+    assert picker.focusPolicy() == Qt.FocusPolicy.NoFocus
+    host = picker.parentWidget()
+    assert isinstance(host, QWidget)
+    assert host.property("comingSoonHost") is True
+    assert host.isEnabled()
+    assert host.toolTip() == COMING_SOON
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert not submenu.menuAction().isEnabled()
+    assert submenu.menuAction().toolTip() == COMING_SOON
+
+
+def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
+    without_indent = tuple(name for name in UNBUILT_ACTIONS if name != "Indent")
+    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", without_indent)
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "indentSize")
+    assert isinstance(picker, QComboBox)
+    assert picker.isEnabled()
+    assert picker.toolTip() == "Indent size"
+    assert picker.accessibleDescription() == ""
+    submenu = window.findChild(QMenu, "indentSizeMenu")
+    assert isinstance(submenu, QMenu)
+    assert submenu.menuAction().isEnabled()
+
+
+def test_indent_guides_are_coming_soon_and_off_stays_checked(qtbot) -> None:
+    window = _show(qtbot)
+    actions = window._actions
+    off, lines, depth = actions.guides_off, actions.guides_lines, actions.guides_depth
+    assert "Guides" in UNBUILT_ACTIONS
+    for action in (off, lines, depth):
+        assert is_unbuilt(action)
+        assert action.property("unbuiltName") == "Guides"
+        assert not action.isEnabled()
+        assert action.isVisible()
+        assert action.toolTip() == COMING_SOON
+        assert action.isCheckable()
+    assert off.isChecked()
+    assert not lines.isChecked()
+    assert not depth.isChecked()
+    lines.trigger()
+    depth.trigger()
+    assert off.isChecked()
+    assert not lines.isChecked()
+    assert not depth.isChecked()
+    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
+    message = release_failure()
+    assert message is not None
+    assert "Guides" in message
+    not_yet = not_yet_failure()
+    assert not_yet is not None
+    assert "Guides" not in not_yet
