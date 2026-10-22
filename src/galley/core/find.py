@@ -36,6 +36,7 @@ _JSON_KEY = re.compile(r'"([^"\\\n]*(?:\\.[^"\\\n]*)*)"[ \t]*:')
 _ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 _QUOTED_STYLES = frozenset({"'", '"'})
 _GAP = "\n"
+_BOM = "\ufeff"
 
 
 def find_starts(text: str, query: str, *, match_case: bool) -> list[int]:
@@ -93,17 +94,20 @@ def utf16_offsets(offsets: list[int], astral: list[int]) -> list[int]:
     return [offset + bisect_left(astral, offset) for offset in offsets]
 
 
-def _yaml_keys(text: str) -> list[tuple[int, int]]:
+def _yaml_keys(text: str, *, pure: bool = False) -> list[tuple[int, int]]:
     """Key scalars from the YAML scanner's tokens.
 
-    A key is the scalar after a ``KeyToken``, past any anchor or tag. The
-    C scanner counts characters and skips a leading BOM.
+    A key is the scalar after a ``KeyToken``, past any anchor or tag. Both
+    scanners count characters, but over a leading BOM the C scanner starts
+    at 0 and the pure one at 1. The BOM is cut off first so both see the
+    same text, and the spans move back by one. ``pure`` forces the Python
+    scanner, which runs when ``ruamel.yaml.clib`` is not selected.
     """
-    shift = 1 if text.startswith("﻿") else 0
+    shift = 1 if text.startswith(_BOM) else 0
     spans: list[tuple[int, int]] = []
     after_key = False
     try:
-        for token in YAML(typ="safe").scan(text):
+        for token in YAML(typ="safe", pure=pure).scan(text[shift:]):
             if isinstance(token, KeyToken):
                 after_key = True
                 continue

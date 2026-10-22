@@ -5,6 +5,7 @@ import json
 import pytest
 
 from galley.core.find import (
+    _yaml_keys,
     astral_offsets,
     find_starts,
     key_mask,
@@ -124,9 +125,17 @@ def test_yaml_from_the_formatter() -> None:
     assert len(_keys_only(text, "YAML", "price")) == 2
 
 
-def test_yaml_bom_moves_the_keys_one_place() -> None:
-    text = "﻿price: price\n"
-    assert _keys(text, "YAML") == ["price"]
+@pytest.mark.parametrize("pure", [False, True], ids=["default", "pure"])
+def test_yaml_bom_moves_the_keys_one_place(pure: bool) -> None:
+    text = "\ufeffprice: price\n"
+    spans = _yaml_keys(text, pure=pure)
+    assert spans == [(1, 6)]
+    assert [text[start:end] for start, end in spans] == ["price"]
+
+
+def test_the_pure_scanner_finds_the_same_keys() -> None:
+    for text in (YAML_TEXT, "\ufeff" + YAML_TEXT):
+        assert _yaml_keys(text, pure=True) == key_spans(text, "YAML")
 
 
 def test_text_that_stops_parsing_keeps_the_keys_before_it() -> None:
