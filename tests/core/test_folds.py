@@ -21,8 +21,10 @@ from galley.core.worker import FormatJob, SuccessEvent, _execute
 
 OBJECT = FoldKind.OBJECT
 ARRAY = FoldKind.ARRAY
-# Erik's #64 budget for the scan of a 2 MB file.
-SCAN_BUDGET_S = 0.050
+# Budget for the scan of a 2 MB file. Erik's #64 target was 50 ms; the scan
+# is about 20 ms locally but CI runners measured 51.7-58.2 ms, so Chief set
+# 100 ms on #84. It still fails a real regression (about 5x local).
+SCAN_BUDGET_S = 0.100
 TWO_MB = 2_000_000
 
 

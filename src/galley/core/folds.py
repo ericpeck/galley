@@ -117,7 +117,7 @@ def unpack_ranges(data: bytes) -> tuple[list[FoldRange], int]:
 def _json_ranges(text: str) -> list[FoldRange]:
     # Strings become "" so the brackets and commas left are structure. Then
     # the text shrinks to those bytes and its newlines, so the loop below
-    # runs once per bracket, comma or line: the 2 MB budget is 50 ms.
+    # runs once per bracket, comma or line: the 2 MB budget is 100 ms.
     bare = _JSON_STRING.sub(b'""', text.encode("utf-8"))
     tokens = bare.translate(_TOKENS, _SPACE)
     for empty, kept in _EMPTIES:
