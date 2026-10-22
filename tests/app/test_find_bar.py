@@ -8,7 +8,14 @@ import time
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QTextCursor
-from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QToolButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QLabel,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from galley.app.actions import UNBUILT_ACTIONS, not_yet_failure, release_failure
 from galley.app.editor import CodeEditor
@@ -636,21 +643,67 @@ def test_the_count_is_announced(qtbot) -> None:
 
 
 def test_a_narrow_pane_moves_the_options_to_a_second_row(qtbot) -> None:
+    # Hosted in a layout, as in a pane: a top-level bar would be held at its
+    # layout's minimum width, which depends on the platform's fonts.
+    host = QWidget()
+    qtbot.addWidget(host)
     editor = CodeEditor()
     bar = FindBar(editor, "narrow", keys_option=True)
-    qtbot.addWidget(editor)
-    qtbot.addWidget(bar)
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(bar)
+    layout.addWidget(editor)
+    host.resize(900, 300)
+    host.show()
+    qtbot.waitExposed(host)
     bar.open()
-    first_row = bar.field.mapTo(bar, QPoint(0, 0)).y()
 
     def top(widget) -> int:
         return widget.mapTo(bar, QPoint(0, 0)).y()
 
-    bar.resize(260, 80)
-    qtbot.waitUntil(lambda: top(bar.match_case) > first_row + bar.field.height())
+    def below_field(widget) -> bool:
+        return top(widget) >= top(bar.field) + bar.field.height()
+
+    qtbot.waitUntil(lambda: not below_field(bar.match_case))
+    host.resize(260, 300)
+    qtbot.waitUntil(lambda: bar.width() == 260)
+    qtbot.waitUntil(lambda: below_field(bar.match_case))
     assert top(bar.keys_only) == top(bar.match_case)
-    bar.resize(900, 80)
-    qtbot.waitUntil(lambda: top(bar.match_case) < first_row + bar.field.height())
+    host.resize(900, 300)
+    qtbot.waitUntil(lambda: not below_field(bar.match_case))
+
+
+def test_selections_are_never_set_inside_another_set(qtbot, monkeypatch) -> None:
+    """Laying out blocks inside setExtraSelections can scroll; no nested call.
+
+    A nested call freed the selection list Qt was walking and crashed CI.
+    """
+    window, output, bar = _output_with(qtbot, _pretty_document(400_000))
+    depth = [0]
+    nested = []
+    original = CodeEditor.setExtraSelections
+
+    def counting(self, selections) -> None:
+        depth[0] += 1
+        if depth[0] > 1:
+            nested.append(depth[0])
+        try:
+            original(self, selections)
+        finally:
+            depth[0] -= 1
+
+    monkeypatch.setattr(CodeEditor, "setExtraSelections", counting)
+    _action(window, "Find…").trigger()
+    qtbot.keyClicks(bar.field, "e")
+    bar.keys_only.click()
+    scroll = output.verticalScrollBar()
+    for _ in range(20):
+        scroll.setValue(scroll.value() + 200)
+        QApplication.processEvents()
+    bar.find_next()
+    QApplication.processEvents()
+    assert nested == []
+    assert output.extraSelections()
 
 
 # Release check ------------------------------------------------------------

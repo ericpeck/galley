@@ -356,6 +356,12 @@ class CodeEditor(QPlainTextEdit):
         self._find_starts: list[int] = []
         self._find_ends: list[int] = []
         self._find_current = -1
+        # True while setExtraSelections runs. See _highlight_current_line.
+        self._setting_selections = False
+        self._selections_again = QTimer(self)
+        self._selections_again.setSingleShot(True)
+        self._selections_again.setInterval(0)
+        self._selections_again.timeout.connect(self._highlight_current_line)
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -1326,6 +1332,13 @@ class CodeEditor(QPlainTextEdit):
             self._update_line_number_width(0)
 
     def _highlight_current_line(self) -> None:
+        if self._setting_selections:
+            # setExtraSelections lays blocks out, which can move the scroll
+            # bar and call back here. Qt is still walking the old selections
+            # then, and a nested call frees them under it: a crash on macOS
+            # and Windows CI. Build them again once the outer call returns.
+            self._selections_again.start()
+            return
         selections: list[QTextEdit.ExtraSelection] = []
         tints = self._line_tints()
         current = self.textCursor().blockNumber() + 1
@@ -1338,7 +1351,11 @@ class CodeEditor(QPlainTextEdit):
             if block.isValid():
                 selections.append(self._line_band(QTextCursor(block), tints[lineno]))
         selections.extend(self._find_selections())
-        self.setExtraSelections(selections)
+        self._setting_selections = True
+        try:
+            self.setExtraSelections(selections)
+        finally:
+            self._setting_selections = False
 
     def _refresh_find_matches(self) -> None:
         """Pick the matches to draw again after a scroll, resize, or fold."""
