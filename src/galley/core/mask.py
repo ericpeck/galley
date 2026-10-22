@@ -1,15 +1,21 @@
-"""Mask values under sensitive key names.
+"""Mask values under sensitive key names, and values that are an email or phone.
 
 This module does not import Qt. ``mask_tree`` replaces every scalar under a
 matched key with ``"•••"`` and keeps the keys and structure, so the output
-has the same shape as the unmasked output. ``copy_as_tree`` builds the three
-Copy As trees from the same rules. Serializing a tree is ``format.dump_value``.
+has the same shape as the unmasked output. It also replaces any string
+that is, as a whole, an email address or a phone number, wherever it is,
+including inside arrays with no keys. Text that only contains one, like
+``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
+three Copy As trees from the same rules. Serializing a tree is
+``format.dump_value``.
 
-Keys match as whole names after lowercasing and dropping ``_``, ``-`` and
-spaces, so ``email_address`` matches ``emailaddress`` and ``emailer`` does
-not. The tree is walked with explicit stacks and never recursively. Any
-failure raises ``MaskError``, so a job with masking on fails whole and never
-shows unmasked output.
+Key names are split into lowercase words by ``split_key`` (see there for
+the rule). A term in ``MASK_TERMS`` matches when one word, or several
+adjacent words written together, spell it, so ``workEmail``, ``phone2``
+and ``credit_card`` match and ``emailer`` does not. The tree is walked
+with explicit stacks and never recursively. Any failure raises
+``MaskError``, so a job with masking on fails whole and never shows
+unmasked output.
 
 A YAML alias is the same Python object as its anchor. A shared mapping or
 sequence is masked everywhere when any place it appears is masked, so a
@@ -19,7 +25,7 @@ Strings shorter than two characters are skipped there, because CPython
 shares those between unrelated values.
 """
 
-import datetime as dt
+import functools
 import random
 import re
 from collections import deque
@@ -28,42 +34,126 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
-from galley.core.fake import (
-    fake_value,
-    random_date_like,
-    random_digit,
-    random_float_like,
-    random_int_like,
-)
+from galley.core.fake import fake_value
 
 MASK = "•••"
 
-DEFAULT_MASK_KEYS = (
-    "email",
-    "emailaddress",
-    "phone",
-    "phonenumber",
-    "mobile",
-    "ssn",
-    "socialsecuritynumber",
-    "address",
-    "streetaddress",
-)
-
 Kind = Literal["email", "phone", "other"]
 CopyAsMode = Literal["original", "masked", "fake"]
+Scope = Literal["word", "key"]
 
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-_PHONE_RE = re.compile(r"\+?[0-9][0-9 ().-]*")
-_ISO_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_PHONE_DIGITS = (7, 15)
-_PHONE_KEPT_TAIL = 4
-_OTHER_KEY_NAMES = frozenset(
-    {"ssn", "socialsecuritynumber", "address", "streetaddress"}
+# The default terms, one row each: (category, term, scope). A "word" term
+# matches anywhere in a key, as one or more whole words. A "key" term
+# matches only the whole key. Spaces in a term are for reading only:
+# "credit card" also matches ``creditcard``, ``credit_card`` and
+# ``creditCard``. Phrases such as "email address" whose words are already
+# terms are listed so the all-lowercase spelling (``emailaddress``) matches.
+MASK_TERMS: tuple[tuple[str, str, Scope], ...] = (
+    ("contact", "email", "word"),
+    ("contact", "email address", "word"),
+    ("contact", "mail", "word"),
+    ("contact", "phone", "word"),
+    ("contact", "phone number", "word"),
+    ("contact", "telephone", "word"),
+    ("contact", "tel", "word"),
+    ("contact", "mobile", "word"),
+    ("contact", "mobile number", "word"),
+    ("contact", "cell", "word"),
+    ("contact", "cellphone", "word"),
+    ("contact", "fax", "word"),
+    ("contact", "address", "word"),
+    ("contact", "street", "word"),
+    ("contact", "street address", "word"),
+    ("contact", "postcode", "word"),
+    ("contact", "postal code", "word"),
+    ("contact", "zip", "word"),
+    ("contact", "zip code", "word"),
+    ("identity", "name", "key"),
+    ("identity", "first name", "word"),
+    ("identity", "middle name", "word"),
+    ("identity", "last name", "word"),
+    ("identity", "full name", "word"),
+    ("identity", "given name", "word"),
+    ("identity", "family name", "word"),
+    ("identity", "surname", "word"),
+    ("identity", "user name", "word"),
+    ("identity", "dob", "word"),
+    ("identity", "date of birth", "word"),
+    ("identity", "birthdate", "word"),
+    ("identity", "birthday", "word"),
+    ("identity", "passport", "word"),
+    ("identity", "license number", "word"),
+    ("identity", "licence number", "word"),
+    ("identity", "driver license", "word"),
+    ("identity", "drivers license", "word"),
+    ("identity", "driving licence", "word"),
+    ("identity", "national id", "word"),
+    ("identity", "tax id", "word"),
+    ("identity", "ssn", "word"),
+    ("identity", "social security number", "word"),
+    ("financial", "credit card", "word"),
+    ("financial", "card number", "word"),
+    ("financial", "cvv", "word"),
+    ("financial", "cvc", "word"),
+    ("financial", "iban", "word"),
+    ("financial", "account number", "word"),
+    ("financial", "bank account", "word"),
+    ("financial", "routing number", "word"),
+    ("network", "ip", "word"),
+    ("network", "ip address", "word"),
+    ("network", "ipv4", "word"),
+    ("network", "ipv6", "word"),
+    ("network", "mac address", "word"),
+    ("secret", "password", "word"),
+    ("secret", "passwd", "word"),
+    ("secret", "pwd", "word"),
+    ("secret", "passphrase", "word"),
+    ("secret", "secret", "word"),
+    ("secret", "secret key", "word"),
+    ("secret", "token", "word"),
+    ("secret", "access token", "word"),
+    ("secret", "refresh token", "word"),
+    ("secret", "auth token", "word"),
+    ("secret", "api key", "word"),
+    ("secret", "access key", "word"),
+    ("secret", "private key", "word"),
+    ("secret", "auth", "word"),
+    ("secret", "authorization", "word"),
+    ("secret", "credential", "word"),
 )
+
+DEFAULT_MASK_KEYS = tuple(term for _, term, scope in MASK_TERMS if scope == "word")
+DEFAULT_WHOLE_KEYS = tuple(term for _, term, scope in MASK_TERMS if scope == "key")
+
+# Key words that say what kind of value a fake should look like.
+_EMAIL_WORDS = frozenset({"email", "mail"})
+_PHONE_WORDS = frozenset(
+    {"phone", "telephone", "tel", "mobile", "cell", "cellphone", "fax"}
+)
+_PLURAL_ENDINGS = ("s", "es")
+
+_EMAIL_RE = re.compile(
+    r"[\w.!#$%&'*+/=?^`{|}~-]+@(?:[^\W_](?:[\w-]*[^\W_])?\.)+[^\W\d_]{2,}"
+)
+_EMAIL_MAX_LENGTH = 254
+# An optional "+", an optional "(area)" with a code before it, then digit
+# groups with one space, dot or dash between each. ``looks_like_phone``
+# checks the groups.
+_PHONE_RE = re.compile(
+    r"(?P<plus>\+)?"
+    r"(?:(?:[0-9]{1,4}[ .-]?)?(?P<area>\([0-9]{1,4}\))[ .-]?)?"
+    r"[0-9]+(?:[ .-][0-9]+)*"
+)
+_PHONE_MAX_LENGTH = 32
+_PHONE_DIGITS = (7, 15)
+_DIGIT_RUN_RE = re.compile(r"[0-9]+")
+_PHONE_SEPARATOR_RE = re.compile(r"[ .-]")
+_DATE_GROUPS = ([4, 2, 2], [2, 2, 4])
+
 # Shorter strings are shared by CPython, so identity says nothing about aliases.
 _ALIAS_MIN_LENGTH = 2
 
+_Matches = Callable[[object], bool]
 _Replace = Callable[[object, object], object]
 
 
@@ -71,27 +161,123 @@ class MaskError(Exception):
     """Masking could not finish, so the job fails and shows no output."""
 
 
-def normalize_key(name: str) -> str:
-    """Lowercase ``name`` and drop ``_``, ``-`` and spaces."""
-    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
+def split_key(name: str) -> tuple[str, ...]:
+    """Split a key name into lowercase words.
+
+    Any character that is not a letter or a digit separates words, so
+    ``_``, ``-``, ``.`` and spaces do. A word also ends where a lowercase
+    letter meets an uppercase one (camelCase), and where letters meet
+    digits. In a run of capitals followed by lowercase letters, the last
+    capital starts the next word, unless the lowercase part is a lone
+    plural ``s``. For example:
+
+    - ``workEmail`` → ``work``, ``email``
+    - ``E_MAIL_ADDRESS`` → ``e``, ``mail``, ``address``
+    - ``phone2`` → ``phone``, ``2``
+    - ``ssn_last4`` → ``ssn``, ``last``, ``4``
+    - ``IPAddress`` → ``ip``, ``address``
+    - ``APIKey`` → ``api``, ``key``
+    - ``userSSNs`` → ``user``, ``ssns``
+    - ``emailer`` and ``filename`` stay one word each.
+    """
+    words: list[str] = []
+    word = ""
+    previous = ""
+    for index, char in enumerate(name):
+        kind = _char_class(char)
+        if not kind:
+            words.append(word)
+            word, previous = "", ""
+            continue
+        if previous and kind != previous:
+            if previous == "D" or kind == "D" or (previous, kind) == ("L", "U"):
+                words.append(word)
+                word = ""
+            elif len(word) > 1 and not _plural_acronym(name, index):
+                words.append(word[:-1])
+                word = word[-1]
+        word += char
+        previous = kind
+    words.append(word)
+    return tuple(word.lower() for word in words if word)
+
+
+def _char_class(char: str) -> str:
+    """Return "D" for a digit, "U" for a capital, "L" for another letter."""
+    if char.isdigit():
+        return "D"
+    if char.isalpha():
+        return "U" if char.isupper() or char.istitle() else "L"
+    return ""
+
+
+def _plural_acronym(name: str, index: int) -> bool:
+    """Say whether ``name[index]`` is the ``s`` of a plural like ``SSNs``."""
+    if name[index] != "s":
+        return False
+    following = name[index + 1 : index + 2]
+    return not following or _char_class(following) != "L"
+
+
+def _is_term(text: str, terms: frozenset[str]) -> bool:
+    """Say whether ``text`` is a term or a term with an ``s`` or ``es`` added."""
+    if text in terms:
+        return True
+    return any(
+        text.endswith(ending) and text[: -len(ending)] in terms
+        for ending in _PLURAL_ENDINGS
+    )
+
+
+def _term_text(term: str) -> str:
+    return "".join(split_key(term))
 
 
 @dataclass(frozen=True)
 class MaskRules:
-    """The key names to mask. Picklable, so a format job can carry it."""
+    """The terms to mask. Picklable, so a format job can carry it.
+
+    ``keys`` match as whole words anywhere in a key name. A term matches
+    when one word, or several adjacent words joined, spell the term with
+    its spaces removed, optionally followed by a plural ``s`` or ``es``.
+    ``whole_keys`` match only when all the words of the key name, joined,
+    spell the term in the same way.
+    """
 
     keys: tuple[str, ...] = DEFAULT_MASK_KEYS
-    _names: frozenset[str] = field(init=False, repr=False, compare=False)
+    whole_keys: tuple[str, ...] = DEFAULT_WHOLE_KEYS
+    _words: frozenset[str] = field(init=False, repr=False, compare=False)
+    _whole: frozenset[str] = field(init=False, repr=False, compare=False)
+    _longest: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         keys = tuple(self.keys)
-        names = frozenset(name for name in map(normalize_key, keys) if name)
+        whole_keys = tuple(self.whole_keys)
+        words = frozenset(text for text in map(_term_text, keys) if text)
+        whole = frozenset(text for text in map(_term_text, whole_keys) if text)
+        longest = max(map(len, words), default=0) + max(map(len, _PLURAL_ENDINGS))
         object.__setattr__(self, "keys", keys)
-        object.__setattr__(self, "_names", names)
+        object.__setattr__(self, "whole_keys", whole_keys)
+        object.__setattr__(self, "_words", words)
+        object.__setattr__(self, "_whole", whole)
+        object.__setattr__(self, "_longest", longest)
 
     def matches(self, key: object) -> bool:
         """Return True when ``key`` is a string naming a masked key."""
-        return isinstance(key, str) and normalize_key(key) in self._names
+        if not isinstance(key, str):
+            return False
+        words = split_key(key)
+        if _is_term("".join(words), self._whole):
+            return True
+        for start in range(len(words)):
+            joined = ""
+            for word in words[start:]:
+                joined += word
+                if len(joined) > self._longest:
+                    break
+                if _is_term(joined, self._words):
+                    return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -100,70 +286,102 @@ class MaskResult:
     masked_count: int
 
 
+def looks_like_email(text: str) -> bool:
+    """Say whether ``text``, apart from spaces at either end, is an email.
+
+    It needs one ``@``, no spaces, and a domain ending in a dot and a
+    top-level domain of two or more letters: ``pat@example.com`` is one,
+    and ``user@localhost``, ``lodash@4.17.21`` and
+    ``Pat <pat@example.com>`` are not.
+    """
+    text = text.strip()
+    return len(text) <= _EMAIL_MAX_LENGTH and _EMAIL_RE.fullmatch(text) is not None
+
+
+def looks_like_phone(text: str) -> bool:
+    """Say whether ``text``, apart from spaces at either end, is a phone number.
+
+    It has only digits, one optional leading ``+``, one optional
+    ``(area)`` code and single spaces, dots or dashes between digit groups,
+    with 7 to 15 digits. A ``+`` or an ``(area)`` code marks a phone
+    number. Without one, the groups must look like a phone number too:
+
+    - At least one separator, so a plain number like ``5550142`` is kept.
+    - Two groups only as ``555-0142`` (3 then 4 digits, not split by a
+      dot), so ``1990-2020`` and ``1234567.89`` are kept.
+    - With three or more groups, the first has 1 to 4 digits and each
+      other group 2 to 4, so ISBNs like ``978-0-306-40615-7`` are kept.
+    - Not a date (``2026-10-20``, ``20.10.2026``), not an IPv4 address
+      (``192.168.10.20``) and not a number with thousands separators
+      (``12 345 678``).
+
+    Letters, ``$``, commas, colons, slashes and ``x`` extensions never
+    match, so IDs, amounts, UUIDs and timestamps are kept.
+    """
+    text = text.strip()
+    if len(text) > _PHONE_MAX_LENGTH:
+        return False
+    match = _PHONE_RE.fullmatch(text)
+    if match is None:
+        return False
+    sizes = [len(group) for group in _DIGIT_RUN_RE.findall(text)]
+    if not _PHONE_DIGITS[0] <= sum(sizes) <= _PHONE_DIGITS[1]:
+        return False
+    if match["plus"] or match["area"]:
+        return True
+    return _phone_groups(sizes, set(_PHONE_SEPARATOR_RE.findall(text)))
+
+
+def _phone_groups(sizes: list[int], separators: set[str]) -> bool:
+    if len(sizes) == 2:
+        return sizes == [3, 4] and separators != {"."}
+    if len(sizes) < 2 or sizes[0] > 4:
+        return False
+    if any(not 2 <= size <= 4 for size in sizes[1:]):
+        return False
+    if sizes in _DATE_GROUPS:
+        return False
+    if separators == {"."} and len(sizes) == 4 and max(sizes) <= 3:
+        return False
+    thousands = sizes[0] <= 3 and all(size == 3 for size in sizes[1:])
+    return not (thousands and len(separators) == 1)
+
+
+def looks_personal(value: object) -> bool:
+    """Say whether ``value`` is a string that is an email or a phone number."""
+    return isinstance(value, str) and (
+        looks_like_email(value) or looks_like_phone(value)
+    )
+
+
 def detect_kind(key: object, value: object) -> Kind:
     """Say whether ``value`` reads as an email, a phone, or other text.
 
-    The nearest key name decides first: a name containing ``email`` is an
-    email, one containing ``phone`` or ``mobile`` is a phone, and the other
-    default names are other text. For any other key a simple pattern on
-    the value decides. The kind only shapes replacement values. It never
-    decides what is masked.
+    A string that is an email or a phone number decides first. Otherwise
+    a word of the nearest key name decides: ``email`` or ``mail`` makes an
+    email, and ``phone``, ``tel``, ``mobile``, ``cell`` or ``fax`` (and
+    their longer forms) a phone. The kind only shapes Random fake values.
+    It never decides what is masked.
     """
-    name = normalize_key(key) if isinstance(key, str) else ""
-    if "email" in name:
+    if isinstance(value, str):
+        if looks_like_email(value):
+            return "email"
+        if looks_like_phone(value):
+            return "phone"
+    words = split_key(key) if isinstance(key, str) else ()
+    if any(_is_term(word, _EMAIL_WORDS) for word in words):
         return "email"
-    if "phone" in name or "mobile" in name:
-        return "phone"
-    if name in _OTHER_KEY_NAMES or not isinstance(value, str):
-        return "other"
-    if _EMAIL_RE.fullmatch(value):
-        return "email"
-    digits = sum(char.isdigit() for char in value)
-    if (
-        _PHONE_RE.fullmatch(value)
-        and _PHONE_DIGITS[0] <= digits <= _PHONE_DIGITS[1]
-        and not _ISO_DATE_RE.fullmatch(value)
-    ):
+    if any(_is_term(word, _PHONE_WORDS) for word in words):
         return "phone"
     return "other"
-
-
-def preserve_mask(
-    value: object, kind: Kind, rng: random.Random | None = None
-) -> object:
-    """Return ``value`` disguised but in the same format.
-
-    An email keeps its domain and its local part becomes ``x`` of the same
-    length. A phone keeps its separators and leading digits, and its last
-    four digits are random. Other text turns letters into ``x`` and digits
-    into random digits, keeping punctuation, spaces and length. An int or
-    float keeps its type, sign and digit count with random digits. A bool
-    and ``None`` stay as they are. A date or datetime becomes a random one
-    and bytes become random bytes of the same length. Any other type raises
-    ``TypeError``.
-    """
-    chooser = rng if rng is not None else random.SystemRandom()
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return random_int_like(value, chooser)
-    if isinstance(value, float):
-        return random_float_like(value, chooser)
-    if isinstance(value, str):
-        return _preserve_text(value, kind, chooser)
-    if isinstance(value, dt.date):
-        return random_date_like(value, chooser)
-    if isinstance(value, bytes):
-        return chooser.randbytes(len(value))
-    raise TypeError(f"cannot mask {type(value).__name__}")
 
 
 def mask_tree(value: object, rules: MaskRules | None = None) -> MaskResult:
     """Return a copy of ``value`` with matched values replaced by ``"•••"``.
 
     ``value`` is not changed. ``masked_count`` is the number of scalars
-    replaced. A mapping or sequence shared through a YAML alias is built,
-    and counted, once.
+    replaced, including emails and phone numbers found by value. A mapping
+    or sequence shared through a YAML alias is built, and counted, once.
     """
     return _rewrite(value, rules or MaskRules(), lambda _scalar, _key: MASK)
 
@@ -176,67 +394,39 @@ def copy_as_tree(
 ) -> object:
     """Return the tree Copy As serializes for ``mode``.
 
-    ``original`` is ``value`` itself. ``masked`` passes each matched scalar
-    through ``preserve_mask`` and ``fake`` through ``fake_value``. Both
-    touch only the scalars ``mask_tree`` would replace.
+    ``original`` is ``value`` itself. ``masked`` is the ``mask_tree``
+    result, with ``"•••"`` like the view. ``fake`` passes each scalar
+    ``mask_tree`` would replace through ``fake_value`` instead, emails and
+    phone numbers found by value included.
     """
     if mode == "original":
         return value
-    chooser = rng if rng is not None else random.SystemRandom()
     if mode == "masked":
-        replace = _replacer(preserve_mask, chooser)
-    elif mode == "fake":
-        replace = _replacer(fake_value, chooser)
-    else:
+        return mask_tree(value, rules).value
+    if mode != "fake":
         raise ValueError(f"Unknown Copy As mode: {mode}")
-    return _rewrite(value, rules or MaskRules(), replace).value
+    chooser = rng if rng is not None else random.SystemRandom()
 
-
-def _replacer(
-    make: Callable[[object, Kind, random.Random], object], rng: random.Random
-) -> _Replace:
     def replace(scalar: object, key: object) -> object:
-        return make(scalar, detect_kind(key, scalar), rng)
+        return fake_value(scalar, detect_kind(key, scalar), chooser)
 
-    return replace
-
-
-def _preserve_text(value: str, kind: Kind, rng: random.Random) -> str:
-    if kind == "email" and "@" in value:
-        local, _, domain = value.rpartition("@")
-        if local:
-            return "x" * len(local) + "@" + domain
-    if kind == "phone":
-        digits = [index for index, char in enumerate(value) if char.isdigit()]
-        if digits:
-            chars = list(value)
-            for index in digits[-_PHONE_KEPT_TAIL:]:
-                chars[index] = random_digit(rng)
-            return "".join(chars)
-    return "".join(_preserve_char(char, rng) for char in value)
-
-
-def _preserve_char(char: str, rng: random.Random) -> str:
-    if char.isdigit():
-        return random_digit(rng)
-    if char.isalpha():
-        return "x"
-    return char
+    return _rewrite(value, rules or MaskRules(), replace).value
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:
     """Find what to hide, then build the copy. Every failure is a MaskError."""
     try:
-        roots = _matched_values(value, rules)
+        matches = functools.cache(rules.matches)
+        roots = _matched_values(value, matches)
         hidden_nodes, hidden_strings = _hidden(roots)
-        return _build(value, rules, replace, hidden_nodes, hidden_strings)
+        return _build(value, matches, replace, hidden_nodes, hidden_strings)
     except MaskError:
         raise
     except Exception as exc:
         raise MaskError(f"masking failed: {type(exc).__name__}: {exc}") from exc
 
 
-def _matched_values(root: object, rules: MaskRules) -> list[object]:
+def _matched_values(root: object, matches: _Matches) -> list[object]:
     """Return every value under a matched key, visiting each container once.
 
     Breadth-first order reaches each container by its shortest path, so a
@@ -254,7 +444,7 @@ def _matched_values(root: object, rules: MaskRules) -> list[object]:
             raise MaskError(f"nesting deeper than {MAX_DEPTH}")
         if isinstance(node, dict):
             children = node.values()
-            matched.extend(child for key, child in node.items() if rules.matches(key))
+            matched.extend(child for key, child in node.items() if matches(key))
         else:
             children = node
         for child in children:
@@ -287,7 +477,7 @@ def _hidden(roots: list[object]) -> tuple[set[int], set[int]]:
 
 def _build(
     root: object,
-    rules: MaskRules,
+    matches: _Matches,
     replace: _Replace,
     hidden_nodes: set[int],
     hidden_strings: set[int],
@@ -307,7 +497,11 @@ def _build(
             copies[id(node)] = copy
             pending.append((node, copy, key))
             return copy
-        if hidden or (isinstance(node, str) and id(node) in hidden_strings):
+        if (
+            hidden
+            or (isinstance(node, str) and id(node) in hidden_strings)
+            or looks_personal(node)
+        ):
             count += 1
             return replace(node, key)
         return node
@@ -319,7 +513,7 @@ def _build(
         if isinstance(source, dict) and isinstance(copy, dict):
             for child_key, child in source.items():
                 copy[child_key] = convert(
-                    child, child_key, hidden or rules.matches(child_key)
+                    child, child_key, hidden or matches(child_key)
                 )
         elif isinstance(source, list) and isinstance(copy, list):
             copy.extend(convert(child, key, hidden) for child in source)
