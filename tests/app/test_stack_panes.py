@@ -317,3 +317,57 @@ def _assert_views(
     assert result.verticalScrollBar().value() == 80
     assert result.horizontalScrollBar().value() == 55
     assert abs(_ratio(splitter) - kept) < 0.05
+
+
+def test_split_ratio_persists_across_a_new_window(qtbot) -> None:
+    window = _show(qtbot)
+    splitter = _splitter(window)
+    _wait_ready(qtbot, splitter)
+    assert abs(_ratio(splitter) - 0.5) < 0.05
+    _set_share(splitter, 0.7)
+    qtbot.waitUntil(lambda: _ratio(splitter) > 0.65)
+    assert problems_settings().contains("view/splitSizes")
+    window.close()
+
+    again = _show(qtbot)
+    splitter = _splitter(again)
+    _wait_ready(qtbot, splitter)
+    qtbot.wait(100)
+    assert abs(_ratio(splitter) - 0.7) < 0.05
+    ratio = _rail(splitter).findChild(QLabel, "splitRatio")
+    reset = _rail(splitter).findChild(QToolButton, "resetSplitButton")
+    assert isinstance(ratio, QLabel)
+    assert isinstance(reset, QToolButton)
+    assert ratio.text().split() == ["70", "30"]
+    assert ratio.accessibleName() == "70 / 30"
+    assert reset.isEnabled()
+
+    qtbot.mouseClick(reset, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: abs(_ratio(splitter) - 0.5) < 0.05)
+    again.close()
+
+    third = _show(qtbot)
+    splitter = _splitter(third)
+    _wait_ready(qtbot, splitter)
+    qtbot.wait(100)
+    assert abs(_ratio(splitter) - 0.5) < 0.05
+    ratio = _rail(splitter).findChild(QLabel, "splitRatio")
+    assert isinstance(ratio, QLabel)
+    assert ratio.text().split() == ["50", "50"]
+
+
+def test_dragging_the_rail_saves_the_split(qtbot) -> None:
+    window = _show(qtbot)
+    splitter = _splitter(window)
+    _wait_ready(qtbot, splitter)
+    rail = _rail(splitter)
+    start = QPoint(rail.width() // 2, 4)
+    qtbot.mousePress(rail, Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mouseMove(rail, QPoint(start.x() + 150, start.y()))
+    qtbot.mouseRelease(rail, Qt.MouseButton.LeftButton, pos=QPoint(start.x() + 150, 4))
+    qtbot.waitUntil(lambda: _ratio(splitter) > 0.55)
+    saved = problems_settings().value("view/splitSizes")
+    assert saved is not None
+    parts = saved if isinstance(saved, list) else str(saved).split(",")
+    first, second = (int(part) for part in parts)
+    assert first > second

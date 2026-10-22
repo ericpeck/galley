@@ -92,8 +92,10 @@ from galley.app.problems_settings import (
     STATE_OPEN,
     STRIP_WIDTH,
     load_problems_preferences,
+    load_split_sizes,
     load_stacked_panes,
     save_problems_preferences,
+    save_split_sizes,
     save_stacked_panes,
 )
 from galley.app.splitter import PaneSplitter
@@ -189,6 +191,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._initial_show_done = False
         self._split_settled = False
+        self._applying_split = False
         self._following_palette = False
         self._splitter: PaneSplitter | None = None
         self._formatting = False
@@ -249,7 +252,7 @@ class MainWindow(QMainWindow):
         self._sync_input_state()
         self._sync_output_state()
         self._sync_direction()
-        self._splitter.apply_even_split()
+        self._apply_saved_split()
         self._layout_problems()
         self._restore_stacked_panes()
         self._follow_editor_palette()
@@ -284,7 +287,31 @@ class MainWindow(QMainWindow):
         if splitter is None or self._split_settled or splitter.width() <= 200:
             return
         self._split_settled = True
-        splitter.apply_even_split()
+        self._apply_saved_split()
+
+    def _apply_saved_split(self) -> None:
+        """Restore the last split ratio, or an even split (spec §8)."""
+        splitter = self._splitter
+        if splitter is None:
+            return
+        self._applying_split = True
+        try:
+            sizes = load_split_sizes()
+            if sizes is None:
+                splitter.apply_even_split()
+            else:
+                splitter.setSizes(sizes)
+        finally:
+            self._applying_split = False
+
+    def _remember_split(self) -> None:
+        """Save the split once it has settled. Restoring never saves."""
+        splitter = self._splitter
+        if splitter is None or self._applying_split or not self._split_settled:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) == 2 and min(sizes) > 0:
+            save_split_sizes(sizes)
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -376,8 +403,9 @@ class MainWindow(QMainWindow):
         view.addAction(actions.stack_panes)
         view.addSeparator()
         self._build_appearance_menu(view)
-        view.addSeparator()
-        view.addAction(actions.full_screen)
+        if _shows_own_full_screen_item():
+            view.addSeparator()
+            view.addAction(actions.full_screen)
 
         window_menu = _add_menu(bar, "Window")
         window_menu.addAction(actions.pop_out)
@@ -445,6 +473,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._output_pane)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.split_changed.connect(self._remember_split)
         return splitter
 
     def _build_problems_splitter(self) -> QSplitter:
@@ -558,6 +587,7 @@ class MainWindow(QMainWindow):
         self._problems_pane.minimize_requested.connect(self._minimize_problems)
         self._problems_pane.expand_requested.connect(self._expand_problems)
         self._problems_pane.replace_tabs_requested.connect(self._replace_tabs)
+        self._problems_pane.focus_editor_requested.connect(self._focus_input)
         self._input_pane.editor.problem_marker_clicked.connect(
             self._problems_pane.select_line
         )
@@ -657,7 +687,7 @@ class MainWindow(QMainWindow):
         if self._loading_path is not None:
             return
         text = self._input_pane.editor.toPlainText()
-        if text == "":
+        if _is_blank(text):
             return
         source = self._input_pane.format_name()
         size = _utf8_size(text)
@@ -688,7 +718,7 @@ class MainWindow(QMainWindow):
             if not accepted:
                 return
             self._size_warning_accepted = True
-            if self._input_pane.editor.toPlainText() == "":
+            if _is_blank(self._input_pane.editor.toPlainText()):
                 return
             self._start_format(text)
 
@@ -724,7 +754,7 @@ class MainWindow(QMainWindow):
         if self._formatting:
             return
         text = self._input_pane.editor.toPlainText()
-        if text == "":
+        if _is_blank(text):
             return
         result = convert_python(text, self._output_pane.format_name())
         if isinstance(result, ConvertError):
@@ -1151,8 +1181,13 @@ class MainWindow(QMainWindow):
         self._target_editor().selectAll()
 
     def _clear_input(self) -> None:
+        """Empty Input and put the status bar back to its empty state (#91)."""
         self._input_pane.editor.clear()
         self._input_pane.editor.setFocus()
+        self._clear_problems()
+        self._status.set_counts("")
+        if not self._formatting:
+            self._status.set_state("Ready")
 
     def can_open(self) -> bool:
         """True when a file may replace the source pane's text now.
@@ -1402,7 +1437,7 @@ class MainWindow(QMainWindow):
         """
         if text is None:
             text = self._input_pane.editor.toPlainText()
-        has_input = text != ""
+        has_input = not _is_blank(text)
         loading = self._loading_path is not None
         available = has_input and not self._formatting and not loading
         action = self._actions.format
@@ -1430,13 +1465,14 @@ class MainWindow(QMainWindow):
     def _sync_input_state(self) -> None:
         editor = self._input_pane.editor
         text = editor.toPlainText()
-        empty = text == ""
+        empty = _is_blank(text)
         if empty:
             self._size_warning_accepted = False
         self._sync_format_button(text)
         clear_button = self._input_pane.clear_button
         if clear_button is not None:
-            clear_button.setEnabled(not empty)
+            # Whitespace still needs clearing, so Clear follows the raw text.
+            clear_button.setEnabled(text != "")
         self._input_pane.set_empty_visible(empty)
         if empty:
             self._input_pane.count_label.setText("Empty")
@@ -1464,11 +1500,32 @@ class MainWindow(QMainWindow):
         self._status.set_info(f"{left} → {right}")
 
 
+def _is_blank(text: str) -> bool:
+    """True for empty or whitespace-only input. Both count as empty (#91)."""
+    return text.strip() == ""
+
+
 def _set_format(pane: PaneWidget, name: str) -> None:
     combo = pane.format_combo
     index = combo.findText(name)
     if index >= 0:
         combo.setCurrentIndex(index)
+
+
+def _platform_name() -> str:
+    return QApplication.platformName()
+
+
+def _shows_own_full_screen_item(platform: str | None = None) -> bool:
+    """Whether View gets Galley's own Enter Full Screen item (#91).
+
+    macOS adds its own item to any menu titled View once the window can go
+    full screen, so cocoa would show two. There the system item stands in
+    (^⌘F still works). Offscreen and every other platform keep the spec's
+    action. Only a real macOS run shows the system item: check it by hand.
+    """
+    name = _platform_name() if platform is None else platform
+    return name != "cocoa"
 
 
 def _add_menu(bar: QMenuBar, title: str) -> QMenu:

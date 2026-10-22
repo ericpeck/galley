@@ -143,9 +143,11 @@ class ResultsList(QListWidget):
     """Rows drawn by ``ResultRow`` widgets, activated by click or Return.
 
     ``activated`` carries the data of the row that was activated.
+    ``escape_pressed`` fires on Esc, for the owner to move focus on.
     """
 
     activated = Signal(object)
+    escape_pressed = Signal()
 
     def __init__(
         self, accessible: str, object_name: str, parent: QWidget | None = None
@@ -194,11 +196,15 @@ class ResultsList(QListWidget):
         self._sync_selection()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Return and Enter activate the current row."""
+        """Return and Enter activate the current row. Esc hands focus back."""
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             item = self.currentItem()
             if item is not None:
                 self._activate(item)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self.escape_pressed.emit()
             event.accept()
             return
         super().keyPressEvent(event)
