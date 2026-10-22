@@ -344,7 +344,7 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
 
 def test_stub_action_reports_not_yet(qtbot) -> None:
     window = _show(qtbot)
-    _action(window, "Escape as String").trigger()
+    _action(window, "Find and Replace…").trigger()
     assert NOT_YET_MESSAGE.lower().startswith("not yet")
     assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
     output = window.findChild(CodeEditor, "outputEditor")

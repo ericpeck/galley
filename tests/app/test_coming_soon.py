@@ -35,8 +35,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Escape as String",
-    "Unescape String",
     "Pop out into window",
     "Show window",
     "Bring back",

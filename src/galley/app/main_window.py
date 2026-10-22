@@ -38,6 +38,13 @@ from galley.app.appearance import (
     application_appearance,
 )
 from galley.app.editor import CodeEditor
+from galley.app.escape_string import (
+    StringResult,
+    escape_input,
+    escape_too_large_message,
+    unescape_input,
+    unescape_too_large_message,
+)
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
 
@@ -566,6 +573,8 @@ class MainWindow(QMainWindow):
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
         actions.convert_python.triggered.connect(self._convert_python)
+        actions.escape_string.triggered.connect(self._escape_string)
+        actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
         self._status.cancel_clicked.connect(self._cancel_format)
@@ -759,6 +768,59 @@ class MainWindow(QMainWindow):
             return
         target = self._output_pane.format_name()
         self._status.set_state(f"Converted to {target}.")
+
+    def _escape_string(self) -> None:
+        """Write Input as one escaped JSON string to Output. Input is unchanged.
+
+        This runs on the UI thread, so Input must be smaller than the size
+        where Format shows its busy indicator for the Input format.
+        """
+        if self._formatting:
+            return
+        text = self._input_pane.editor.toPlainText()
+        if text == "":
+            return
+        source = self._input_pane.format_name()
+        size = _utf8_size(text)
+        limit = _busy_progress_bytes(source, text)[0]
+        if size >= limit:
+            self._status.set_state(
+                escape_too_large_message(si_size(size), si_size(limit))
+            )
+            return
+        self._show_string_result(escape_input(text, source))
+
+    def _unescape_string(self) -> None:
+        """Format the JSON inside an escaped Input string into Output.
+
+        This runs on the UI thread, so Input must be smaller than the size
+        where Format shows its busy indicator for the Output format.
+        """
+        if self._formatting:
+            return
+        text = self._input_pane.editor.toPlainText()
+        if text == "":
+            return
+        target = self._output_pane.format_name()
+        size = _utf8_size(text)
+        limit = _busy_progress_bytes(target, text)[0]
+        if size >= limit:
+            self._status.set_state(
+                unescape_too_large_message(si_size(size), si_size(limit))
+            )
+            return
+        self._show_string_result(unescape_input(text, target))
+
+    def _show_string_result(self, result: StringResult) -> None:
+        if result.problems:
+            self._apply_problems(result.problems)
+            return
+        if result.output is None:
+            self._status.set_state(result.status)
+            return
+        _replace_as_one_undo(self._output_pane.editor, result.output)
+        self._clear_problems()
+        self._status.set_state(result.status)
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker."""
@@ -1366,7 +1428,7 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self, text: str | None = None) -> None:
-        """Block Format and Convert for the whole job.
+        """Block Format, Convert, Escape, and Unescape for the whole job.
 
         The button keeps its full accent face while working and reads
         ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
@@ -1396,6 +1458,8 @@ class MainWindow(QMainWindow):
             button.setToolTip(self._format_idle_tooltip)
             button.unsetCursor()
         self._actions.convert_python.setEnabled(available)
+        self._actions.escape_string.setEnabled(available)
+        self._actions.unescape_string.setEnabled(available)
         self._sync_open_actions()
 
     def _sync_input_state(self) -> None:

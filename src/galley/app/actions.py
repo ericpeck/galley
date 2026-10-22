@@ -414,8 +414,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.escape_string,
-            self.unescape_string,
             self.pop_out,
             self.show_window,
             self.bring_back,
