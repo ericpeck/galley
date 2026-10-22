@@ -413,8 +413,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.escape_string,
-            self.unescape_string,
             self.guides_off,
             self.guides_lines,
             self.guides_depth,

@@ -28,8 +28,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Escape as String",
-    "Unescape String",
     "Guides › Off",
     "Guides › Lines",
     "Guides › Colored by depth",
