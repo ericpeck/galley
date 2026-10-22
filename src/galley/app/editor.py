@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QFont,
     QFontMetrics,
     QHelpEvent,
+    QKeyEvent,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -70,6 +71,11 @@ _FOLD_RESCAN_MS = 300
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
 FOLD_MARKERS = "fold"
+
+# Spaces per indent level. The Tab key types spaces up to the next multiple
+# of this (#91 item 6). 2 matches the fixed "2 spaces" indent while the
+# indent picker is Coming soon.
+INDENT_WIDTH = 2
 
 # Display gates for very long lines, in characters of one block (#91).
 #
@@ -853,6 +859,42 @@ class CodeEditor(QPlainTextEdit):
                     event.accept()
                     return
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Tab types spaces. Ctrl+Tab moves focus out, as Tab does elsewhere."""
+        key = event.key()
+        if self.isReadOnly() or key not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            super().keyPressEvent(event)
+            return
+        modifiers = event.modifiers()
+        # Qt reports the Control key as Meta on macOS, where Ctrl is ⌘.
+        focus_keys = (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        )
+        if modifiers & focus_keys:
+            forward = key == Qt.Key.Key_Tab and not (
+                modifiers & Qt.KeyboardModifier.ShiftModifier
+            )
+            # QPlainTextEdit's own override keeps focus in an editable editor.
+            QWidget.focusNextPrevChild(self, forward)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
+            self._insert_indent()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _insert_indent(self) -> None:
+        """Replace the selection with spaces up to the next INDENT_WIDTH stop."""
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        column = start - self.document().findBlock(start).position()
+        cursor.beginEditBlock()
+        cursor.insertText(" " * (INDENT_WIDTH - column % INDENT_WIDTH))
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
