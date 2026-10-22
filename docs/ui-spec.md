@@ -186,7 +186,7 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌘K ⌘E.
 - View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
-- `File` includes `Open file…` (6c). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
+- `File` includes `Open file…` (6c) and `Open Recent ▸` (#85: up to 10 files, newest first, file name only, with the parent folder when names match; a missing file is disabled with the tooltip "File not found"; `Clear Menu` at the bottom). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
 ---
 
