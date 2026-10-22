@@ -150,7 +150,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Quit",
     ]
-    assert _labels(_menu(window, "File")) == ["Open file…"]
+    assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
     assert _labels(_menu(window, "Edit")) == [
         "Undo",
         "Redo",
