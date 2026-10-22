@@ -144,7 +144,7 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     assert action.shortcut() == STACK_PANES
     assert (
         action.shortcut().toString(QKeySequence.SequenceFormat.PortableText)
-        == "Ctrl+Alt+L"
+        == "Ctrl+\\"
     )
 
 
@@ -166,14 +166,14 @@ def test_stack_panes_toggles_orientation_and_the_shortcut(qtbot) -> None:
 
     window.activateWindow()
     qtbot.waitUntil(window.isActiveWindow)
-    qtbot.keySequence(window, QKeySequence("Ctrl+Alt+L"))
+    qtbot.keySequence(window, QKeySequence("Ctrl+\\"))
     assert not action.isChecked()
     assert splitter.orientation() == Qt.Orientation.Horizontal
     assert _origin(input_pane, window).x() < _origin(output_pane, window).x()
 
     qtbot.keySequence(
         window,
-        QKeySequence(Qt.ControlModifier | Qt.AltModifier | Qt.Key.Key_L),
+        QKeySequence(Qt.ControlModifier | Qt.Key.Key_Backslash),
     )
     assert action.isChecked()
     assert splitter.orientation() == Qt.Orientation.Vertical
