@@ -66,6 +66,7 @@ from galley.core.format import (
     _decode_json,
     _json_fast_value,
     _json_limits,
+    _json_walked_value,
     _needs_pure_reparse,
     _normalize_format,
     _safe_yaml,
@@ -204,6 +205,7 @@ def load_document(text: str | bytes, source: str) -> Doc:
 
     Errors match ``format_document`` for the same text: ``InputError`` for
     invalid UTF-8, nesting past ``MAX_DEPTH``, and JSON lone surrogates;
+    ``JSONDuplicateKeyError`` for a JSON object that repeats a key;
     ``json.JSONDecodeError`` or ruamel's ``YAMLError`` for other syntax.
     """
     if _normalize_format(source) == "json":
@@ -239,11 +241,7 @@ def _load_json(text: str | bytes) -> Doc:
     source = _decode_json(text)
     value = _json_fast_value(source)
     if value is _CHARACTER_WALK:
-        opened = _json_limits(source)
-        try:
-            value = json.loads(source)
-        except RecursionError:
-            raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+        value = _json_walked_value(source, _json_limits(source))
     return Doc(value, "json", _json_spans(source))
 
 
@@ -358,6 +356,7 @@ class _YamlFrame:
         "container",
         "flow",
         "key",
+        "key_mark",
         "key_start",
         "last_end",
         "merges",
@@ -385,6 +384,7 @@ class _YamlFrame:
         self.awaiting_key = True
         self.key: object = None
         self.key_start = start
+        self.key_mark = start_mark
         self.last_end: tuple[int, int] | None = None
         self.merges: list[tuple[list[dict[object, object]], Span]] = []
 
@@ -539,6 +539,7 @@ class _YamlBuilder:
             return
         if frame.awaiting_key:
             self.set_key(frame, value, start)
+            frame.key_mark = mark
             return
         span = Span(*frame.key_start, *end)
         frame.last_end = end
@@ -554,7 +555,7 @@ class _YamlBuilder:
                 f'found duplicate key "{key}" with value '
                 f'"{_summary(value).text}" '
                 f'(original value: "{_summary(container[key]).text}")',
-                mark,
+                frame.key_mark,
             )
         container[key] = value
         if frame.path is not None:
