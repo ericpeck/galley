@@ -18,7 +18,7 @@ from ruamel.yaml import YAML
 
 import galley.core as core
 from galley.core import MAX_DEPTH
-from galley.core.errors import InputError
+from galley.core.errors import InputError, JSONDuplicateKeyError
 from galley.core.format import format_json, format_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -320,10 +320,13 @@ def test_yaml_explicit_long_key_round_trips() -> None:
     assert format_yaml(formatted) == formatted
 
 
-def test_json_duplicate_keys_keep_the_last_value() -> None:
-    formatted = format_json('{"a": 1, "a": {"b": 2}, "a": {"b": 3}}')
-    assert json.loads(formatted) == {"a": {"b": 3}}
-    assert formatted.count('"a"') == 1
+def test_json_duplicate_keys_are_rejected_not_kept() -> None:
+    with pytest.raises(JSONDuplicateKeyError) as caught:
+        format_json('{"a": 1, "a": {"b": 2}, "a": {"b": 3}}')
+    assert [(item.key, item.lineno) for item in caught.value.duplicates] == [
+        ("a", 1),
+        ("a", 1),
+    ]
 
 
 @pytest.mark.parametrize(
