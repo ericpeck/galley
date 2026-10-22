@@ -1,5 +1,6 @@
 """Code editor with a line-number gutter and syntax colors."""
 
+from bisect import bisect_left
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -46,7 +47,7 @@ from PySide6.QtWidgets import (
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.limits import JSON_BUSY_BYTES
-from galley.app.theme import error_color, problem_line_tint
+from galley.app.theme import error_color, find_match_colors, problem_line_tint
 from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
 from galley.core.folds import FoldKind, FoldRange, fold_ranges, line_count
@@ -350,6 +351,17 @@ class CodeEditor(QPlainTextEdit):
         self._fold_rescan = QTimer(self)
         self._fold_rescan.setSingleShot(True)
         self._fold_rescan.timeout.connect(self.rescan_folds)
+        # Find matches as sorted UTF-16 ranges, and the current one's index.
+        # Only the matches in the shown blocks become extra selections.
+        self._find_starts: list[int] = []
+        self._find_ends: list[int] = []
+        self._find_current = -1
+        # True while setExtraSelections runs. See _highlight_current_line.
+        self._setting_selections = False
+        self._selections_again = QTimer(self)
+        self._selections_again.setSingleShot(True)
+        self._selections_again.setInterval(0)
+        self._selections_again.timeout.connect(self._highlight_current_line)
         self.setFont(code_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -376,6 +388,9 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._reveal_cursor_line)
         self.document().contentsChange.connect(self._drop_folds_on_edit)
+        self.verticalScrollBar().valueChanged.connect(self._refresh_find_matches)
+        self.horizontalScrollBar().valueChanged.connect(self._refresh_find_matches)
+        self.folds_changed.connect(self._refresh_find_matches)
         self._update_line_number_width(0)
         self._highlight_current_line()
         # setDocumentMargin records an edit. Drop it so Undo starts disabled.
@@ -812,6 +827,32 @@ class CodeEditor(QPlainTextEdit):
             tail = f" … {end.text().strip()}"
         return tail, fold_count_text(item)
 
+    def set_find_matches(
+        self, starts: Sequence[int], ends: Sequence[int], current: int
+    ) -> None:
+        """Highlight find matches: sorted UTF-16 ``starts`` and ``ends``.
+
+        ``current`` indexes the current match, or is -1 for none. The
+        current match is the accent fill with an underline, so it is not
+        told apart by color alone. Matched text is drawn in Text.
+        """
+        self._find_starts = list(starts)
+        self._find_ends = list(ends)
+        self._find_current = current
+        self._highlight_current_line()
+
+    def clear_find_matches(self) -> None:
+        if not self._find_starts:
+            return
+        self.set_find_matches((), (), -1)
+
+    def find_matches(self) -> list[tuple[int, int]]:
+        """Every highlighted match as ``(start, end)``."""
+        return list(zip(self._find_starts, self._find_ends, strict=True))
+
+    def current_find_match(self) -> int:
+        return self._find_current
+
     def attach_overlay(self, overlay: QWidget) -> None:
         """Center ``overlay`` in the text viewport."""
         overlay.setParent(self.viewport())
@@ -861,6 +902,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(rect.left(), rect.top(), self.line_number_area_width(), rect.height())
         )
         self.place_overlay()
+        self._refresh_find_matches()
 
     def paint_line_numbers(self, event: QPaintEvent) -> None:
         painter = QPainter(self._line_numbers)
@@ -1290,6 +1332,13 @@ class CodeEditor(QPlainTextEdit):
             self._update_line_number_width(0)
 
     def _highlight_current_line(self) -> None:
+        if self._setting_selections:
+            # setExtraSelections lays blocks out, which can move the scroll
+            # bar and call back here. Qt is still walking the old selections
+            # then, and a nested call frees them under it: a crash on macOS
+            # and Windows CI. Build them again once the outer call returns.
+            self._selections_again.start()
+            return
         selections: list[QTextEdit.ExtraSelection] = []
         tints = self._line_tints()
         current = self.textCursor().blockNumber() + 1
@@ -1301,7 +1350,96 @@ class CodeEditor(QPlainTextEdit):
             block = document.findBlockByNumber(lineno - 1)
             if block.isValid():
                 selections.append(self._line_band(QTextCursor(block), tints[lineno]))
-        self.setExtraSelections(selections)
+        selections.extend(self._find_selections())
+        self._setting_selections = True
+        try:
+            self.setExtraSelections(selections)
+        finally:
+            self._setting_selections = False
+
+    def _refresh_find_matches(self) -> None:
+        """Pick the matches to draw again after a scroll, resize, or fold."""
+        if self._find_starts:
+            self._highlight_current_line()
+
+    def _find_selections(self) -> list[QTextEdit.ExtraSelection]:
+        """Extra selections for the matches in the blocks on screen.
+
+        Qt walks every extra selection for each block it paints, so a
+        selection per match would make a common letter in a 2 MB document
+        slow to scroll. Only shown blocks count, so a match inside a fold
+        is skipped, and the first and last blocks are cut at the viewport's
+        corners, so one very long line gives only the part on screen.
+        """
+        if not self._find_starts:
+            return []
+        colors = find_match_colors(self.palette())
+        starts = self._find_starts
+        ends = self._find_ends
+        document = self.document()
+        # Matches wait for the bar to search again after an edit, so they
+        # can run past a shorter document until then.
+        limit = document.characterCount() - 1
+        selections: list[QTextEdit.ExtraSelection] = []
+        current: QTextEdit.ExtraSelection | None = None
+        for first, last in self._shown_spans():
+            index = bisect_left(ends, first + 1)
+            while index < len(starts) and starts[index] <= last:
+                if ends[index] > limit:
+                    break
+                selection = QTextEdit.ExtraSelection()
+                cursor = QTextCursor(document)
+                cursor.setPosition(starts[index])
+                cursor.setPosition(ends[index], QTextCursor.MoveMode.KeepAnchor)
+                selection.cursor = cursor
+                selection.format.setForeground(colors.ink)
+                if index == self._find_current:
+                    selection.format.setBackground(colors.current)
+                    selection.format.setFontUnderline(True)
+                    selection.format.setUnderlineColor(colors.ink)
+                    current = selection
+                else:
+                    selection.format.setBackground(colors.other)
+                    selections.append(selection)
+                index += 1
+        if current is not None:
+            # Last, so it paints over a neighbor.
+            selections.append(current)
+        return selections
+
+    def _shown_spans(self) -> list[tuple[int, int]]:
+        """UTF-16 ``(first, last)`` of each shown block on screen.
+
+        Runs of adjacent blocks are merged. The first span starts at the
+        viewport's top-left character and the last ends at its bottom-right,
+        read from those blocks' own layouts: ``cursorForPosition`` walks
+        the document and costs tens of milliseconds after a fold.
+        """
+        area = self.viewport().rect()
+        offset = self.contentOffset()
+        spans: list[tuple[int, int]] = []
+        shown: list[tuple[QTextBlock, QRectF]] = []
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            rect = self.blockBoundingGeometry(block).translated(offset)
+            if rect.top() > area.bottom():
+                break
+            if block.isVisible():
+                shown.append((block, rect))
+                first = block.position()
+                last = first + block.length()
+                if spans and spans[-1][1] == first:
+                    spans[-1] = (spans[-1][0], last)
+                else:
+                    spans.append((first, last))
+            block = self._next_shown_block(block)
+        if not spans:
+            return []
+        top = _position_at(*shown[0], QPointF(area.topLeft()))
+        bottom = _position_at(*shown[-1], QPointF(area.bottomRight()))
+        spans[0] = (max(spans[0][0], top), spans[0][1])
+        spans[-1] = (spans[-1][0], min(spans[-1][1], bottom + 1))
+        return [(first, last) for first, last in spans if first <= last]
 
     def _line_tints(self) -> dict[int, QColor]:
         """Band color per 1-based line, from the highest-priority marker."""
@@ -1377,6 +1515,29 @@ def _selection_ranges(
             continue
         ranges.append(item)
     return ranges
+
+
+def _position_at(block: QTextBlock, rect: QRectF, point: QPointF) -> int:
+    """Document position nearest ``point`` in ``block`` drawn at ``rect``.
+
+    The line is found by a binary search, so a block wrapped into thousands
+    of lines costs a few calls.
+    """
+    layout = block.layout()
+    count = layout.lineCount()
+    if count == 0:
+        return block.position()
+    origin = rect.topLeft() + layout.position()
+    y = point.y() - origin.y()
+    lo, hi = 0, count - 1
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if layout.lineAt(mid).y() <= y:
+            lo = mid
+        else:
+            hi = mid - 1
+    line = layout.lineAt(lo)
+    return block.position() + line.xToCursor(point.x() - origin.x())
 
 
 def _subtract(

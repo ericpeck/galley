@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.editor import CodeEditor
+from galley.app.find_bar import FindBar
 from galley.app.fonts import ui_font
 from galley.app.format_picker import FormatComboBox, PopOutButton
 from galley.app.open_file import InputDocument
@@ -80,6 +81,11 @@ class PaneWidget(QWidget):
         self.editor.setObjectName(f"{spec.name}Editor")
         self.editor.setAccessibleName(f"{spec.title} editor")
 
+        # Only Output offers Keys only (#62): Input may not parse.
+        self.find_bar = FindBar(
+            self.editor, spec.name, keys_option=spec.kind is PaneKind.RESULT
+        )
+
         self.tab_strip = QWidget()
         self.tab_strip.setObjectName(f"{spec.name}TabStrip")
         self._build_tab_strip()
@@ -97,6 +103,7 @@ class PaneWidget(QWidget):
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         layout.addWidget(self.tab_strip)
+        layout.addWidget(self.find_bar)
         layout.addWidget(self.editor, 1)
         layout.addWidget(footer)
 
