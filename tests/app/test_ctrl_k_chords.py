@@ -127,3 +127,26 @@ def test_ctrl_k_chord_fires_from_the_focused_widget(qtbot, target, command) -> N
     # The caret is at the start of a non-empty line, so a Ctrl+K taken as
     # Delete to end of line, or a typed k, would change the text.
     assert (source.toPlainText(), output.toPlainText()) == texts
+
+
+@pytest.mark.parametrize("target", ["input", "output"])
+def test_collapse_and_expand_all_chords_fold_output(qtbot, target) -> None:
+    window, source, output, _pane = _formatted(qtbot, _VALID)
+    focus = source if target == "input" else output
+    texts = (source.toPlainText(), output.toPlainText())
+    window.activateWindow()
+    focus.setFocus()
+    qtbot.waitUntil(focus.hasFocus, timeout=2000)
+    assert output.folded_lines() == set()
+
+    qtbot.keyClick(focus, Qt.Key.Key_K, CTRL)
+    qtbot.keyClick(focus, Qt.Key.Key_0, CTRL)
+    collapsed = output.folded_lines()
+    # Collapse all folds every block below the root: "owner" on line 3 and
+    # "tags" on line 6.
+    assert collapsed == {3, 6}
+
+    qtbot.keyClick(focus, Qt.Key.Key_K, CTRL)
+    qtbot.keyClick(focus, Qt.Key.Key_J, CTRL)
+    assert output.folded_lines() == set()
+    assert (source.toPlainText(), output.toPlainText()) == texts

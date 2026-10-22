@@ -17,7 +17,9 @@ Close Others is the chord ``Ctrl+K, Ctrl+Shift+W`` (⌘K ⇧⌘W on macOS) and
 Unescape String is ``Ctrl+K, Ctrl+E`` (⌘K ⌘E). Unescape pairs with Escape as
 String, portable ``Ctrl+Shift+E`` (⇧⌘E). Show Problems is portable
 ``Ctrl+Shift+M`` (⇧⌘M on macOS, Ctrl+Shift+M on Windows). Stack Panes is
-portable ``Ctrl+\\`` (⌘\\ on macOS, Ctrl+\\ on Windows).
+portable ``Ctrl+\\`` (⌘\\ on macOS, Ctrl+\\ on Windows), with ``Ctrl+Shift+L``
+(⇧⌘L) as a second key: ``\\`` needs AltGr on German layouts. The menu shows
+the first.
 
 Fold and Unfold differ by platform. On Windows and Linux they are
 ``Ctrl+Shift+[`` and ``Ctrl+Shift+]``, as in VS Code. macOS keeps ⌥⌘[ and
@@ -44,6 +46,7 @@ ACTUAL_SIZE = QKeySequence("Ctrl+0", _PORTABLE)
 FORMAT = QKeySequence("Ctrl+Return", _PORTABLE)
 SHOW_PROBLEMS = QKeySequence("Ctrl+Shift+M", _PORTABLE)
 STACK_PANES = QKeySequence("Ctrl+\\", _PORTABLE)
+STACK_PANES_ALT = QKeySequence("Ctrl+Shift+L", _PORTABLE)
 FOLD = QKeySequence(_FOLD_MODIFIERS + "[", _PORTABLE)
 UNFOLD = QKeySequence(_FOLD_MODIFIERS + "]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)

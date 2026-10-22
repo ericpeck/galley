@@ -52,7 +52,7 @@ CUSTOM_SHORTCUTS = {
     "Actual Size": ["Ctrl+0"],
     "Format": ["Ctrl+Return"],
     "Show Problems": ["Ctrl+Shift+M"],
-    "Stack Panes": ["Ctrl+\\"],
+    "Stack Panes": ["Ctrl+\\", "Ctrl+Shift+L"],
     "Fold": [_FOLD + "["],
     "Unfold": [_FOLD + "]"],
     "Collapse all": ["Ctrl+K, Ctrl+0"],

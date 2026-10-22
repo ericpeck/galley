@@ -9,7 +9,7 @@ from galley.app.main import create_main_window
 from galley.app.problem_text import display_problem
 from galley.app.problems_pane import ProblemsPane
 from galley.app.problems_settings import load_stacked_panes, problems_settings
-from galley.app.shortcuts import STACK_PANES
+from galley.app.shortcuts import STACK_PANES, STACK_PANES_ALT
 from galley.app.splitter import RESET_NAME
 from galley.core.problems import Problem
 
@@ -149,11 +149,14 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     action = _action(window, "Stack Panes")
     assert action.isCheckable()
     assert not action.isChecked()
+    # Ctrl+\ comes first, so it is the one the menu shows.
+    assert action.shortcuts() == [STACK_PANES, STACK_PANES_ALT]
     assert action.shortcut() == STACK_PANES
-    assert (
-        action.shortcut().toString(QKeySequence.SequenceFormat.PortableText)
-        == "Ctrl+\\"
-    )
+    portable = QKeySequence.SequenceFormat.PortableText
+    assert [key.toString(portable) for key in action.shortcuts()] == [
+        "Ctrl+\\",
+        "Ctrl+Shift+L",
+    ]
 
 
 def test_stack_panes_toggles_orientation_and_the_shortcut(qtbot) -> None:
@@ -185,6 +188,12 @@ def test_stack_panes_toggles_orientation_and_the_shortcut(qtbot) -> None:
     )
     assert action.isChecked()
     assert splitter.orientation() == Qt.Orientation.Vertical
+
+    control = Qt.KeyboardModifier.ControlModifier
+    shift = Qt.KeyboardModifier.ShiftModifier
+    qtbot.keyClick(window, Qt.Key.Key_L, control | shift)
+    assert not action.isChecked()
+    assert splitter.orientation() == Qt.Orientation.Horizontal
 
 
 def test_toggle_keeps_text_cursor_scroll_and_ratio(qtbot) -> None:
