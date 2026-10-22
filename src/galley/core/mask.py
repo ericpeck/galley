@@ -7,7 +7,8 @@ that is, as a whole, an email address or a phone number, wherever it is,
 including inside arrays with no keys. Text that only contains one, like
 ``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
 three Copy As trees from the same rules. Serializing a tree is
-``format.dump_value``.
+``format.dump_value``. ``mask_document`` is the whole masked format step:
+load, mask, serialize.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -35,6 +36,7 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
+from galley.core.format import dump_value, load_document
 
 MASK = "•••"
 
@@ -286,6 +288,14 @@ class MaskResult:
     masked_count: int
 
 
+@dataclass(frozen=True)
+class MaskedDocument:
+    """Masked output text and how many values ``mask_tree`` replaced."""
+
+    text: str
+    masked_count: int
+
+
 def looks_like_email(text: str) -> bool:
     """Say whether ``text``, apart from spaces at either end, is an email.
 
@@ -384,6 +394,21 @@ def mask_tree(value: object, rules: MaskRules | None = None) -> MaskResult:
     or sequence shared through a YAML alias is built, and counted, once.
     """
     return _rewrite(value, rules or MaskRules(), lambda _scalar, _key: MASK)
+
+
+def mask_document(
+    text: str | bytes, source: str, target: str, rules: MaskRules | None = None
+) -> MaskedDocument:
+    """Format ``text`` from ``source`` into ``target`` with values masked.
+
+    The text loads through ``format.load_document``, so it passes the same
+    checks as ``format_document`` and raises the same errors. JSON takes
+    the full parse, because masking needs the tree. YAML loads from
+    ``text`` itself, so an alias of a masked anchor is masked too. Only the
+    masking step raises ``MaskError``.
+    """
+    result = mask_tree(load_document(text, source), rules)
+    return MaskedDocument(dump_value(result.value, target), result.masked_count)
 
 
 def copy_as_tree(

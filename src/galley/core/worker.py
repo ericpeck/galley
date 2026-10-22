@@ -4,7 +4,9 @@
 name. This module does not import Qt. The child writes a temp file beside
 the destination and never replaces that destination; the UI process commits.
 A ``CompareJob`` loads two documents and diffs them. It has no output file,
-so it writes no temp.
+so it writes no temp. A ``FormatJob`` with ``mask`` set formats through
+``mask_document``. If masking fails, the job fails and sends no text, so
+unmasked output never reaches the parent while masking is on.
 """
 
 import os
@@ -18,7 +20,12 @@ from galley.core.diff import DiffResult, diff, load_document
 from galley.core.errors import InputError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
+from galley.core.mask import MaskError, MaskRules, mask_document
 from galley.core.problems import Problem, collect_problems
+
+# The message a failed mask step sends. It is fixed, so it never quotes a
+# value from the document. The banner words are chosen in the app.
+MASK_FAILURE_MESSAGE = "Masking failed."
 
 TEMP_PREFIX = ".galley-"
 TEMP_SUFFIX = ".tmp"
@@ -33,7 +40,11 @@ WRITE_PROGRESS_EVERY_CHUNKS = 1
 
 @dataclass(frozen=True)
 class FormatJob:
-    """One document to format. The body is a copy; the worker does not share it."""
+    """One document to format. The body is a copy; the worker does not share it.
+
+    ``mask`` is ``None`` when masking is off, and the job formats exactly as
+    before. With rules set, matched values are replaced with ``"•••"``.
+    """
 
     job_id: int
     text: str
@@ -44,6 +55,7 @@ class FormatJob:
     chunk_size: int = WRITE_CHUNK_SIZE
     chunk_pause_s: float = 0.0
     fault: str | None = None
+    mask: MaskRules | None = None
 
 
 @dataclass(frozen=True)
@@ -62,12 +74,15 @@ class SuccessEvent:
     """Formatting finished. ``temp_path`` is closed and not yet committed.
 
     ``folds`` is the text's fold ranges from :func:`pack_ranges`.
+    ``masked_count`` is the number of values masked, or ``None`` when the
+    job had no ``mask``, so "masking on, 0 values masked" stays distinct.
     """
 
     job_id: int
     text: str
     temp_path: str | None = None
     folds: bytes = b""
+    masked_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,14 +199,17 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
         event_queue.put(FailureEvent(job.job_id, "", None, None, early))
         return
     try:
-        text = format_document(job.text, job.source, job.target)
+        text, masked_count = _format_text(job)
+    except MaskError:
+        event_queue.put(FailureEvent(job.job_id, MASK_FAILURE_MESSAGE, None))
+        return
     except Exception as exc:
         event_queue.put(_failure_event(job, exc, None))
         return
     folds = _scan_folds(text, job.target)
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
-        event_queue.put(SuccessEvent(job.job_id, text, None, folds))
+        event_queue.put(SuccessEvent(job.job_id, text, None, folds, masked_count))
         return
     temp_path: str | None = None
     try:
@@ -202,7 +220,15 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     if job.fault == FAULT_AFTER_TEMP:
         event_queue.put(FailureEvent(job.job_id, "forced failure", temp_path))
         return
-    event_queue.put(SuccessEvent(job.job_id, text, temp_path, folds))
+    event_queue.put(SuccessEvent(job.job_id, text, temp_path, folds, masked_count))
+
+
+def _format_text(job: FormatJob) -> tuple[str, int | None]:
+    """The job's output text, and its masked count when ``mask`` is set."""
+    if job.mask is None:
+        return format_document(job.text, job.source, job.target), None
+    masked = mask_document(job.text, job.source, job.target, job.mask)
+    return masked.text, masked.masked_count
 
 
 def _scan_folds(text: str, target: str) -> bytes:
