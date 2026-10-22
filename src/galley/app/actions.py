@@ -42,6 +42,7 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
     "Find",
     "Guides",
+    "Pop out",
     "Indent",
     "Sort keys",
     "Minify",
@@ -57,6 +58,8 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Find": ("find",),
     # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
     "Guides": ("guides_off", "guides_lines", "guides_depth"),
+    # The Window menu and the tab strip's Pop out ship together (#91 D8).
+    "Pop out": ("pop_out", "show_window", "bring_back"),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -398,6 +401,9 @@ class ShellActions:
             self.guides_off,
             self.guides_lines,
             self.guides_depth,
+            self.pop_out,
+            self.show_window,
+            self.bring_back,
             self.rename,
             self.duplicate,
             self.close_tab,
@@ -419,9 +425,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.pop_out,
-            self.show_window,
-            self.bring_back,
             self.outdent,
         ]
 
