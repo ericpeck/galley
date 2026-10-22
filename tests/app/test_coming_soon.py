@@ -355,7 +355,7 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     assert all(
         host is not None and host.property("comingSoonHost") is True for host in hosts
     )
-    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Validate"}
+    assert seen == {"Find", "Indent", "Minify", "Validate"}
 
 
 def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:

@@ -176,16 +176,16 @@ def _watch_reparse(monkeypatch: pytest.MonkeyPatch) -> list[str | bytes]:
     calls: list[str | bytes] = []
     real = format_module._pure_python_yaml
 
-    def track(text: str | bytes) -> str:
+    def track(text: str | bytes, *, sort_keys: bool = False) -> str:
         calls.append(text)
-        return real(text)
+        return real(text, sort_keys=sort_keys)
 
     monkeypatch.setattr(format_module, "_pure_python_yaml", track)
     return calls
 
 
 def _reject_reparse(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(text: str | bytes) -> str:
+    def boom(text: str | bytes, *, sort_keys: bool = False) -> str:
         raise AssertionError(text)
 
     monkeypatch.setattr(format_module, "_pure_python_yaml", boom)
@@ -214,9 +214,9 @@ def test_c_parser_error_retries_with_pure_python(
     calls: list[bool] = []
     real = format_module._format_yaml_impl
 
-    def track(text: str | bytes, *, pure: bool) -> str:
+    def track(text: str | bytes, *, pure: bool, sort_keys: bool = False) -> str:
         calls.append(pure)
-        return real(text, pure=pure)
+        return real(text, pure=pure, sort_keys=sort_keys)
 
     monkeypatch.setattr(format_module, "_format_yaml_impl", track)
     text = "a: [1, 2"
@@ -250,9 +250,9 @@ def test_stubbed_c_success_still_returns_the_pure_rejection(
     monkeypatch.setattr(format_module, "_clib_available", lambda: True)
     real = format_module._format_yaml_impl
 
-    def fake(text: str | bytes, *, pure: bool) -> str:
+    def fake(text: str | bytes, *, pure: bool, sort_keys: bool = False) -> str:
         if pure:
-            return real(text, pure=True)
+            return real(text, pure=True, sort_keys=sort_keys)
         return "from-c\n"
 
     monkeypatch.setattr(format_module, "_format_yaml_impl", fake)
