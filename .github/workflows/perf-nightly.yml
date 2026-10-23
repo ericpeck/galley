@@ -1,0 +1,86 @@
+name: Nightly perf
+
+on:
+  schedule:
+    # 06:43 UTC, after the nightly YAML comparison.
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  strict:
+    name: perf (strict)
+    # Budgets are checked on main only. A dispatch from another branch skips.
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          # The Actions cache is not needed for one run a night.
+          enable-cache: false
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run perf budgets (strict mode)
+        id: perf
+        env:
+          QT_QPA_PLATFORM: offscreen
+          GALLEY_PERF_MODE: strict
+        # Strict mode fails when a median passes the budget itself.
+        run: |
+          set -o pipefail
+          uv run pytest -m perf -rfEP 2>&1 | tee "${RUNNER_TEMP}/perf.log"
+
+      - name: Open or update the missed-budget issue
+        if: failure() && steps.perf.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "Nightly perf: a strict budget was missed on main"
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/perf.log"
+          body="${RUNNER_TEMP}/issue.md"
+          {
+            echo "The nightly strict perf run failed on \`main\` at ${GITHUB_SHA}."
+            echo
+            echo "Run: ${RUN_URL}"
+            echo
+            echo "Strict mode fails when a median passes its budget. The pull request \`perf\` job runs gate mode, which allows 3x."
+            echo "Rerun one test locally with \`GALLEY_PERF_MODE=strict uv run pytest -m perf -k <test>\`."
+            echo
+            echo '```'
+            if grep -Eq '^=+ (ERRORS|FAILURES) =+$' "${log}"; then
+              awk '/^=+ (ERRORS|FAILURES) =+$/ { show = 1 } show' "${log}" | head -c 60000
+            else
+              tail -n 200 "${log}" | head -c 60000
+            fi
+            echo
+            echo '```'
+          } > "${body}"
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --limit 1000 \
+            --json number,title --jq ".[] | select(.title == env.TITLE) | .number" | head -n 1)"
+          if [ -n "${existing}" ]; then
+            echo "Issue #${existing} is already open; adding this run to it."
+            gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body-file "${body}"
+          fi

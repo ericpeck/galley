@@ -102,6 +102,31 @@ jobs:
         # -rfEP keeps failure reports and prints the informational timing table.
         run: uv run --no-sync pytest -rfEP
 
+  perf:
+    name: perf
+    # Same runner as Test (macOS arm64), so budgets compare like for like.
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run perf budgets (gate mode)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          GALLEY_PERF_MODE: gate
+        # Gate mode fails only when a median passes 3x its budget. The nightly
+        # run on main uses strict mode. -rfEP prints every measured median.
+        run: uv run pytest -m perf -rfEP
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest

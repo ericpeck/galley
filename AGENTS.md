@@ -9,9 +9,12 @@ Python 3.12 (`requires-python` in `pyproject.toml`). Use uv.
 - `uv sync`
 - `uv run ruff check`
 - `uv run ruff format --check`
-- `uv run pytest` — `tests/conftest.py` sets `QT_QPA_PLATFORM=offscreen`
+- `uv run pytest` — `tests/conftest.py` sets `QT_QPA_PLATFORM=offscreen`. Deselects `perf` tests.
+- `uv run pytest -m perf` — wall-clock budgets only, in gate mode (fails past 3× a budget). `GALLEY_PERF_MODE=strict uv run pytest -m perf` fails past the budget itself. `uv run pytest -m perf -k <test>` reruns one.
 - `uv run galley`
 - `uv run python -m galley.app.actions` — release check
+
+A wall-clock budget goes only in a `@pytest.mark.perf` test that times through the `perf_budget` fixture (`tests/perf.py`): one warmup run, then the median of 5. Hang guards such as `waitUntil` timeouts stay in ordinary tests. `.github/workflows/perf-nightly.yml` runs strict mode on `main` each night and opens an issue on a miss.
 
 The release check exits 0 only when `UNBUILT_ACTIONS` and `ShellActions._not_yet_actions` are both empty. `UNBUILT_ACTIONS` is the Coming soon list. `_not_yet_actions` is the Not yet list. While either list is non-empty, the check exits 1 and prints `Release blocked: these actions still show "Coming soon"` or `Release blocked: these actions still show "Not yet"`. A `v*` tag runs the same module as `uv run --frozen --no-dev --no-editable python -m galley.app.actions` in `.github/workflows/release-macos.yml` before the disk image is built.
 
@@ -27,7 +30,7 @@ Squash-merge only when the exact head commit has the approvals below, every chec
 - UI or wording changes: also the UI/UX reviewer.
 - `AGENTS.md` and other project-rule changes: also the project owner.
 
-Lint, Secret scan, Test (macOS arm64), and Test (Windows) run on every pull request. YAML parser comparison and Disk image (macOS arm64) run only when a pull request changes files they cover. GitHub Release is skipped on pull requests; a skipped check is not a failure.
+Lint, Secret scan, Test (macOS arm64), Test (Windows), and perf run on every pull request. YAML parser comparison and Disk image (macOS arm64) run only when a pull request changes files they cover. GitHub Release is skipped on pull requests; a skipped check is not a failure.
 
 Bring `main` into a branch with a merge commit. Never rebase or force-push a branch under review; that discards the approved commit.
 

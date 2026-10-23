@@ -3,8 +3,6 @@
 import json
 import pickle
 import random
-import statistics
-import time
 
 import pytest
 from ruamel.yaml.constructor import DuplicateKeyError
@@ -231,12 +229,14 @@ def test_valid_documents_never_run_the_located_scan(monkeypatch) -> None:
     diff_load_document(text, "json")
 
 
-def test_duplicate_check_keeps_large_valid_documents_cheap(monkeypatch) -> None:
+@pytest.mark.perf
+def test_duplicate_check_keeps_large_valid_documents_cheap(
+    monkeypatch, perf_budget
+) -> None:
     """Time ``format_json`` with and without the duplicate check on ~2 MB.
 
-    The printed numbers go in the PR. The bound is loose on purpose: the
-    check may cost at most half again the format time, which only a per-key
-    scan on the valid path would break. Runs alternate so both share noise.
+    The bound is loose on purpose: the check may cost at most half again the
+    format time, which only a per-key scan on the valid path would break.
     """
     text = json.dumps(_large_value(7_500), indent=2, ensure_ascii=False)
     assert 1_800_000 < len(text.encode()) < 2_400_000
@@ -249,26 +249,17 @@ def test_duplicate_check_keeps_large_valid_documents_cheap(monkeypatch) -> None:
         finally:
             monkeypatch.setattr(format_module, "_json_loads", hooked)
 
-    runs = (
-        ("json.loads", lambda: json.loads(text)),
-        ("hooked loads", lambda: hooked(text)),
-        ("format_json without check", without_check),
-        ("format_json", lambda: format_json(text)),
-    )
-    samples: dict[str, list[float]] = {name: [] for name, _run in runs}
-    for _ in range(7):
-        for name, run in runs:
-            started = time.perf_counter()
-            run()
-            samples[name].append(time.perf_counter() - started)
-    medians = {name: statistics.median(values) for name, values in samples.items()}
-    size = len(text.encode()) / 1_000_000
+    baseline = perf_budget.measure(without_check)
     print(
-        f"duplicate-key check on {size:.1f} MB (median ms): "
-        + ", ".join(f"{name} {value * 1000:.1f}" for name, value in medians.items()),
+        f"duplicate-key check: format_json without check, median "
+        f"{baseline.median * 1000:.1f} ms",
         flush=True,
     )
-    assert medians["format_json"] < medians["format_json without check"] * 1.5
+    perf_budget.within(
+        baseline.median * 1.5,
+        lambda: format_json(text),
+        fixture="~2 MB valid JSON; budget is 1.5x format_json without the check",
+    )
 
 
 def _large_value(count: int) -> dict[str, object]:
