@@ -1,6 +1,6 @@
 """Compare jobs on the parse session's spawn worker, and the size prompt rule."""
 
-import time
+import pytest
 
 from galley.app.main_window import (
     JSON_WARNING_BYTES,
@@ -14,6 +14,8 @@ from galley.core.worker import CompareEvent, ProgressEvent
 
 _SPAWN_TIMEOUT_MS = 20000
 _HOLD_S = 30.0
+# Cancel runs on the UI thread and must not wait on the killed child.
+_CANCEL_BUDGET_S = 0.100
 _LEFT = '{"name": "Ada", "orders": [{"total": 40}]}'
 _RIGHT = '{"name": "Ada", "orders": [{"total": 45}], "vip": true}'
 
@@ -57,11 +59,9 @@ def test_a_failure_names_the_side_that_did_not_load(qtbot) -> None:
 def test_cancel_mid_compare_drops_the_result_and_uses_a_fresh_worker(qtbot) -> None:
     session = _started(qtbot)
     finished: list[int] = []
-    cancelled: list[tuple[int, float]] = []
+    cancelled: list[int] = []
     session.compare_finished.connect(lambda job, _result: finished.append(job))
-    session.compare_cancelled.connect(
-        lambda job: cancelled.append((job, time.perf_counter()))
-    )
+    session.compare_cancelled.connect(cancelled.append)
     reads = _spy_reads(session)
     try:
         old_process = session.process
@@ -69,10 +69,8 @@ def test_cancel_mid_compare_drops_the_result_and_uses_a_fresh_worker(qtbot) -> N
         assert old_process is not None
         job_id = session.submit_compare(_LEFT, "json", _RIGHT, "json", hold_s=_HOLD_S)
         qtbot.waitUntil(lambda: job_id in reads, timeout=_SPAWN_TIMEOUT_MS)
-        pressed = time.perf_counter()
         session.cancel()
-        assert [job for job, _at in cancelled] == [job_id]
-        assert (cancelled[0][1] - pressed) * 1000 < 100
+        assert cancelled == [job_id]
         assert session.active_job_id is None
         qtbot.waitUntil(
             lambda: session.job_queue is not None and session.job_queue is not old_jobs,
@@ -85,6 +83,37 @@ def test_cancel_mid_compare_drops_the_result_and_uses_a_fresh_worker(qtbot) -> N
         assert finished == [next_id]
         assert session.process is not None
         assert session.process.pid != old_process.pid
+    finally:
+        session.shutdown()
+
+
+@pytest.mark.perf
+def test_cancel_mid_compare_reports_within_100_ms(qtbot, perf_budget) -> None:
+    """Cancel kills a held compare and reports it without waiting on the child."""
+    session = _started(qtbot)
+    cancelled: list[int] = []
+    session.compare_cancelled.connect(cancelled.append)
+    reads = _spy_reads(session)
+    held: list[int] = []
+
+    def _hold_a_compare() -> None:
+        qtbot.waitUntil(
+            lambda: session.process is not None and session.job_queue is not None,
+            timeout=_SPAWN_TIMEOUT_MS,
+        )
+        job_id = session.submit_compare(_LEFT, "json", _RIGHT, "json", hold_s=_HOLD_S)
+        assert job_id is not None
+        held.append(job_id)
+        qtbot.waitUntil(lambda: job_id in reads, timeout=_SPAWN_TIMEOUT_MS)
+
+    try:
+        perf_budget.within(
+            _CANCEL_BUDGET_S,
+            session.cancel,
+            setup=_hold_a_compare,
+            fixture="compare held in the spawn worker",
+        )
+        assert cancelled == held
     finally:
         session.shutdown()
 
