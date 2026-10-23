@@ -66,9 +66,10 @@ Galley runs on macOS 14 (Sonoma) or later, on Apple Silicon. The Release macOS w
 
 1. Drag Galley to Applications.
 2. Open it once and dismiss the warning.
-3. Go to System Settings › Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley. It asks for your password.
+3. Go to System Settings > Privacy & Security, scroll down to Security, and click Open Anyway next to the message about Galley (asks for your password).
+4. Note: on macOS 14 and earlier, right-click > Open still works.
 
-After that, Galley opens with a normal double-click. On macOS 14 and earlier, right-click › Open also works.
+After that, Galley opens with a normal double-click.
 
 ## Run from source
 
