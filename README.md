@@ -4,7 +4,7 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 
 ![Galley converting minified JSON into YAML, in light mode](docs/images/json-to-yaml-light.png)
 
-Galley is in active development and hasn't had a release yet. The [roadmap](#roadmap) lists what's still coming.
+> **Work in progress.** Galley is still being built and hasn't had a release yet. The features below work today. [In the works](#in-the-works) lists what's being built right now.
 
 ## What it does
 
@@ -44,18 +44,28 @@ Galley is in active development and hasn't had a release yet. The [roadmap](#roa
 
 No shortcut uses Ctrl+Alt on Windows, because AltGr acts as Ctrl+Alt there and would trigger commands while you type characters such as `[` or `€`.
 
-## Roadmap
+## In the works
 
-Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain. Still to come:
+These features are being built now, and most are already in review. They aren't in the app yet.
 
-- Find, Find and Replace, and key-only search
-- Sort keys, Minify, Validate, and indent size
-- Open Recent and drag and drop to open
-- Copy As (original, masked, or random fake values) and masking of sensitive values
-- Every JSON error in one pass, not just the first
-- Comparing two documents side by side
-- HTML and XML formatting
+- **Find bar.** Search Input or Output, with match counts, wrap-around, and a "Keys only" option that matches object keys and skips values ([#52](https://github.com/ericpeck/galley/issues/52), [#62](https://github.com/ericpeck/galley/issues/62)).
+- **Sort keys.** Sort object keys alphabetically in the output. Input never changes ([#59](https://github.com/ericpeck/galley/issues/59)).
+- **Every JSON error at once.** The Problems pane lists every error in the document, not just the first, with F8 and Shift+F8 to step through them ([#78](https://github.com/ericpeck/galley/issues/78)).
+- **Open Recent.** The ten most recent files, from the File menu ([#85](https://github.com/ericpeck/galley/issues/85)).
+- **Drag and drop to open.** Drop a file on the window to open it ([#86](https://github.com/ericpeck/galley/issues/86)).
+- **Copy As and masking.** Copy Output as the original, with sensitive values masked as `•••`, or with random fake values. Sensitive values are found by key name (password, token, email and so on) and by value (emails, phone numbers). A View menu toggle to mask Output itself comes next ([#66](https://github.com/ericpeck/galley/issues/66)).
+- **Compare two documents.** Put two JSON or YAML documents side by side and list every added, removed, changed and moved value ([#65](https://github.com/ericpeck/galley/issues/65)).
+- **HTML and XML.** Format HTML and XML documents, with a locked-down parser that never fetches anything ([#63](https://github.com/ericpeck/galley/issues/63)).
+- **Interface fixes from the UI audit.** The Tab key types spaces, the tab strip fits narrow windows, a large Convert from Python is refused instead of freezing the window, and Output is marked Stale after Input changes ([#91](https://github.com/ericpeck/galley/issues/91)).
+
+## Planned
+
+Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain. Not started yet:
+
+- Find and Replace
+- Minify, Validate, and indent size
 - Tabs, indent guides, and pop-out windows
+- Preferences
 - Windows builds
 
 Specs for each feature live in their [GitHub issues](https://github.com/ericpeck/galley/issues).
