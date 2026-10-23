@@ -4,10 +4,12 @@ The closed picker keeps the platform popup-button chrome. Its value is
 painted from ``QPalette.ButtonText`` or ``QPalette.Text`` on the field
 background (``QPalette.Base``). Nothing here sets a stylesheet color.
 Blue is limited to the arrow chip. Pop out is painted from
-``QPalette.Link`` or ``QPalette.PlaceholderText``.
+``QPalette.Link`` or ``QPalette.PlaceholderText``. A disabled (Coming
+soon) Pop out uses the muted placeholder role, so it no longer reads as a
+link.
 """
 
-from PySide6.QtCore import QEvent, QRect, Qt, QTimer
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen, QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -17,9 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.actions import COMING_SOON
 from galley.app.theme import contrast_ratio
 
 _MIN_CONTRAST = 4.5
+POP_OUT_TEXT = "Pop out"
+POP_OUT_NAME = "Pop out into window"
+_POP_OUT_GLYPH = 12
+_POP_OUT_PADDING = 6
 
 
 def closed_field_colors(picker: QComboBox) -> tuple[QColor, QColor]:
@@ -35,8 +42,20 @@ def closed_field_colors(picker: QComboBox) -> tuple[QColor, QColor]:
 
 
 def pop_out_colors(button: QPushButton) -> tuple[QColor, QColor]:
-    """Ink and surface colors the Pop out label actually paints."""
+    """Ink and surface colors the Pop out label actually paints.
+
+    A disabled Pop out is Coming soon. It keeps readable muted ink from
+    the window's own group instead of the faint disabled link.
+    """
     palette = button.palette()
+    if not button.isEnabled():
+        group = palette.currentColorGroup()
+        if group == QPalette.ColorGroup.Disabled:
+            group = QPalette.ColorGroup.Active
+        return (
+            palette.color(group, QPalette.ColorRole.PlaceholderText),
+            palette.color(group, QPalette.ColorRole.Window),
+        )
     group = _group(button)
     surface = palette.color(group, QPalette.ColorRole.Window)
     link = palette.color(group, QPalette.ColorRole.Link)
@@ -171,17 +190,70 @@ class FormatComboBox(QComboBox):
 
 
 class PopOutButton(QPushButton):
-    """Flat Pop out label painted with the link or placeholder role."""
+    """Flat Pop out label painted with the link or placeholder role.
+
+    A narrow tab strip makes it icon-only. ``text()`` and the accessible
+    name do not change. The tooltip names the command, with "coming soon"
+    while it is unbuilt.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Pop out", parent)
+        super().__init__(POP_OUT_TEXT, parent)
         self.setFlat(True)
+        self.setAccessibleName(POP_OUT_NAME)
+        self.setToolTip(POP_OUT_NAME)
+        self._icon_only = False
+
+    def is_icon_only(self) -> bool:
+        return self._icon_only
+
+    def set_icon_only(self, icon_only: bool) -> None:
+        """Show only the pop-out glyph, or the glyph-free text label."""
+        if icon_only == self._icon_only:
+            return
+        self._icon_only = icon_only
+        self.sync_tool_tip()
+        self.updateGeometry()
+        self.update()
+
+    def sync_tool_tip(self) -> None:
+        """Match the tooltip to the label shown and the Coming soon mark."""
+        name = self.accessibleName()
+        if self.accessibleDescription() != COMING_SOON:
+            self.setToolTip(name)
+        elif self._icon_only:
+            self.setToolTip(f"{name} — coming soon")
+        else:
+            self.setToolTip(COMING_SOON)
+
+    def text_width(self) -> int:
+        """Width with the text label, whichever mode is showing."""
+        return QPushButton.sizeHint(self).width()
+
+    def icon_width(self) -> int:
+        return _POP_OUT_GLYPH + 2 * _POP_OUT_PADDING
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if self._icon_only:
+            hint.setWidth(self.icon_width())
+        return hint
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        if self._icon_only:
+            hint.setWidth(self.icon_width())
+        return hint
 
     def paintEvent(self, event: QPaintEvent) -> None:
         del event
         painter = QPainter(self)
-        painter.setFont(self.font())
         ink, _surface = pop_out_colors(self)
+        if self._icon_only:
+            _paint_pop_out_glyph(painter, self.rect(), ink)
+            painter.end()
+            return
+        painter.setFont(self.font())
         painter.setPen(ink)
         painter.drawText(
             self.rect(),
@@ -189,6 +261,26 @@ class PopOutButton(QPushButton):
             self.text(),
         )
         painter.end()
+
+
+def _paint_pop_out_glyph(painter: QPainter, rect: QRect, ink: QColor) -> None:
+    """A window with an arrow leaving its top-right corner."""
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(ink, 1.6)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    size = _POP_OUT_GLYPH
+    left = rect.center().x() - size // 2
+    top = rect.center().y() - size // 2
+    painter.translate(left + 0.5, top + 0.5)
+    painter.drawLine(5, 1, 1, 1)
+    painter.drawLine(1, 1, 1, 11)
+    painter.drawLine(1, 11, 11, 11)
+    painter.drawLine(11, 11, 11, 7)
+    painter.drawLine(6, 6, 11, 1)
+    painter.drawLine(8, 1, 11, 1)
+    painter.drawLine(11, 1, 11, 4)
 
 
 def _paint_arrow_chip(painter: QPainter, rect: QRect, palette: QPalette) -> None:
