@@ -135,8 +135,15 @@ class PaneWidget(QWidget):
 
     def full_strip_width(self) -> int:
         """Pane width at which the tab strip sheds nothing."""
+        return self._pane_width(self._strip_width(StripShed.NONE))
+
+    def min_strip_width(self) -> int:
+        """Narrowest pane width at which the fully shed strip, title "…", fits."""
+        return self._pane_width(self._strip_width(StripShed.TITLE, "…"))
+
+    def _pane_width(self, strip_width: int) -> int:
         margins = self.layout().contentsMargins()
-        return self._strip_width(StripShed.NONE) + margins.left() + margins.right()
+        return strip_width + margins.left() + margins.right()
 
     def fit_tab_strip(self, width: int | None = None) -> StripShed:
         """Shed strip parts until the strip fits ``width`` (default: its own).
@@ -154,13 +161,13 @@ class PaneWidget(QWidget):
     def strip_shed(self) -> StripShed:
         return self._strip_shed
 
-    def _strip_width(self, shed: StripShed) -> int:
-        """Strip width with ``shed`` applied and the full tab title."""
+    def _strip_width(self, shed: StripShed, title: str | None = None) -> int:
+        """Strip width with ``shed`` applied and ``title`` (default: the full one)."""
         title_extra = self._tab_title.sizeHint().width() - _text_width(
             self._tab_title, self._tab_title.text()
         )
         parts = [
-            _text_width(self._tab_title, self.spec.title) + title_extra,
+            _text_width(self._tab_title, title or self.spec.title) + title_extra,
             _hint_width(self.close_tab_button),
             _hint_width(self.new_tab_button),
             _hint_width(self.format_combo),
@@ -185,14 +192,23 @@ class PaneWidget(QWidget):
         if shed >= StripShed.TITLE:
             spare = available - self._strip_width(shed)
             room = _text_width(self._tab_title, title) + spare
-            metrics = self._tab_title.fontMetrics()
-            title = metrics.elidedText(title, Qt.TextElideMode.ElideRight, room)
-            title = title or "…"
+            title = self._elided_title(room)
         self._tab_title.setText(title)
         self._tab_title.setToolTip("" if title == self.spec.title else self.spec.title)
         # The strip's layout already placed its parts for this resize, so
         # place them again now rather than one event late.
         self.tab_strip.layout().activate()
+
+    def _elided_title(self, room: int) -> str:
+        """The longest "…" form of the title whose label fits ``room``."""
+        metrics = self._tab_title.fontMetrics()
+        title = self.spec.title
+        while room > 0:
+            elided = metrics.elidedText(title, Qt.TextElideMode.ElideRight, room)
+            if elided and _text_width(self._tab_title, elided) <= room:
+                return elided
+            room -= 1
+        return "…"
 
     def set_empty_visible(self, visible: bool) -> None:
         self.empty_overlay.setVisible(visible)
@@ -379,7 +395,8 @@ def _hint_width(widget: QWidget) -> int:
 
 
 def _text_width(label: QLabel, text: str) -> int:
-    return label.fontMetrics().horizontalAdvance(text)
+    """Text width as QLabel sizes it. ``horizontalAdvance`` rounds differently."""
+    return label.fontMetrics().size(0, text).width()
 
 
 def _source_empty_heading() -> str:

@@ -5,8 +5,9 @@ from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QFont, QPalette
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import QComboBox, QLabel, QSplitter, QToolTip, QWidget
+from pytestqt.exceptions import TimeoutError as WaitTimeout
 
 from galley.app import fonts
 from galley.app.actions import COMING_SOON
@@ -24,16 +25,29 @@ from galley.app.problems_settings import (
 from galley.core.problems import Problem
 
 _ROLES = (PaneRole.INPUT, PaneRole.OUTPUT)
-# The Windows runner draws fonts at 96 DPI with a wide fallback family, so
-# its strips need far more room than macOS's: they shed at 1280 px and the
-# titles shorten at 900 px. A 20 pt application and UI font at macOS's
-# 72 DPI does the same, so every window test runs that way too.
-_WIDE_POINT_SIZE = 20
+# The Windows runner's platform fonts are drawn at the same pixel sizes as
+# macOS's offscreen ones, but its fallback family is much wider: its strips
+# shed at 1280 px and the titles shorten at 900 px. The "wide font" variant
+# scales the fonts until these labels are as wide as they are there (what
+# 20 pt draws on macOS), so macOS runs the Windows case too. Where the
+# platform fonts are already that wide, the variant would only repeat the
+# platform one, so it is skipped.
+_WIDE_UI_SAMPLE = ("Output 1 Pop out", 185)
+_WIDE_APP_SAMPLE = ("Output as", 109)
+
+
+def _scaled_points(font: QFont, sample: tuple[str, int]) -> int | None:
+    """Point size that draws ``sample`` at its target width, if that is wider."""
+    text, target = sample
+    width = QFontMetrics(font).size(0, text).width()
+    if width >= target:
+        return None
+    return max(font.pointSize() + 1, round(font.pointSize() * target / width))
 
 
 @pytest.fixture(params=["platform font", "wide font"])
 def strip_font(request, monkeypatch, qapp) -> Iterator[str]:
-    """Run once with the platform fonts and once with much wider ones.
+    """Run once with the platform fonts and once with Windows-wide ones.
 
     Widgets with a stylesheet (the caption, Close and New tab) take the
     application font, and the rest take ``ui_font``, so both grow.
@@ -41,11 +55,20 @@ def strip_font(request, monkeypatch, qapp) -> Iterator[str]:
     if request.param == "platform font":
         yield request.param
         return
+    ui_points = _scaled_points(fonts.ui_font(), _WIDE_UI_SAMPLE)
+    app_points = _scaled_points(qapp.font(), _WIDE_APP_SAMPLE)
+    if ui_points is None and app_points is None:
+        pytest.skip(
+            "The platform fonts already draw the strip labels as wide as the "
+            "Windows runner's, so the platform variant covers this."
+        )
     previous = QFont(qapp.font())
-    wide = QFont(previous)
-    wide.setPointSize(_WIDE_POINT_SIZE)
-    monkeypatch.setattr(fonts.ui_font, "__defaults__", (_WIDE_POINT_SIZE,))
-    qapp.setFont(wide)
+    if ui_points is not None:
+        monkeypatch.setattr(fonts.ui_font, "__defaults__", (ui_points,))
+    if app_points is not None:
+        wide = QFont(previous)
+        wide.setPointSize(app_points)
+        qapp.setFont(wide)
     yield request.param
     qapp.setFont(previous)
 
@@ -174,6 +197,9 @@ def _assert_shed_state(pane: PaneWidget, shed: StripShed) -> None:
 def _alone(qtbot, spec: PaneSpec) -> PaneWidget:
     pane = PaneWidget(spec)
     qtbot.addWidget(pane)
+    # The window keeps panes at 240 px or more. Alone, the pane may go
+    # narrower, so every font reaches the last step before its floor.
+    pane.setMinimumWidth(0)
     pane.resize(pane.full_strip_width() + 40, 400)
     pane.show()
     qtbot.waitExposed(pane)
@@ -185,7 +211,9 @@ def _alone(qtbot, spec: PaneSpec) -> PaneWidget:
 def test_strip_sheds_in_order_as_the_pane_narrows(qtbot, spec: PaneSpec) -> None:
     pane = _alone(qtbot, spec)
     seen: list[StripShed] = []
-    for width in range(pane.width(), pane.minimumWidth() - 1, -3):
+    floor = pane.min_strip_width()
+    assert floor < pane.full_strip_width()
+    for width in [*range(pane.width(), floor, -3), floor]:
         pane.resize(width, 400)
         qtbot.waitUntil(lambda width=width: pane.tab_strip.width() == width - 2)
         shed = pane.strip_shed()
@@ -272,6 +300,20 @@ def _unshed_window_width(window, problems_width: int) -> int:
     return window.width() - outer.width() + problems_width + outer.handleWidth() + panes
 
 
+def _expected_problems_width(window, saved: int) -> int:
+    """D2 from measured strips: the saved width, less what the strips need."""
+    room = window.width() - _unshed_window_width(window, 0)
+    return min(saved, max(MIN_WIDTH, room))
+
+
+def _wait_problems(qtbot, window, problems: ProblemsPane, width: int) -> None:
+    """Wait for Problems to reach ``width``; on timeout, say what each part measured."""
+    try:
+        qtbot.waitUntil(lambda: problems.width() == width)
+    except WaitTimeout:
+        pytest.fail(f"Problems never reached {width} px: {_measured(window, problems)}")
+
+
 def _assert_problems_give_way_first(window, problems: ProblemsPane) -> None:
     """D2: Problems narrows toward 200 px before a strip sheds anything."""
     detail = _measured(window, problems)
@@ -300,7 +342,7 @@ def test_900_px_with_problems_open_clips_nothing(
     problems = _open_problems(qtbot, window)
     qtbot.waitUntil(lambda: window.width() == 900)
     # Two unshed strips never fit beside Problems at 900 px.
-    qtbot.waitUntil(lambda: problems.width() == MIN_WIDTH)
+    _wait_problems(qtbot, window, problems, MIN_WIDTH)
     assert _saved_width() == DEFAULT_WIDTH
     for pane in _panes(window):
         assert pane.strip_shed() > StripShed.NONE, _measured(window, problems)
@@ -318,28 +360,34 @@ def test_1280_px_with_problems_open(qtbot, strip_font: str) -> None:
     if strip_font == "platform font" and sys.platform == "darwin":
         assert roomy, _measured(window, problems)
     if roomy:
-        qtbot.waitUntil(lambda: problems.width() == DEFAULT_WIDTH)
+        _wait_problems(qtbot, window, problems, DEFAULT_WIDTH)
         for pane in _panes(window):
             assert pane.strip_shed() is StripShed.NONE
     else:
-        qtbot.waitUntil(lambda: problems.width() < DEFAULT_WIDTH)
+        _wait_problems(
+            qtbot, window, problems, _expected_problems_width(window, DEFAULT_WIDTH)
+        )
+        assert problems.width() < DEFAULT_WIDTH
     _assert_problems_give_way_first(window, problems)
 
 
 def test_stack_panes_at_900_px_fits_both_strips(qtbot, strip_font: str) -> None:
-    del strip_font
     window = _show(qtbot, 900)
     problems = _open_problems(qtbot, window)
-    qtbot.waitUntil(lambda: problems.width() == MIN_WIDTH)
+    _wait_problems(qtbot, window, problems, MIN_WIDTH)
     stack = _action(window, "Stack Panes")
     stack.trigger()
     assert stack.isChecked()
-    # Stacked panes take the full width, so Problems gets room back.
-    qtbot.waitUntil(lambda: problems.width() > MIN_WIDTH)
+    # Stacked panes take the full width, so Problems gets back whatever the
+    # wider strip leaves. With very wide fonts that can still be nothing.
+    stacked = _expected_problems_width(window, DEFAULT_WIDTH)
+    if strip_font == "platform font" and sys.platform == "darwin":
+        assert stacked == DEFAULT_WIDTH, _measured(window, problems)
+    _wait_problems(qtbot, window, problems, stacked)
     _assert_problems_give_way_first(window, problems)
     stack.trigger()
     assert not stack.isChecked()
-    qtbot.waitUntil(lambda: problems.width() == MIN_WIDTH)
+    _wait_problems(qtbot, window, problems, MIN_WIDTH)
     _assert_problems_give_way_first(window, problems)
     assert _saved_width() == DEFAULT_WIDTH
 
@@ -354,7 +402,7 @@ def test_problems_shrinks_first_and_keeps_its_saved_width(
     wide = max(1280, _unshed_window_width(window, 340))
     window.resize(wide, 800)
     qtbot.waitUntil(lambda: window.width() == wide)
-    qtbot.waitUntil(lambda: problems.width() == 340)
+    _wait_problems(qtbot, window, problems, 340)
     _assert_problems_give_way_first(window, problems)
     for pane in _panes(window):
         assert pane.strip_shed() is StripShed.NONE
@@ -363,17 +411,17 @@ def test_problems_shrinks_first_and_keeps_its_saved_width(
     middle = _unshed_window_width(window, 280)
     window.resize(middle, 800)
     qtbot.waitUntil(lambda: window.width() == middle)
-    qtbot.waitUntil(lambda: problems.width() == 280)
+    _wait_problems(qtbot, window, problems, 280)
     for pane in _panes(window):
         assert pane.strip_shed() is StripShed.NONE, _measured(window, problems)
     _assert_problems_give_way_first(window, problems)
     assert _saved_width() == 340
 
     window.resize(900, 800)
-    qtbot.waitUntil(lambda: problems.width() == MIN_WIDTH)
+    _wait_problems(qtbot, window, problems, MIN_WIDTH)
     _assert_problems_give_way_first(window, problems)
     assert _saved_width() == 340
 
     window.resize(wide, 800)
-    qtbot.waitUntil(lambda: problems.width() == 340)
+    _wait_problems(qtbot, window, problems, 340)
     assert _saved_width() == 340
