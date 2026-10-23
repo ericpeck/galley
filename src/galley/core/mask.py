@@ -35,6 +35,7 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
+from galley.core.format import dump_value, load_document
 
 MASK = "•••"
 
@@ -399,10 +400,23 @@ def copy_as_tree(
     ``mask_tree`` would replace through ``fake_value`` instead, emails and
     phone numbers found by value included.
     """
+    return copy_as_result(value, mode, rules, rng).value
+
+
+def copy_as_result(
+    value: object,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> MaskResult:
+    """Return ``copy_as_tree`` with the number of scalars it replaced.
+
+    ``original`` replaces none, so its count is 0.
+    """
     if mode == "original":
-        return value
+        return MaskResult(value, 0)
     if mode == "masked":
-        return mask_tree(value, rules).value
+        return mask_tree(value, rules)
     if mode != "fake":
         raise ValueError(f"Unknown Copy As mode: {mode}")
     chooser = rng if rng is not None else random.SystemRandom()
@@ -410,7 +424,66 @@ def copy_as_tree(
     def replace(scalar: object, key: object) -> object:
         return fake_value(scalar, detect_kind(key, scalar), chooser)
 
-    return _rewrite(value, rules or MaskRules(), replace).value
+    return _rewrite(value, rules or MaskRules(), replace)
+
+
+@dataclass(frozen=True)
+class CopyAsResult:
+    """The text to put on the clipboard.
+
+    ``count`` is the number of values hidden (Masked) or replaced (Random
+    fake). It is 0 for Original.
+    """
+
+    mode: CopyAsMode
+    text: str
+    count: int
+
+
+class CopyAsError(Exception):
+    """Copy As built no text, so nothing may be copied.
+
+    ``invalid`` is True when the text did not load as its format, and False
+    when it loaded but masking or writing it failed.
+    """
+
+    def __init__(self, message: str, *, invalid: bool) -> None:
+        super().__init__(message)
+        self.invalid = invalid
+
+
+def copy_as_text(
+    text: str,
+    fmt: str,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> CopyAsResult:
+    """Return the Copy As text for ``mode``. Every failure is a CopyAsError.
+
+    ``text`` is the Output, or a selection of it, and ``fmt`` its format
+    (``json`` or ``yaml``, case-insensitive), for reading and writing.
+    Original is ``text`` as it is. Masked and Random fake load it with
+    ``load_document``, rewrite it with ``copy_as_result`` and write it with
+    ``dump_value``, so the copy keeps the structure and format. ``rng`` is
+    for tests; without one Random fake uses ``random.SystemRandom``.
+    """
+    if mode == "original":
+        return CopyAsResult(mode, text, 0)
+    try:
+        value = load_document(text, fmt)
+    except Exception as exc:
+        raise CopyAsError(_reason(exc), invalid=True) from exc
+    try:
+        result = copy_as_result(value, mode, rules, rng)
+        copied = dump_value(result.value, fmt)
+    except Exception as exc:
+        raise CopyAsError(_reason(exc), invalid=False) from exc
+    return CopyAsResult(mode, copied, result.masked_count)
+
+
+def _reason(exc: Exception) -> str:
+    return str(exc) or type(exc).__name__
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:

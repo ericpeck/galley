@@ -166,12 +166,19 @@ class StatusBar(QStatusBar):
     def info_text(self) -> str:
         return self._direction.text()
 
-    def set_busy(self, busy: Busy, name: str = SPINNER_ACCESSIBLE_NAME) -> None:
+    def set_busy(
+        self,
+        busy: Busy,
+        name: str = SPINNER_ACCESSIBLE_NAME,
+        progress_name: str = PROGRESS_ACCESSIBLE_NAME,
+    ) -> None:
         """Show the spinner, the progress bar with Cancel, or neither.
 
-        ``name`` is the spinner's accessible name, such as ``Opening``.
+        ``name`` is the spinner's accessible name, such as ``Opening``, and
+        ``progress_name`` the progress bar's, such as ``Copying progress``.
         """
         self._spinner.setAccessibleName(name)
+        self._progress.setAccessibleName(progress_name)
         if busy is Busy.PROGRESS:
             self._progress.show()
             self._spinner.hide()

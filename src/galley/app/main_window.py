@@ -37,6 +37,18 @@ from galley.app.appearance import (
     MODE_SYSTEM,
     application_appearance,
 )
+from galley.app.copy_as import (
+    COPY_AS_BUSY_MESSAGE,
+    COPY_AS_BUSY_NAME,
+    COPY_AS_NOT_STARTED_MESSAGE,
+    COPY_AS_PROGRESS_NAME,
+    COPY_AS_TITLE,
+    COPY_CANCELED_MESSAGE,
+    MASK_HELP,
+    copied_text,
+    copy_as_inline_limit,
+    not_copied_text,
+)
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
@@ -117,6 +129,8 @@ from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
 from galley.core.load import LoadedDocument, LoadError
+from galley.core.mask import CopyAsMode, CopyAsResult
+from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
 
 NOT_YET_MESSAGE = "Not yet available."
 NOTHING_TO_FOLD = "nothing to fold"
@@ -229,6 +243,15 @@ class MainWindow(QMainWindow):
         self._format_target = "JSON"
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
+        # The Copy As job on the worker, and what the status text needs.
+        self._copy_as_job: int | None = None
+        self._copy_as_started_s = 0.0
+        self._copy_as_mode: CopyAsMode = "original"
+        self._copy_as_fmt = "JSON"
+        self._copy_as_selection = False
+        self._copy_as_reveal_timer = QTimer(self)
+        self._copy_as_reveal_timer.setSingleShot(True)
+        self._copy_as_reveal_timer.timeout.connect(self._show_copying)
         self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
@@ -378,6 +401,13 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addAction(actions.cut)
         edit.addAction(actions.copy)
+        self._copy_as_menu = edit.addMenu(COPY_AS_TITLE)
+        self._copy_as_menu.setObjectName("menuCopyAs")
+        self._copy_as_menu.setToolTipsVisible(True)
+        for mode, item in actions.copy_as_actions().items():
+            if mode != "original":
+                item.setToolTip(MASK_HELP)
+            self._copy_as_menu.addAction(item)
         edit.addAction(actions.paste)
         edit.addAction(actions.select_all)
         edit.addSeparator()
@@ -452,6 +482,7 @@ class MainWindow(QMainWindow):
         self._output_editor_menu = QMenu(self)
         self._output_editor_menu.setObjectName("outputEditorMenu")
         self._output_editor_menu.addActions(self._editor_menu.actions())
+        self._output_editor_menu.insertMenu(actions.paste, self._copy_as_menu)
         self._output_editor_menu.addSeparator()
         self._output_editor_menu.addAction(actions.fold)
         self._output_editor_menu.addAction(actions.unfold)
@@ -584,6 +615,8 @@ class MainWindow(QMainWindow):
         actions.redo.triggered.connect(self._redo)
         actions.cut.triggered.connect(self._cut)
         actions.copy.triggered.connect(self._copy)
+        for mode, item in actions.copy_as_actions().items():
+            item.triggered.connect(lambda _checked=False, m=mode: self._copy_as(m))
         actions.paste.triggered.connect(self._paste)
         actions.select_all.triggered.connect(self._select_all)
         actions.word_wrap.toggled.connect(self._set_word_wrap)
@@ -609,6 +642,8 @@ class MainWindow(QMainWindow):
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
         self._session.problems_found.connect(self._on_problems)
+        self._session.copy_as_finished.connect(self._on_copy_as_finished)
+        self._session.copy_as_failed.connect(self._on_copy_as_failed)
         self._problems_pane.jump_requested.connect(self._jump_to_problem)
         self._problems_pane.close_requested.connect(self._close_problems)
         self._problems_pane.minimize_requested.connect(self._minimize_problems)
@@ -668,11 +703,11 @@ class MainWindow(QMainWindow):
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Esc cancels the running format from whichever editor has focus."""
+        """Esc cancels the running format or large Copy As from any editor."""
         if not isinstance(watched, QObject):
             return False
         if (
-            self._formatting
+            (self._formatting or self._copy_as_job is not None)
             and event.type() == QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)
             and event.key() == Qt.Key.Key_Escape
@@ -714,6 +749,8 @@ class MainWindow(QMainWindow):
 
     def _format(self) -> None:
         if self._formatting or self._size_warning is not None:
+            return
+        if self._copy_as_job is not None:
             return
         if self._loading_path is not None:
             return
@@ -854,7 +891,13 @@ class MainWindow(QMainWindow):
         self._status.set_state(result.status)
 
     def _cancel_format(self) -> None:
-        """Drop the result, restore the previous output, then kill the worker."""
+        """Drop the result, restore the previous output, then kill the worker.
+
+        Cancel and Esc also stop a Copy As that runs on the worker.
+        """
+        if self._copy_as_job is not None:
+            self._cancel_copy_as()
+            return
         if not self._formatting:
             return
         self._restore_output()
@@ -1404,6 +1447,109 @@ class MainWindow(QMainWindow):
     def _copy_output(self) -> None:
         QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
 
+    def _copy_as(self, mode: CopyAsMode) -> None:
+        """Copy Output, or its selection, as ``mode``. Output is not changed.
+
+        Original is the text as it is. Masked and Random fake are built
+        from it here when it is small, and on the worker when it is not.
+        """
+        if not self._copy_as_available():
+            return
+        editor = self._output_pane.editor
+        cursor = editor.textCursor()
+        selection = cursor.hasSelection()
+        text = cursor.selection().toPlainText() if selection else editor.toPlainText()
+        fmt = self._output_pane.format_name()
+        self._copy_as_mode = mode
+        self._copy_as_fmt = fmt
+        self._copy_as_selection = selection
+        if mode == "original" or _utf8_size(text) < copy_as_inline_limit(fmt):
+            self._apply_copy_as(run_copy_as(CopyAsJob(0, text, fmt, mode)))
+            return
+        self._session.start()
+        job_id = self._session.submit_copy_as(text, fmt, mode)
+        if job_id is None:
+            self._status.set_state(COPY_AS_NOT_STARTED_MESSAGE)
+            return
+        self._copy_as_job = job_id
+        self._copy_as_started_s = _monotonic()
+        self._copy_as_reveal_timer.start(SPINNER_REVEAL_MS)
+        self._sync_format_button()
+
+    def _show_copying(self) -> None:
+        """Show the spinner, then the bar with Cancel, on Format's timings."""
+        if self._copy_as_job is None:
+            return
+        if _reveal_due(PROGRESS_BAR_REVEAL_MS, self._copy_as_started_s):
+            self._status.set_busy(
+                Busy.PROGRESS, COPY_AS_BUSY_NAME, COPY_AS_PROGRESS_NAME
+            )
+        else:
+            self._status.set_busy(Busy.SPINNER, COPY_AS_BUSY_NAME)
+            remaining = PROGRESS_BAR_REVEAL_MS - _elapsed_ms(self._copy_as_started_s)
+            self._copy_as_reveal_timer.start(max(0, int(remaining)))
+        self._status.set_state(COPY_AS_BUSY_MESSAGE)
+
+    def _cancel_copy_as(self) -> None:
+        """Drop the copy and kill the worker. The clipboard is not touched."""
+        self._end_copy_as_job()
+        self._status.set_state(COPY_CANCELED_MESSAGE)
+        self._session.cancel()
+
+    def _on_copy_as_finished(self, job_id: int, result: object) -> None:
+        if job_id != self._copy_as_job:
+            return
+        self._end_copy_as_job()
+        if isinstance(result, CopyAsResult):
+            self._apply_copy_as(CopyAsEvent(job_id, result))
+
+    def _on_copy_as_failed(self, job_id: int, failure: object) -> None:
+        if job_id != self._copy_as_job:
+            return
+        self._end_copy_as_job()
+        if isinstance(failure, CopyAsFailureEvent):
+            self._apply_copy_as(failure)
+
+    def _end_copy_as_job(self) -> None:
+        self._copy_as_job = None
+        self._copy_as_reveal_timer.stop()
+        self._status.set_busy(Busy.IDLE)
+        self._sync_format_button()
+
+    def _apply_copy_as(self, event: CopyAsEvent | CopyAsFailureEvent) -> None:
+        """Put a finished copy on the clipboard. A failure leaves it alone."""
+        if isinstance(event, CopyAsEvent):
+            result = event.result
+            QApplication.clipboard().setText(result.text)
+            self._status.set_state(copied_text(result.mode, result.count))
+            return
+        self._status.set_state(
+            not_copied_text(
+                self._copy_as_mode,
+                self._copy_as_fmt,
+                invalid=event.invalid,
+                selection=self._copy_as_selection,
+            ),
+            event.message,
+        )
+
+    def _copy_as_available(self) -> bool:
+        """Copy As needs Output text and no running Format or Copy As job."""
+        return (
+            self._output_pane.editor.document().characterCount() > 1
+            and not self._formatting
+            and self._copy_as_job is None
+        )
+
+    def _sync_copy_as_actions(self) -> None:
+        available = self._copy_as_available()
+        for item in self._actions.copy_as_actions().values():
+            if item.isEnabled() != available:
+                item.setEnabled(available)
+        menu_action = self._copy_as_menu.menuAction()
+        if menu_action.isEnabled() != available:
+            menu_action.setEnabled(available)
+
     def _set_word_wrap(self, checked: bool) -> None:
         mode = (
             CodeEditor.LineWrapMode.WidgetWidth
@@ -1473,12 +1619,15 @@ class MainWindow(QMainWindow):
             text = self._input_pane.editor.toPlainText()
         has_input = not _is_blank(text)
         loading = self._loading_path is not None
+        # A large Copy As holds the worker, so Format waits for it.
+        copying = self._copy_as_job is not None
         available = has_input and not self._formatting and not loading
+        available = available and not copying
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
         button = self._format_button
-        button.setEnabled(has_input or self._formatting)
+        button.setEnabled((has_input and not copying) or self._formatting)
         if self._formatting:
             button.setText(FORMATTING_MESSAGE)
             button.setAccessibleName(FORMATTING_MESSAGE)
@@ -1496,6 +1645,7 @@ class MainWindow(QMainWindow):
         self._actions.unescape_string.setEnabled(available)
         self._sync_open_actions()
         self._sync_fold_actions()
+        self._sync_copy_as_actions()
 
     def _sync_fold_actions(self) -> None:
         """Fold commands work on Output while it has blocks and no job runs."""
@@ -1563,6 +1713,7 @@ class MainWindow(QMainWindow):
         copy_button = self._output_pane.copy_button
         if copy_button is not None:
             copy_button.setEnabled(not empty)
+        self._sync_copy_as_actions()
         self._output_pane.set_empty_visible(empty)
         if empty:
             self._output_pane.count_label.setText("")
