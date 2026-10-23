@@ -8,9 +8,14 @@ import random
 import pytest
 from ruamel.yaml import YAML
 
-from galley.core.copy_as import CopyAsError, CopyAsResult, copy_as_text
 from galley.core.format import format_document
-from galley.core.mask import MASK, MaskRules
+from galley.core.mask import (
+    MASK,
+    CopyAsError,
+    CopyAsResult,
+    MaskRules,
+    copy_as_text,
+)
 from galley.core.worker import (
     CopyAsEvent,
     CopyAsFailureEvent,
@@ -192,10 +197,18 @@ def test_run_copy_as_reports_the_result_or_the_failure() -> None:
     assert failed.invalid
 
 
+def test_a_held_copy_as_job_still_builds_the_copy() -> None:
+    held = run_copy_as(CopyAsJob(6, _output("json"), "json", "masked", hold_s=0.01))
+    assert isinstance(held, CopyAsEvent)
+    assert held.result == copy_as_text(_output("json"), "json", "masked")
+
+
 def test_copy_as_jobs_and_events_pickle() -> None:
-    job = CopyAsJob(1, _output("yaml"), "yaml", "fake", MaskRules(keys=("email",)))
+    job = CopyAsJob(
+        1, _output("yaml"), "yaml", "fake", MaskRules(keys=("email",)), hold_s=0.5
+    )
     assert pickle.loads(pickle.dumps(job)) == job
-    event = run_copy_as(job)
+    event = run_copy_as(CopyAsJob(1, job.text, "yaml", "fake", job.rules))
     assert pickle.loads(pickle.dumps(event)) == event
     failure = CopyAsFailureEvent(2, True, "bad")
     assert pickle.loads(pickle.dumps(failure)) == failure

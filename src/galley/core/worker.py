@@ -3,9 +3,8 @@
 ``run_worker`` is a module-level function so a spawn child can import it by
 name. This module does not import Qt. The child writes a temp file beside
 the destination and never replaces that destination; the UI process commits.
-A ``CompareJob`` loads two documents and diffs them. A ``CopyAsJob`` builds
-the Masked or Random fake copy of a large Output. Neither has an output file,
-so neither writes a temp.
+A ``CompareJob`` loads two documents and diffs them. It has no output file,
+so it writes no temp.
 """
 
 import os
@@ -15,12 +14,17 @@ from dataclasses import dataclass
 from multiprocessing.queues import Queue
 from typing import BinaryIO, Literal
 
-from galley.core.copy_as import CopyAsError, CopyAsResult, copy_as_text
 from galley.core.diff import DiffResult, diff, load_document
 from galley.core.errors import InputError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
-from galley.core.mask import CopyAsMode, MaskRules
+from galley.core.mask import (
+    CopyAsError,
+    CopyAsMode,
+    CopyAsResult,
+    MaskRules,
+    copy_as_text,
+)
 from galley.core.problems import Problem, collect_problems
 
 TEMP_PREFIX = ".galley-"
@@ -137,7 +141,12 @@ class CompareFailureEvent:
 class CopyAsJob:
     """One Copy As text to build. The body is a copy; the worker does not share it.
 
-    ``fmt`` is the Output format, for reading and writing.
+    The app sends one for a large Output. Like a compare, it has no output
+    file and writes no temp.
+
+    ``fmt`` is the Output format, for reading and writing. ``hold_s``
+    pauses before the copy is built, so a test can cancel mid-copy. The app
+    leaves it at 0.
     """
 
     job_id: int
@@ -145,6 +154,7 @@ class CopyAsJob:
     fmt: str
     mode: CopyAsMode
     rules: MaskRules | None = None
+    hold_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -364,6 +374,8 @@ def _compare_failure(
 
 def run_copy_as(job: CopyAsJob) -> CopyAsEvent | CopyAsFailureEvent:
     """Build the Copy As text without the queue, so it also runs in-process."""
+    if job.hold_s > 0:
+        time.sleep(job.hold_s)
     try:
         result = copy_as_text(job.text, job.fmt, job.mode, job.rules)
     except CopyAsError as exc:

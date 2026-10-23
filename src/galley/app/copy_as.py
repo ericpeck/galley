@@ -1,9 +1,9 @@
 """Copy As (#66): labels, status text, and where each copy is built.
 
 Copy As works on Output: the selection, or all of Output when nothing is
-selected. The text itself comes from :func:`galley.core.copy_as.copy_as_text`.
+selected. The text itself comes from :func:`galley.core.mask.copy_as_text`.
 A small Output is copied on the UI thread. A larger one goes to the parse
-worker, so the window keeps responding.
+worker, so the window keeps responding, and Cancel or Esc stops it.
 """
 
 from galley.app.limits import _SI_KB, _SI_MB
@@ -12,6 +12,9 @@ from galley.core.mask import CopyAsMode
 COPY_AS_TITLE = "Copy As"
 COPY_AS_BUSY_NAME = "Copying"
 COPY_AS_BUSY_MESSAGE = "Copying…"
+COPY_AS_PROGRESS_NAME = "Copying progress"
+# Cancel or Esc during a Copy As on the worker (Eric, via Chief, on #99).
+COPY_CANCELED_MESSAGE = "Copy canceled. Nothing copied."
 COPY_AS_NOT_STARTED_MESSAGE = (
     "Nothing copied. The formatter is shut down or already running."
 )

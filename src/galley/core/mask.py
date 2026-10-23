@@ -7,7 +7,8 @@ that is, as a whole, an email address or a phone number, wherever it is,
 including inside arrays with no keys. Text that only contains one, like
 ``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
 three Copy As trees from the same rules. Serializing a tree is
-``format.dump_value``, and ``copy_as.copy_as_text`` does both for a text.
+``format.dump_value``. ``copy_as_text`` loads an Output text, builds its
+Copy As tree and serializes it, and is what the Copy As menu copies.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -35,6 +36,7 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
+from galley.core.format import dump_value, load_document
 
 MASK = "•••"
 
@@ -424,6 +426,65 @@ def copy_as_result(
         return fake_value(scalar, detect_kind(key, scalar), chooser)
 
     return _rewrite(value, rules or MaskRules(), replace)
+
+
+@dataclass(frozen=True)
+class CopyAsResult:
+    """The text to put on the clipboard.
+
+    ``count`` is the number of values hidden (Masked) or replaced (Random
+    fake). It is 0 for Original.
+    """
+
+    mode: CopyAsMode
+    text: str
+    count: int
+
+
+class CopyAsError(Exception):
+    """Copy As built no text, so nothing may be copied.
+
+    ``invalid`` is True when the text did not load as its format, and False
+    when it loaded but masking or writing it failed.
+    """
+
+    def __init__(self, message: str, *, invalid: bool) -> None:
+        super().__init__(message)
+        self.invalid = invalid
+
+
+def copy_as_text(
+    text: str,
+    fmt: str,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> CopyAsResult:
+    """Return the Copy As text for ``mode``. Every failure is a CopyAsError.
+
+    ``text`` is the Output, or a selection of it, and ``fmt`` its format
+    (``json`` or ``yaml``, case-insensitive), for reading and writing.
+    Original is ``text`` as it is. Masked and Random fake load it with
+    ``load_document``, rewrite it with ``copy_as_result`` and write it with
+    ``dump_value``, so the copy keeps the structure and format. ``rng`` is
+    for tests; without one Random fake uses ``random.SystemRandom``.
+    """
+    if mode == "original":
+        return CopyAsResult(mode, text, 0)
+    try:
+        value = load_document(text, fmt)
+    except Exception as exc:
+        raise CopyAsError(_reason(exc), invalid=True) from exc
+    try:
+        result = copy_as_result(value, mode, rules, rng)
+        copied = dump_value(result.value, fmt)
+    except Exception as exc:
+        raise CopyAsError(_reason(exc), invalid=False) from exc
+    return CopyAsResult(mode, copied, result.masked_count)
+
+
+def _reason(exc: Exception) -> str:
+    return str(exc) or type(exc).__name__
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:

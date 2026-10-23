@@ -41,7 +41,9 @@ from galley.app.copy_as import (
     COPY_AS_BUSY_MESSAGE,
     COPY_AS_BUSY_NAME,
     COPY_AS_NOT_STARTED_MESSAGE,
+    COPY_AS_PROGRESS_NAME,
     COPY_AS_TITLE,
+    COPY_CANCELED_MESSAGE,
     MASK_HELP,
     copied_text,
     copy_as_inline_limit,
@@ -124,11 +126,10 @@ from galley.app.style import (
 from galley.app.tab_repair import replace_leading_tabs
 from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
-from galley.core.copy_as import CopyAsResult
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
 from galley.core.load import LoadedDocument, LoadError
-from galley.core.mask import CopyAsMode
+from galley.core.mask import CopyAsMode, CopyAsResult
 from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
 
 NOT_YET_MESSAGE = "Not yet available."
@@ -244,6 +245,7 @@ class MainWindow(QMainWindow):
         self._format_idle_tooltip = ""
         # The Copy As job on the worker, and what the status text needs.
         self._copy_as_job: int | None = None
+        self._copy_as_started_s = 0.0
         self._copy_as_mode: CopyAsMode = "original"
         self._copy_as_fmt = "JSON"
         self._copy_as_selection = False
@@ -701,11 +703,11 @@ class MainWindow(QMainWindow):
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Esc cancels the running format from whichever editor has focus."""
+        """Esc cancels the running format or large Copy As from any editor."""
         if not isinstance(watched, QObject):
             return False
         if (
-            self._formatting
+            (self._formatting or self._copy_as_job is not None)
             and event.type() == QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)
             and event.key() == Qt.Key.Key_Escape
@@ -889,7 +891,13 @@ class MainWindow(QMainWindow):
         self._status.set_state(result.status)
 
     def _cancel_format(self) -> None:
-        """Drop the result, restore the previous output, then kill the worker."""
+        """Drop the result, restore the previous output, then kill the worker.
+
+        Cancel and Esc also stop a Copy As that runs on the worker.
+        """
+        if self._copy_as_job is not None:
+            self._cancel_copy_as()
+            return
         if not self._formatting:
             return
         self._restore_output()
@@ -1464,14 +1472,29 @@ class MainWindow(QMainWindow):
             self._status.set_state(COPY_AS_NOT_STARTED_MESSAGE)
             return
         self._copy_as_job = job_id
+        self._copy_as_started_s = _monotonic()
         self._copy_as_reveal_timer.start(SPINNER_REVEAL_MS)
         self._sync_format_button()
 
     def _show_copying(self) -> None:
+        """Show the spinner, then the bar with Cancel, on Format's timings."""
         if self._copy_as_job is None:
             return
-        self._status.set_busy(Busy.SPINNER, COPY_AS_BUSY_NAME)
+        if _reveal_due(PROGRESS_BAR_REVEAL_MS, self._copy_as_started_s):
+            self._status.set_busy(
+                Busy.PROGRESS, COPY_AS_BUSY_NAME, COPY_AS_PROGRESS_NAME
+            )
+        else:
+            self._status.set_busy(Busy.SPINNER, COPY_AS_BUSY_NAME)
+            remaining = PROGRESS_BAR_REVEAL_MS - _elapsed_ms(self._copy_as_started_s)
+            self._copy_as_reveal_timer.start(max(0, int(remaining)))
         self._status.set_state(COPY_AS_BUSY_MESSAGE)
+
+    def _cancel_copy_as(self) -> None:
+        """Drop the copy and kill the worker. The clipboard is not touched."""
+        self._end_copy_as_job()
+        self._status.set_state(COPY_CANCELED_MESSAGE)
+        self._session.cancel()
 
     def _on_copy_as_finished(self, job_id: int, result: object) -> None:
         if job_id != self._copy_as_job:

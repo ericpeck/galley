@@ -1,5 +1,6 @@
 """Copy As › Original, Masked and Random fake (#66). All data here is fake."""
 
+import functools
 import json
 from collections import Counter
 
@@ -10,12 +11,15 @@ from PySide6.QtWidgets import QApplication, QComboBox, QMenu
 from ruamel.yaml import YAML
 
 import galley.app.main_window as main_window_module
+import galley.app.parse_session as parse_session_module
 from galley.app.actions import UNBUILT_ACTIONS, is_unbuilt
 from galley.app.banner import FORMATTER_STOPPED
 from galley.app.copy_as import (
     COPIED_ORIGINAL,
     COPY_AS_BUSY_MESSAGE,
     COPY_AS_BUSY_NAME,
+    COPY_AS_PROGRESS_NAME,
+    COPY_CANCELED_MESSAGE,
     MASK_HELP,
     copied_text,
     not_copied_text,
@@ -26,7 +30,7 @@ from galley.app.parse_session import ParseSession
 from galley.app.theme import contrast_ratio
 from galley.core.format import format_document
 from galley.core.mask import MASK
-from galley.core.worker import CopyAsFailureEvent
+from galley.core.worker import CopyAsFailureEvent, CopyAsJob
 
 _SPAWN_TIMEOUT_MS = 20000
 _LABELS = ["Original", "Masked", "Random fake"]
@@ -430,3 +434,107 @@ def test_copy_as_menu_text_is_readable(qtbot, install_scheme, scheme) -> None:
     assert ink >= 4.5
     submenu.close()
     edit.close()
+
+
+def _held_copy(qtbot, monkeypatch):
+    """A window whose next Masked or Random fake copy waits on the worker.
+
+    The job sleeps 30 s before building the copy, so a test can cancel it
+    mid-copy. Cancel and the progress bar show at once.
+    """
+    monkeypatch.setattr(main_window_module, "copy_as_inline_limit", lambda _fmt: 0)
+    monkeypatch.setattr(main_window_module, "SPINNER_REVEAL_MS", 0)
+    monkeypatch.setattr(main_window_module, "PROGRESS_BAR_REVEAL_MS", 0)
+    monkeypatch.setattr(
+        parse_session_module, "CopyAsJob", functools.partial(CopyAsJob, hold_s=30.0)
+    )
+    window, output = _with_output(qtbot, "YAML")
+    source, _ = _editors(window)
+    source.setPlainText('{"email": "pat@example.com", "phone": "555-0142"}')
+    return window, output
+
+
+def _wait_until_copying(qtbot, window) -> int:
+    """Wait for the job to reach the worker. Return the worker's pid."""
+    session = window._session
+    qtbot.waitUntil(
+        lambda: (
+            session.process is not None
+            and session.process.pid is not None
+            and not session.has_pending_job
+        ),
+        timeout=_SPAWN_TIMEOUT_MS,
+    )
+    cancel = window._status._cancel
+    qtbot.waitUntil(cancel.isVisible)
+    assert window._status._progress.accessibleName() == COPY_AS_PROGRESS_NAME
+    assert window._status.state_text() == COPY_AS_BUSY_MESSAGE
+    return session.process.pid
+
+
+def _assert_canceled(window, output: CodeEditor, shown: str) -> None:
+    assert window._copy_as_job is None
+    assert QApplication.clipboard().text() == _UNTOUCHED
+    assert window._status.state_text() == COPY_CANCELED_MESSAGE
+    assert window._status.state_text() == "Copy canceled. Nothing copied."
+    assert not window._status._cancel.isVisible()
+    assert not window._status._progress.isVisible()
+    assert output.toPlainText() == shown
+    assert _copy_as_menu(window).menuAction().isEnabled()
+    assert _action(window, "Format").isEnabled()
+
+
+def _format_on_a_fresh_worker(qtbot, window, output: CodeEditor, old_pid: int):
+    _action(window, "Format").trigger()
+    expected = format_document(
+        '{"email": "pat@example.com", "phone": "555-0142"}', "json", "yaml"
+    )
+    qtbot.waitUntil(lambda: output.toPlainText() == expected, timeout=_SPAWN_TIMEOUT_MS)
+    process = window._session.process
+    assert process is not None and process.pid != old_pid
+    assert QApplication.clipboard().text() == _UNTOUCHED
+
+
+def test_cancel_stops_a_large_copy_and_copies_nothing(qtbot, monkeypatch) -> None:
+    window, output = _held_copy(qtbot, monkeypatch)
+    shown = output.toPlainText()
+    try:
+        _action(window, "Random fake").trigger()
+        pid = _wait_until_copying(qtbot, window)
+        assert not _action(window, "Format").isEnabled()
+        qtbot.mouseClick(window._status._cancel, Qt.MouseButton.LeftButton)
+        _assert_canceled(window, output, shown)
+        _format_on_a_fresh_worker(qtbot, window, output, pid)
+        assert window._status.state_text() != COPY_CANCELED_MESSAGE
+    finally:
+        window.shutdown_parse_worker()
+
+
+def test_esc_stops_a_large_copy_started_from_the_keyboard(qtbot, monkeypatch):
+    window, output = _held_copy(qtbot, monkeypatch)
+    shown = output.toPlainText()
+    edit = window.findChild(QMenu, "menuEdit")
+    assert isinstance(edit, QMenu)
+    try:
+        submenu = _open_copy_as_from(qtbot, window, edit)
+        qtbot.keyClick(submenu, Qt.Key.Key_Down)
+        assert submenu.activeAction() is _action(window, "Masked")
+        qtbot.keyClick(submenu, Qt.Key.Key_Return)
+        qtbot.waitUntil(lambda: not submenu.isVisible() and not edit.isVisible())
+        pid = _wait_until_copying(qtbot, window)
+        output.setFocus()
+        qtbot.keyClick(output, Qt.Key.Key_Escape)
+        _assert_canceled(window, output, shown)
+        _format_on_a_fresh_worker(qtbot, window, output, pid)
+    finally:
+        window.shutdown_parse_worker()
+
+
+def test_esc_with_no_copy_running_changes_nothing(qtbot) -> None:
+    window, output = _with_output(qtbot)
+    shown = output.toPlainText()
+    _copy(window, "Masked")
+    status = window._status.state_text()
+    qtbot.keyClick(output, Qt.Key.Key_Escape)
+    assert window._status.state_text() == status
+    assert output.toPlainText() == shown
