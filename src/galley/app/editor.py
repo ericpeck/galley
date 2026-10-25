@@ -640,20 +640,29 @@ class CodeEditor(QPlainTextEdit):
             self._colors_wanted and not self._colors_limited()
         )
 
-    def reveal_line(self, lineno: int) -> None:
+    def reveal_line(self, lineno: int, colno: int = 0) -> None:
         """Move the cursor to ``lineno``, scroll it into view, and focus.
 
+        ``colno`` is a 1-based column in characters; 0 is the line start.
         Folded blocks that hide the line open first.
         """
         self.ensure_line_visible(lineno)
         block = self.document().findBlockByNumber(max(lineno, 1) - 1)
         if not block.isValid():
             block = self.document().lastBlock()
+        offset = _utf16_length(block.text()[: max(colno - 1, 0)])
         cursor = self.textCursor()
-        cursor.setPosition(block.position())
+        cursor.setPosition(block.position() + min(offset, block.length() - 1))
         self.setTextCursor(cursor)
         self.centerCursor()
         self.setFocus()
+
+    def cursor_place(self) -> tuple[int, int]:
+        """The cursor's 1-based line and column, in characters."""
+        cursor = self.textCursor()
+        before = cursor.block().text().encode("utf-16-le")
+        before = before[: 2 * cursor.positionInBlock()]
+        return cursor.blockNumber() + 1, len(before.decode("utf-16-le")) + 1
 
     def folding_enabled(self) -> bool:
         return self._folding
@@ -1487,3 +1496,8 @@ def _known_kind(kind: str) -> str:
     if kind not in MARKER_KINDS:
         raise ValueError(f"unknown marker kind {kind!r}; add it to GUTTER_LANES")
     return kind
+
+
+def _utf16_length(text: str) -> int:
+    """Qt counts positions in UTF-16 units, so astral characters count twice."""
+    return len(text) + sum(1 for char in text if ord(char) > 0xFFFF)

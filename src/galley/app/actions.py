@@ -24,6 +24,8 @@ from galley.app.shortcuts import (
     EXPAND_ALL,
     FOLD,
     FORMAT,
+    NEXT_PROBLEM,
+    PREVIOUS_PROBLEM,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     STACK_PANES,
@@ -311,6 +313,10 @@ class ShellActions:
         )
         self.stack_panes.setShortcuts([STACK_PANES, STACK_PANES_ALT])
         self.stack_panes.setObjectName("stackPanes")
+        self.next_problem = _action(parent, "Next Problem")
+        self.next_problem.setShortcuts(list(NEXT_PROBLEM))
+        self.previous_problem = _action(parent, "Previous Problem")
+        self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
         self.appearance_light = _action(parent, "Light", checkable=True)
         self.appearance_dark = _action(parent, "Dark", checkable=True)
