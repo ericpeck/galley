@@ -1294,10 +1294,11 @@ class MainWindow(QMainWindow):
         self.open_path(files[0], of_files=len(files))
 
     def _follow_file_drag(self, event: QDragMoveEvent) -> None:
-        """Take a file anywhere in the window. Outline the source pane under it.
+        """Take a file anywhere in the window and outline the source pane.
 
-        While a format runs the drag is still taken, so the drop can say
-        why it was refused, but the pane gets no outline (#86).
+        Every drop opens into the source pane, so it is outlined wherever
+        the file is. While a format runs the drag is still taken, so the
+        drop can say why it was refused, but the pane gets no outline (#86).
         """
         pane = self._source_pane()
         files = dropped_files(event.mimeData())
@@ -1306,8 +1307,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         event.acceptProposedAction()
-        point = pane.mapFrom(self, event.position().toPoint())
-        pane.set_drop_highlight(self.can_open() and pane.rect().contains(point))
+        pane.set_drop_highlight(self.can_open())
 
     def _source_pane(self) -> PaneWidget:
         """The pane Open fills: the one whose spec is a source (#73)."""

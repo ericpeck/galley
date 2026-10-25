@@ -18,10 +18,10 @@ from PySide6.QtGui import (
     QDropEvent,
     QPalette,
 )
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QStatusBar, QWidget
 
 from galley.app.editor import CodeEditor
-from galley.app.file_drop import dropped_files
+from galley.app.file_drop import dropped_files, dropped_paths
 from galley.app.main import create_main_window
 from galley.app.pane import PaneRole, PaneWidget
 from galley.app.theme import composite, contrast_ratio
@@ -31,19 +31,25 @@ _SAMPLE = '{"a":1,"b":[true,null]}'
 
 def test_dropped_files_keeps_local_files_in_order(tmp_path) -> None:
     first = tmp_path / "first.json"
+    folder = tmp_path / "configs"
+    folder.mkdir()
     second = tmp_path / "second.yaml"
     mime = QMimeData()
     mime.setUrls(
         [
             QUrl.fromLocalFile(str(first)),
             QUrl("https://example.com/remote.json"),
+            QUrl.fromLocalFile(str(folder)),
             QUrl.fromLocalFile(str(second)),
         ]
     )
+    assert dropped_paths(mime) == [first, folder, second]
     assert dropped_files(mime) == [first, second]
+    assert dropped_paths(None) == []
     assert dropped_files(None) == []
     text = QMimeData()
     text.setText("plain text")
+    assert dropped_paths(text) == []
     assert dropped_files(text) == []
 
 
@@ -74,7 +80,7 @@ def test_file_dropped_on_input_opens_through_open_path(
     assert window.windowTitle() == "sample.json — Galley"
 
 
-@pytest.mark.parametrize("where", ["output", "toolbar"])
+@pytest.mark.parametrize("where", ["output", "toolbar", "status bar"])
 def test_file_dropped_elsewhere_in_the_window_opens_into_input(
     qtbot, tmp_path, monkeypatch, where
 ) -> None:
@@ -83,44 +89,42 @@ def test_file_dropped_elsewhere_in_the_window_opens_into_input(
     window = _show(qtbot)
     opened = _spy_open_path(monkeypatch, window)
     pane = _input_pane(window)
-    target = (
-        _output_pane(window).editor.viewport()
-        if where == "output"
-        else window.findChild(QWidget, "mainToolbar")
-    )
-    assert isinstance(target, QWidget)
+    target = _elsewhere(window, where)
     mime = _files(path)
 
+    # Every drop opens into Input, so Input is outlined wherever the file is.
     assert _drag(target, "enter", mime).isAccepted()
-    # The outline shows only while the file is over Input itself.
-    assert not pane.drop_highlighted()
+    assert pane.drop_highlighted()
     assert not _output_pane(window).drop_highlighted()
+    assert _drag(target, "move", mime).isAccepted()
+    assert pane.drop_highlighted()
     assert _drag(target, "drop", mime).isAccepted()
+    assert not pane.drop_highlighted()
 
     assert opened == [(path, 1)]
     _wait_loaded(qtbot, window, _SAMPLE)
     assert _output(window).toPlainText() == ""
 
 
-def test_outline_follows_the_pointer_and_clears_on_leave(qtbot, tmp_path) -> None:
+def test_outline_stays_across_the_window_and_clears_on_leave(qtbot, tmp_path) -> None:
     path = tmp_path / "sample.json"
     _write(path, _SAMPLE)
     window = _show(qtbot)
     pane = _input_pane(window)
     mime = _files(path)
-    output = _output_pane(window).editor.viewport()
 
-    assert _drag(output, "enter", mime).isAccepted()
-    assert not pane.drop_highlighted()
-    assert _drag(pane.editor.viewport(), "move", mime).isAccepted()
+    assert _drag(_elsewhere(window, "output"), "enter", mime).isAccepted()
     assert pane.drop_highlighted()
-    assert _drag(output, "move", mime).isAccepted()
-    assert not pane.drop_highlighted()
+    for where in ("toolbar", "status bar", "output"):
+        assert _drag(_elsewhere(window, where), "move", mime).isAccepted()
+        assert pane.drop_highlighted()
     assert _drag(pane.editor.viewport(), "move", mime).isAccepted()
     assert pane.drop_highlighted()
 
-    _drag(pane.editor.viewport(), "leave", mime)
+    # Leaving the window clears it.
+    _drag(_elsewhere(window, "status bar"), "leave", mime)
     assert not pane.drop_highlighted()
+    assert not _output_pane(window).drop_highlighted()
     assert _input(window).toPlainText() == ""
 
 
@@ -150,26 +154,49 @@ def test_several_files_open_the_first_and_say_so(qtbot, tmp_path, monkeypatch) -
     assert status.text() == "Opened two.json (23 B)"
 
 
-def test_dropped_folder_says_to_choose_a_file(qtbot, tmp_path) -> None:
+@pytest.mark.parametrize("where", ["input", "output", "toolbar"])
+def test_dropped_folder_is_refused_without_an_outline(
+    qtbot, tmp_path, monkeypatch, where
+) -> None:
     folder = tmp_path / "configs"
     folder.mkdir()
     window = _show(qtbot)
-    editor = _input(window)
-    editor.setPlainText("keep")
+    opened = _spy_open_path(monkeypatch, window)
+    pane = _input_pane(window)
+    target = _elsewhere(window, where)
     mime = _files(folder)
-    viewport = editor.viewport()
+    # Finder and Explorer also put the path in as text. It must not be typed in.
+    mime.setText(str(folder))
+
+    assert not _drag(target, "enter", mime).isAccepted()
+    assert not pane.drop_highlighted()
+    assert opened == []
+    assert window._loading_path is None
+    assert _input(window).toPlainText() == ""
+    assert _output(window).toPlainText() == ""
+
+
+def test_folder_dropped_with_a_file_opens_the_file(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    folder = tmp_path / "configs"
+    folder.mkdir()
+    path = tmp_path / "sample.json"
+    _write(path, _SAMPLE)
+    window = _show(qtbot)
+    opened = _spy_open_path(monkeypatch, window)
+    pane = _input_pane(window)
+    mime = _files(folder, path)
+    viewport = pane.editor.viewport()
 
     assert _drag(viewport, "enter", mime).isAccepted()
+    assert pane.drop_highlighted()
     assert _drag(viewport, "drop", mime).isAccepted()
-    # Typed text asks before it is replaced, folder or not.
-    box = _require(window, "replaceInput")
-    _click(box, "Replace")
 
-    qtbot.waitUntil(lambda: window._loading_path is None)
-    qtbot.waitUntil(
-        lambda: _status(window).text() == "configs is a folder. Choose a file to open."
-    )
-    assert editor.toPlainText() == "keep"
+    # Only files count, so this is a one-file drop.
+    assert opened == [(path, 1)]
+    _wait_loaded(qtbot, window, _SAMPLE)
+    assert _status(window).text() == "Opened sample.json (23 B)"
 
 
 def test_drop_over_typed_input_asks_before_replacing(qtbot, tmp_path) -> None:
@@ -321,6 +348,20 @@ def _edge_pixels(pane: PaneWidget) -> tuple[QColor, QColor]:
     ratio = image.devicePixelRatio()
     x = image.width() - round(4 * ratio)
     return image.pixelColor(x, 0), image.pixelColor(x, round(ratio))
+
+
+def _elsewhere(window, where: str) -> QWidget:
+    """The widget under the pointer for a drag over ``where``."""
+    if where == "input":
+        return _input(window).viewport()
+    if where == "output":
+        return _output(window).viewport()
+    if where == "toolbar":
+        target = window.findChild(QWidget, "mainToolbar")
+    else:
+        target = window.findChild(QStatusBar)
+    assert isinstance(target, QWidget)
+    return target
 
 
 def _drag(widget: QWidget, kind: str, mime: QMimeData) -> QDropEvent | QDragLeaveEvent:
