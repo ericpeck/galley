@@ -1,8 +1,6 @@
 """Convert from Python writes the output editor and shows notices."""
 
 import json
-import statistics
-import time
 
 import pytest
 from benchmarks.size_bench import render_python_literal
@@ -17,6 +15,10 @@ from galley.app.main import create_main_window
 from galley.app.main_window import si_size
 from galley.app.parse_session import ParseSession
 from galley.core.convert_python import ConvertResult, convert_python
+
+# D6: Convert from Python runs on the UI thread, so at its limit the convert
+# itself must stay under about 0.5 s.
+_CONVERT_BUDGET_S = 0.5
 
 _LIMITS = pytest.mark.parametrize(
     ("target", "limit"),
@@ -268,18 +270,16 @@ def test_size_is_utf8_bytes_of_input(qtbot, monkeypatch) -> None:
 
 @pytest.mark.perf
 @_LIMITS
-def test_convert_at_the_limit_stays_under_half_a_second(target, limit) -> None:
+def test_convert_at_the_limit_is_within_budget(perf_budget, target, limit) -> None:
     # The same work as the size bench rows python_to_json and python_to_yaml.
     # Showing the result in Output costs the same as after a Format.
     text = render_python_literal(limit)
-    convert_python(text, target)
-    seconds = []
-    for _run in range(3):
-        started = time.perf_counter()
-        result = convert_python(text, target)
-        seconds.append(time.perf_counter() - started)
-        assert isinstance(result, ConvertResult)
-    assert statistics.median(seconds) < 0.5
+    assert isinstance(convert_python(text, target), ConvertResult)
+    perf_budget.within(
+        _CONVERT_BUDGET_S,
+        lambda: convert_python(text, target),
+        fixture=f"{si_size(limit)} plain-catalog Python literal to {target}",
+    )
 
 
 def _menu(window, title: str) -> QMenu:

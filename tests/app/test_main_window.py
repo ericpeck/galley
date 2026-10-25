@@ -41,8 +41,11 @@ from galley.app.theme import ACCENT, ACCENT_DISABLED
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 
 # Portable text. Ctrl is Command on macOS. ⇧⌘[ switches tabs on macOS, so
-# only macOS keeps ⌥⌘ for Fold and Unfold (#95).
+# only macOS keeps ⌥⌘ for Fold and Unfold (#95). F8 is Play/Pause on Mac
+# keyboards, so macOS lists ⌘' first for the problem keys (#78).
 _FOLD = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
+_PROBLEM = ["Ctrl+'", "F8"] if sys.platform == "darwin" else ["F8"]
+_PREVIOUS = ["Ctrl+Shift+'", "Shift+F8"] if sys.platform == "darwin" else ["Shift+F8"]
 CUSTOM_SHORTCUTS = {
     "Word Wrap": ["Alt+Z"],
     "Close others": ["Ctrl+K, Ctrl+Shift+W"],
@@ -57,6 +60,8 @@ CUSTOM_SHORTCUTS = {
     "Unfold": [_FOLD + "]"],
     "Collapse all": ["Ctrl+K, Ctrl+0"],
     "Expand all": ["Ctrl+K, Ctrl+J"],
+    "Next Problem": _PROBLEM,
+    "Previous Problem": _PREVIOUS,
 }
 
 STANDARD_SHORTCUTS = {
@@ -186,6 +191,8 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Show Whitespace",
         "Indent Guides",
         "Show Problems",
+        "Next Problem",
+        "Previous Problem",
         "|",
         "Expand all",
         "Collapse all",
