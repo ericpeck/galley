@@ -110,6 +110,7 @@ above the caps.
 """
 
 import argparse
+import ast
 import atexit
 import ctypes
 import gc
@@ -139,6 +140,7 @@ from ruamel.yaml.main import CEmitter, CParser
 
 import galley.core
 from galley.core import format as core_format
+from galley.core.convert_python import ConvertError, convert_python
 
 BYTES_PER_MB = 1024 * 1024
 # Default ladders. `--sizes` replaces them for every operation.
@@ -156,6 +158,9 @@ DEFAULT_REALISTIC_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1, 5)
 # One rule-1 trigger, injected once. Same curve as the forced reparse row
 # through 1 MB, so the 5 MB point is not repeated for each trigger.
 DEFAULT_TRIGGER_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1)
+# Convert from Python rows. The UI limits in ``galley.app.limits`` are about
+# 1 MB to JSON and 192 KB to YAML, so the ladder brackets both.
+DEFAULT_PYTHON_SIZES_MB = (0.1, 0.25, 0.5, 1, 2, 5)
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 # Realistic documents replay this seed. Item ``i`` uses ``REALISTIC_SEED + i``.
@@ -225,6 +230,11 @@ YAML_HEADER = 'catalog: "galley-size-bench"\nversion: 1\nitems:\n'
 YAML_SEPARATOR = ""
 YAML_FOOTER_PREFIX = 'padding: "'
 YAML_FOOTER_SUFFIX = '"\n'
+
+PYTHON_HEADER = "{'catalog': 'galley-size-bench', 'version': 1, 'items': [\n"
+PYTHON_SEPARATOR = ",\n"
+PYTHON_FOOTER_PREFIX = "\n], 'padding': '"
+PYTHON_FOOTER_SUFFIX = "'}\n"
 
 OPERATION_SPECS: tuple[dict[str, Any], ...] = (
     {
@@ -474,6 +484,18 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             ),
         )
     )
+    # Convert from Python runs on the UI thread. Its 0.5 s point is the limit
+    # in galley.app.limits, so these are UI rows on the plain catalog.
+    scheduled.extend(
+        Operation(
+            operation_id=f"python_to_{target}",
+            group="convert",
+            source_format="python",
+            fn=convert_python,
+            phases=_python_phases(target),
+        )
+        for target in ("json", "yaml")
+    )
     return scheduled, skipped
 
 
@@ -518,6 +540,20 @@ def _phases_for(operation_id: str, fn: Callable[..., object]) -> PhaseFn:
     if operation_id == "format_yaml":
         return _format_yaml_phases
     return _whole_phases(fn)
+
+
+def _python_phases(target: str) -> PhaseFn:
+    """Time Convert from Python to ``target`` as the window calls it."""
+
+    def phases(text: str) -> PhaseResult:
+        started = time.perf_counter()
+        result = convert_python(text, target)
+        total = time.perf_counter() - started
+        if isinstance(result, ConvertError):
+            raise RuntimeError(f"Convert from Python failed: {result.message}")
+        return result, total, total, 0.0
+
+    return phases
 
 
 def _whole_phases(fn: Callable[..., object]) -> PhaseFn:
@@ -898,6 +934,10 @@ def _record(index: int) -> dict[str, Any]:
 def _json_item(index: int) -> str:
     payload = json.dumps(_record(index), indent=2, ensure_ascii=True)
     return "\n".join(f"    {line}" for line in payload.split("\n"))
+
+
+def _python_item(index: int) -> str:
+    return f"    {_record(index)!r}"
 
 
 def _yaml_item(index: int) -> str:
@@ -1309,6 +1349,8 @@ def _default_sizes(operation: Operation) -> tuple[float, ...]:
         return DEFAULT_TRIGGER_SIZES_MB
     if operation.operation_id in _NEW_OPERATION_IDS:
         return DEFAULT_REALISTIC_SIZES_MB
+    if operation.source_format == "python":
+        return DEFAULT_PYTHON_SIZES_MB
     if operation.source_format == "json":
         return DEFAULT_JSON_SIZES_MB
     if operation.yaml_typ == "safe-c":
@@ -1383,6 +1425,13 @@ def generate_files(
         footer_prefix = YAML_FOOTER_PREFIX
         footer_suffix = YAML_FOOTER_SUFFIX
         render_item = _yaml_item
+    elif source_format == "python":
+        suffix = ".py"
+        header = PYTHON_HEADER
+        separator = PYTHON_SEPARATOR
+        footer_prefix = PYTHON_FOOTER_PREFIX
+        footer_suffix = PYTHON_FOOTER_SUFFIX
+        render_item = _python_item
     else:
         message = f"No synthetic generator for {source_format}."
         raise RuntimeError(message)
@@ -1446,12 +1495,30 @@ def render_realistic_yaml(
         return path.read_text(encoding="utf-8")
 
 
+def render_python_literal(target_bytes: int) -> str:
+    """Return one plain-catalog Python literal of exactly ``target_bytes`` bytes."""
+    with tempfile.TemporaryDirectory(prefix="galley-python-literal-") as temporary:
+        path = Path(temporary) / "catalog.py"
+        _write_document(
+            path,
+            target_bytes,
+            header=PYTHON_HEADER,
+            separator=PYTHON_SEPARATOR,
+            footer_prefix=PYTHON_FOOTER_PREFIX,
+            footer_suffix=PYTHON_FOOTER_SUFFIX,
+            render_item=_python_item,
+        )
+        return path.read_text(encoding="ascii")
+
+
 def _validate_sample(
     path: Path, source_format: str, *, encoding: str = "ascii"
 ) -> None:
     text = path.read_text(encoding=encoding)
     if source_format == "json":
         parsed = json.loads(text)
+    elif source_format == "python":
+        parsed = ast.literal_eval(text)
     else:
         parsed = YAML(typ="safe").load(text)
     items = parsed.get("items") if isinstance(parsed, dict) else None
@@ -1585,8 +1652,8 @@ def _time_once(
 
 
 def _warmup(operation: Operation) -> None:
-    sample = '{"warmup":1}\n' if operation.source_format == "json" else "warmup: 1\n"
-    operation.phases(sample)
+    samples = {"json": '{"warmup":1}\n', "python": "{'warmup': 1}\n"}
+    operation.phases(samples.get(operation.source_format, "warmup: 1\n"))
 
 
 def _measure_loaded(
@@ -2180,7 +2247,9 @@ def interpolate_cutoff(
 def cutoffs_for(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        if row["group"] != "format" or "median_s" not in row:
+        if "median_s" not in row:
+            continue
+        if row["group"] != "format" and row["source_format"] != "python":
             continue
         role = row.get("cutoff_role", "ui")
         if role not in ("ui", "comparison"):
@@ -2354,7 +2423,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Formatting time bands: under 0.5 s no indicator, "
         "0.5 s to 2 s spinner only, over 2 s progress bar with Cancel. "
         "YAML bands use shipped `format_yaml` "
-        '(`typ="safe"`, C extension when installed).'
+        '(`typ="safe"`, C extension when installed). '
+        "Convert from Python shows no indicator. Its limits in "
+        "`galley.app.limits` stay below the 0.5 s point of `python_to_json` "
+        "and `python_to_yaml`."
     )
     lines.extend(
         _cutoff_section(
@@ -2933,7 +3005,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "plain shipped C, and realistic safe+C "
             "0.05, 0.1, 0.25, 0.5, 1, 5; "
             "single-trigger rows "
-            "0.05, 0.1, 0.25, 0.5, 1. "
+            "0.05, 0.1, 0.25, 0.5, 1; "
+            "Convert from Python rows "
+            "0.1, 0.25, 0.5, 1, 2, 5. "
             "Sizes above those caps are timed when passed here."
         ),
     )

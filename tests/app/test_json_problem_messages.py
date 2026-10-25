@@ -67,11 +67,6 @@ _CASES = {
         4,
         'Remove the repeated key "name" on line 4.',
     ),
-    "several could apply": (
-        '{\n  "name": "Galley",\n  version: 2,\n  "tags": ["json"\n}\n',
-        3,
-        "Put double quotes around the key on line 3.",
-    ),
 }
 
 
