@@ -468,9 +468,11 @@ def test_fold_inks_meet_contrast(
 
 def test_actions_have_spec_shortcuts_and_tooltips(qtbot) -> None:
     window, _output = _formatted(qtbot)
+    # ⇧⌘[ switches tabs on macOS, so only macOS keeps ⌥⌘ (#95).
+    fold = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
     expected = {
-        "Fold": ("Ctrl+Alt+[", FOLD),
-        "Unfold": ("Ctrl+Alt+]", UNFOLD),
+        "Fold": (fold + "[", FOLD),
+        "Unfold": (fold + "]", UNFOLD),
         "Collapse all": ("Ctrl+K, Ctrl+0", COLLAPSE_ALL),
         "Expand all": ("Ctrl+K, Ctrl+J", EXPAND_ALL),
     }
@@ -486,10 +488,12 @@ def test_actions_have_spec_shortcuts_and_tooltips(qtbot) -> None:
         assert native_chord_text(COLLAPSE_ALL) == "⌘K ⌘0"
         assert native_chord_text(EXPAND_ALL) == "⌘K ⌘J"
         assert native_chord_text(FOLD) == "⌥⌘["
+        assert native_chord_text(UNFOLD) == "⌥⌘]"
     else:
         assert native_chord_text(COLLAPSE_ALL) == "Ctrl+K Ctrl+0"
         assert native_chord_text(EXPAND_ALL) == "Ctrl+K Ctrl+J"
-        assert native_chord_text(FOLD) == "Ctrl+Alt+["
+        assert native_chord_text(FOLD) == "Ctrl+Shift+["
+        assert native_chord_text(UNFOLD) == "Ctrl+Shift+]"
     collapse = _action(window, "Collapse all")
     expand = _action(window, "Expand all")
     assert collapse.toolTip() == (
