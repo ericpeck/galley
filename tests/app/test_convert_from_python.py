@@ -220,9 +220,7 @@ def test_convert_refuses_one_byte_over_the_limit(
 
     assert output.toPlainText() == "previous\n"
     assert editor.toPlainText() == text
-    assert status.text() == convert_python_too_large_message(
-        si_size(limit + 1), si_size(limit)
-    )
+    assert status.text() == convert_python_too_large_message(si_size(limit + 1))
 
 
 @pytest.mark.parametrize(
@@ -232,17 +230,17 @@ def test_convert_refuses_one_byte_over_the_limit(
             "JSON",
             3_300_000,
             "This document is too large to convert from Python (3.3 MB). "
-            "The limit is 1 MB.",
+            "The limit is about 1 MB for JSON or about 192 KB for YAML.",
         ),
         (
             "YAML",
             250_000,
             "This document is too large to convert from Python (250 KB). "
-            "The limit is 192 KB.",
+            "The limit is about 1 MB for JSON or about 192 KB for YAML.",
         ),
     ],
 )
-def test_size_message_names_the_size_and_the_limit_for_the_output_format(
+def test_size_message_names_the_size_and_both_limits(
     qtbot, monkeypatch, target, size, message
 ) -> None:
     window, editor, output, status = _convert_window(qtbot, target)
@@ -264,7 +262,7 @@ def test_size_is_utf8_bytes_of_input(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(main_window_module, "convert_python", _refuse_to_convert)
     _action(window, "Convert from Python").trigger()
     size = si_size(len(text.encode("utf-8")))
-    assert status.text() == convert_python_too_large_message(size, "192 KB")
+    assert status.text() == convert_python_too_large_message(size)
     assert output.toPlainText() == "previous\n"
 
 

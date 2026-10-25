@@ -799,9 +799,7 @@ class MainWindow(QMainWindow):
         yaml_target = target.casefold() == "yaml"
         limit = PYTHON_TO_YAML_BYTES if yaml_target else PYTHON_TO_JSON_BYTES
         if size > limit:
-            self._status.set_state(
-                convert_python_too_large_message(si_size(size), si_size(limit))
-            )
+            self._status.set_state(convert_python_too_large_message(si_size(size)))
             return
         result = convert_python(text, target)
         if isinstance(result, ConvertError):

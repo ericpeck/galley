@@ -58,11 +58,14 @@ def unescape_too_large_message(size: str, limit: str) -> str:
     return f"This document is too large to unescape ({size}). The limit is {limit}."
 
 
-def convert_python_too_large_message(size: str, limit: str) -> str:
-    """Status when Input is too large for Convert from Python on the UI thread."""
+def convert_python_too_large_message(size: str) -> str:
+    """Status when Input is too large for Convert from Python on the UI thread.
+
+    One sentence names both limits, whichever format Output is.
+    """
     return (
         f"This document is too large to convert from Python ({size}). "
-        f"The limit is {limit}."
+        "The limit is about 1 MB for JSON or about 192 KB for YAML."
     )
 
 
