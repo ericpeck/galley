@@ -83,7 +83,11 @@ from galley.app.open_text import (
 )
 from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
-from galley.app.problem_text import DisplayProblem, problem_count_text
+from galley.app.problem_text import (
+    DisplayProblem,
+    announcement_text,
+    problem_count_text,
+)
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import (
     MIN_WIDTH,
@@ -406,6 +410,8 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_lines)
         guides.addAction(actions.guides_depth)
         view.addAction(actions.show_problems)
+        view.addAction(actions.next_problem)
+        view.addAction(actions.previous_problem)
         view.addSeparator()
         view.addAction(actions.expand_all)
         view.addAction(actions.collapse_all)
@@ -599,6 +605,8 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.next_problem.triggered.connect(self._next_problem)
+        actions.previous_problem.triggered.connect(self._previous_problem)
         actions.expand_all.triggered.connect(self._expand_all)
         actions.collapse_all.triggered.connect(self._collapse_all)
         actions.fold.triggered.connect(self._output_pane.editor.fold_at_cursor)
@@ -965,7 +973,8 @@ class MainWindow(QMainWindow):
             self._reveal_timer.stop()
             self._apply_problems(rows)
             return
-        self._finish_format(problem_count_text(len(rows)))
+        count = sum(1 for row in rows if not row.is_note())
+        self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
 
     def _finish_format(self, status: str) -> None:
@@ -990,24 +999,55 @@ class MainWindow(QMainWindow):
         self._output_pane.editor.setReadOnly(locked)
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
-        self._problems_pane.set_problems(rows)
+        """Fill the pane, mark the gutter, count, and tell screen readers.
+
+        Only listed rows get a gutter marker, so every marker has a row to
+        select. The count is every problem.
+        """
+        pane = self._problems_pane
+        pane.set_problems(rows)
+        shown = pane.shown()
         messages: dict[int, list[str]] = {}
-        for row in rows:
-            messages.setdefault(row.lineno, []).append(row.message)
+        for row in shown:
+            messages.setdefault(row.lineno, []).append(row.full_message())
         self._input_pane.editor.set_problem_messages(
             {lineno: "\n".join(texts) for lineno, texts in messages.items()}
         )
         self._layout_problems()
-        self._status.set_problem_count(len(rows))
+        self._status.set_problem_count(pane.count())
+        if shown:
+            self._status.announce(announcement_text(pane.count(), shown[0]))
 
     def _clear_problems(self) -> None:
         self._problems_pane.set_problems(())
         self._input_pane.editor.set_problem_lines(set())
         self._layout_problems()
 
-    def _jump_to_problem(self, lineno: int) -> None:
+    def _next_problem(self) -> None:
+        self._step_problem(forward=True)
+
+    def _previous_problem(self) -> None:
+        self._step_problem(forward=False)
+
+    def _step_problem(self, *, forward: bool) -> None:
+        """Go to the listed problem after or before the Input cursor, wrapping."""
+        shown = self._problems_pane.shown()
+        if not shown:
+            return
+        here = self._input_pane.editor.cursor_place()
+        places = [(row.lineno, max(row.colno, 1)) for row in shown]
+        if forward:
+            later = [index for index, place in enumerate(places) if place > here]
+            index = later[0] if later else 0
+        else:
+            earlier = [index for index, place in enumerate(places) if place < here]
+            index = earlier[-1] if earlier else len(places) - 1
+        self._problems_pane.select_row(index)
+        self._jump_to_problem(shown[index].lineno, shown[index].colno)
+
+    def _jump_to_problem(self, lineno: int, colno: int = 0) -> None:
         editor = self._input_pane.editor
-        editor.reveal_line(lineno)
+        editor.reveal_line(lineno, colno)
         self._active_editor = editor
         self._update_caption()
         self._update_focus_ring()
