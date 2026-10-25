@@ -291,6 +291,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._settle_split()
+        self._layout_problems()
 
     def _settle_split(self) -> None:
         splitter = self._splitter
@@ -674,6 +675,8 @@ class MainWindow(QMainWindow):
         for pane in (self._input_pane, self._output_pane):
             coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
+            coming_soon_wrapper(pane.pop_out_button, actions.pop_out)
+            pane.pop_out_button.sync_tool_tip()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format from whichever editor has focus."""
@@ -1072,6 +1075,7 @@ class MainWindow(QMainWindow):
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
         save_stacked_panes(stacked)
+        self._layout_problems()
 
     def _apply_stacked_layout(self, stacked: bool) -> None:
         splitter = self._splitter
@@ -1146,8 +1150,21 @@ class MainWindow(QMainWindow):
             return
         pane.setMaximumWidth(16_777_215)
         pane.setMinimumWidth(MIN_WIDTH)
-        width = min(self._problems_width, max(MIN_WIDTH, total - 240))
+        # Shrink toward MIN_WIDTH before the tab strips shed (#91 D2).
+        # The saved width stays as the user left it.
+        room = total - splitter.handleWidth() - self._panes_full_width()
+        width = min(self._problems_width, max(MIN_WIDTH, min(room, total - 240)))
         splitter.setSizes([width, max(0, total - width)])
+
+    def _panes_full_width(self) -> int:
+        """Input / Output width at which neither tab strip sheds, split evenly."""
+        widths = [
+            pane.full_strip_width() for pane in (self._input_pane, self._output_pane)
+        ]
+        splitter = self._splitter
+        if splitter is None or splitter.orientation() == Qt.Orientation.Vertical:
+            return max(widths)
+        return 2 * max(widths) + splitter.handleWidth()
 
     def _on_problems_splitter_moved(self, pos: int, _index: int) -> None:
         sizes = self._problems_splitter.sizes()
