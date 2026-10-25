@@ -40,6 +40,7 @@ from galley.app.appearance import (
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
+    convert_python_too_large_message,
     escape_input,
     escape_too_large_message,
     unescape_input,
@@ -56,6 +57,8 @@ from galley.app.limits import (
     JSON_BUSY_BYTES,
     JSON_PROGRESS_BYTES,
     JSON_WARNING_BYTES,
+    PYTHON_TO_JSON_BYTES,
+    PYTHON_TO_YAML_BYTES,
     YAML_BUSY_BYTES,
     YAML_PROGRESS_BYTES,
     YAML_TAB_BUSY_BYTES,
@@ -792,13 +795,24 @@ class MainWindow(QMainWindow):
             self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
 
     def _convert_python(self) -> None:
-        """Convert the input literal into the output editor and show notices."""
+        """Convert the input literal into the output editor and show notices.
+
+        This runs on the UI thread, so Input must be no larger than the limit
+        for the Output format. Above it, Output is left unchanged.
+        """
         if self._formatting:
             return
         text = self._input_pane.editor.toPlainText()
         if _is_blank(text):
             return
-        result = convert_python(text, self._output_pane.format_name())
+        target = self._output_pane.format_name()
+        size = _utf8_size(text)
+        yaml_target = target.casefold() == "yaml"
+        limit = PYTHON_TO_YAML_BYTES if yaml_target else PYTHON_TO_JSON_BYTES
+        if size > limit:
+            self._status.set_state(convert_python_too_large_message(si_size(size)))
+            return
+        result = convert_python(text, target)
         if isinstance(result, ConvertError):
             self._status.set_state(result.message)
             return
@@ -808,7 +822,6 @@ class MainWindow(QMainWindow):
                 " ".join(notice.message for notice in result.notices)
             )
             return
-        target = self._output_pane.format_name()
         self._status.set_state(f"Converted to {target}.")
 
     def _escape_string(self) -> None:
