@@ -92,6 +92,14 @@ class JSONDuplicateKeyError(ValueError):
         return (JSONDuplicateKeyError, (self.duplicates,))
 
 
+class NotJSONValueError(ValueError):
+    """A YAML value JSON can't hold, such as a date, binary data, or a set.
+
+    Format to JSON raises it from the ``json.dumps`` hook, so it has no line.
+    The words shown to the user are chosen in ``galley.app``.
+    """
+
+
 def utf8_input_error(data: bytes, offset: int) -> InputError:
     """Build an ``invalid_utf8`` error for the byte at ``offset``.
 

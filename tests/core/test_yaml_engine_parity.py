@@ -15,7 +15,7 @@ import pytest
 import ruamel.yaml.main as ruamel_main
 
 import galley.core.format as format_module
-from galley.core.errors import InputError
+from galley.core.errors import InputError, NotJSONValueError
 from galley.core.escape import escape_document
 from galley.core.format import format_document, format_json
 
@@ -157,10 +157,24 @@ def test_recursive_alias_without_a_surrogate_still_finishes(engine: str) -> None
         format_document('a: &a ["\\\\uD800", *a]\n', "yaml", "json")
 
 
-def test_root_binary_fails_the_same_way(engine: str) -> None:
-    """The C parser can't read the emitter's root ``!!binary`` block."""
-    with pytest.raises(TypeError, match="bytes is not JSON serializable"):
-        format_document("!!binary aGVsbG8=\n", "yaml", "json")
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        # The C parser can't read the emitter's root ``!!binary`` block.
+        ("!!binary aGVsbG8=\n", "bytes"),
+        ("file:\n  data: !!binary aGVsbG8=\n", "bytes"),
+        ("- [1, !!binary aGVsbG8=]\n", "bytes"),
+        ("day: 2020-01-01\n", "date"),
+        ("2020-01-01\n", "date"),
+        ("at: 2020-01-01 10:00:00\n", "datetime"),
+        ("tags: !!set {alpha}\n", "set"),
+    ],
+)
+def test_yaml_to_json_names_a_value_json_cannot_hold(
+    engine: str, text: str, kind: str
+) -> None:
+    with pytest.raises(NotJSONValueError, match=f"JSON can't hold a {kind} value"):
+        format_document(text, "yaml", "json")
 
 
 _SET_TEXT = "tags: !!set {gamma, alpha, Beta, 订单, café, delta, 10, 9, null}\n"

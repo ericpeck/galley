@@ -18,6 +18,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from io import StringIO
 
 from ruamel.yaml import YAML
@@ -52,6 +53,7 @@ from galley.core.errors import (
     DuplicateKey,
     InputError,
     JSONDuplicateKeyError,
+    NotJSONValueError,
     escape_error,
     nesting_error,
     utf8_input_error,
@@ -1034,7 +1036,7 @@ def format_document(text: str | bytes, source: str, target: str) -> str:
     value = yaml_json_value(text)
     opened = _yaml_limits(text)
     try:
-        return _dump_json(value)
+        return _dump_json(value, default=_not_json_value)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1075,8 +1077,15 @@ def _normalize_format(name: str) -> str:
     return kind
 
 
-def _dump_json(value: object) -> str:
-    return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+def _dump_json(
+    value: object, *, default: Callable[[object], object] | None = None
+) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False, default=default) + "\n"
+
+
+def _not_json_value(value: object) -> object:
+    """``json.dumps`` hook for a YAML value JSON can't hold, at any depth."""
+    raise NotJSONValueError(f"JSON can't hold a {type(value).__name__} value")
 
 
 def _dump_yaml_value(value: object) -> str:

@@ -17,7 +17,12 @@ Nothing here runs the text. Both directions use ``json`` and the formatter.
 import json
 from typing import Literal
 
-from galley.core.errors import DuplicateKey, InputError, JSONDuplicateKeyError
+from galley.core.errors import (
+    DuplicateKey,
+    InputError,
+    JSONDuplicateKeyError,
+    NotJSONValueError,
+)
 from galley.core.format import (
     _normalize_format,
     format_document,
@@ -28,7 +33,7 @@ from galley.core.format import (
 UnescapeKind = Literal["not_string", "not_json", "duplicate_key"]
 
 
-class EscapeError(Exception):
+class EscapeError(NotJSONValueError):
     """The document parsed, but JSON can't hold one of its values.
 
     YAML can load a date, binary data, a set, a non-scalar key, or an alias
