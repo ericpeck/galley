@@ -21,3 +21,12 @@ YAML_WARNING_BYTES = 352 * _SI_KB
 JSON_BUSY_BYTES = 5 * _SI_MB
 JSON_PROGRESS_BYTES = 20 * _SI_MB
 JSON_WARNING_BYTES = 100 * _SI_MB
+
+# Copy As (#66) builds Masked and Random fake on the worker unless the text
+# is smaller than these, so the UI thread stays inside its 100 ms budget.
+# Copy As walks the whole tree in Python, and YAML loads with the pure
+# parser. On an Apple M4 Pro, Random fake took 11 ms for 32 KB of JSON and
+# 14 ms for 2 KB of YAML, which leaves room for a machine about 4x slower.
+# Interim values until size_bench has Copy As rows.
+JSON_COPY_AS_INLINE_BYTES = 32 * _SI_KB
+YAML_COPY_AS_INLINE_BYTES = 2 * _SI_KB

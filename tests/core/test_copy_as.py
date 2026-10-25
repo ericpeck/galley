@@ -203,6 +203,19 @@ def test_a_held_copy_as_job_still_builds_the_copy() -> None:
     assert held.result == copy_as_text(_output("json"), "json", "masked")
 
 
+def test_a_failure_event_carries_no_error_text() -> None:
+    text = "api_key: [fake-not-a-real-token\nemail: pat@example.com\n"
+    with pytest.raises(CopyAsError) as caught:
+        copy_as_text(text, "yaml", "masked")
+    assert "fake-not-a-real-token" in str(caught.value)
+    assert "pat@example.com" in str(caught.value)
+    failed = run_copy_as(CopyAsJob(8, text, "yaml", "masked"))
+    assert failed == CopyAsFailureEvent(8, True)
+    sent = pickle.dumps(failed)
+    assert b"fake-not-a-real-token" not in sent
+    assert b"example.com" not in sent
+
+
 def test_copy_as_jobs_and_events_pickle() -> None:
     job = CopyAsJob(
         1, _output("yaml"), "yaml", "fake", MaskRules(keys=("email",)), hold_s=0.5
@@ -210,7 +223,7 @@ def test_copy_as_jobs_and_events_pickle() -> None:
     assert pickle.loads(pickle.dumps(job)) == job
     event = run_copy_as(CopyAsJob(1, job.text, "yaml", "fake", job.rules))
     assert pickle.loads(pickle.dumps(event)) == event
-    failure = CopyAsFailureEvent(2, True, "bad")
+    failure = CopyAsFailureEvent(2, True)
     assert pickle.loads(pickle.dumps(failure)) == failure
 
 

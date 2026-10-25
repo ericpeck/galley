@@ -7,29 +7,30 @@ from collections import Counter
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAccessible, QAction, QColor, QTextCursor
-from PySide6.QtWidgets import QApplication, QComboBox, QMenu
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMenu
 from ruamel.yaml import YAML
 
 import galley.app.main_window as main_window_module
 import galley.app.parse_session as parse_session_module
 from galley.app.actions import UNBUILT_ACTIONS, is_unbuilt
-from galley.app.banner import FORMATTER_STOPPED
 from galley.app.copy_as import (
     COPIED_ORIGINAL,
     COPY_AS_BUSY_MESSAGE,
     COPY_AS_BUSY_NAME,
+    COPY_AS_FAILED_MESSAGE,
     COPY_AS_PROGRESS_NAME,
     COPY_CANCELED_MESSAGE,
     MASK_HELP,
     copied_text,
-    not_copied_text,
+    copy_as_inline_limit,
 )
 from galley.app.editor import CodeEditor
+from galley.app.limits import JSON_COPY_AS_INLINE_BYTES, YAML_COPY_AS_INLINE_BYTES
 from galley.app.main import create_main_window
 from galley.app.parse_session import ParseSession
 from galley.app.theme import contrast_ratio
 from galley.core.format import format_document
-from galley.core.mask import MASK
+from galley.core.mask import MASK, CopyAsError, copy_as_text
 from galley.core.worker import CopyAsFailureEvent, CopyAsJob
 
 _SPAWN_TIMEOUT_MS = 20000
@@ -136,9 +137,24 @@ def test_copy_as_is_in_the_edit_menu_and_the_output_menu(qtbot) -> None:
 def test_masked_and_random_fake_carry_the_help_text(qtbot) -> None:
     window = _show(qtbot)
     assert _copy_as_menu(window).toolTipsVisible()
-    assert _action(window, "Masked").toolTip() == MASK_HELP
-    assert _action(window, "Random fake").toolTip() == MASK_HELP
+    for label in ("Masked", "Random fake"):
+        assert _action(window, label).toolTip() == MASK_HELP
+        # The macOS menu bar shows no tooltips; the status bar shows this.
+        assert _action(window, label).statusTip() == MASK_HELP
     assert _action(window, "Original").toolTip() != MASK_HELP
+    assert _action(window, "Original").statusTip() == ""
+
+
+def test_hovering_masked_shows_the_help_in_the_status_bar(qtbot) -> None:
+    window, _output = _with_output(qtbot)
+    edit = window.findChild(QMenu, "menuEdit")
+    assert isinstance(edit, QMenu)
+    submenu = _open_copy_as_from(qtbot, window, edit)
+    qtbot.keyClick(submenu, Qt.Key.Key_Down)
+    assert submenu.activeAction() is _action(window, "Masked")
+    qtbot.waitUntil(lambda: window.statusBar().currentMessage() == MASK_HELP)
+    submenu.close()
+    edit.close()
 
 
 def test_copy_as_is_built_and_not_on_either_release_list(qtbot) -> None:
@@ -188,12 +204,17 @@ def test_copy_as_is_disabled_while_format_runs(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("fmt", ["JSON", "YAML"])
-def test_original_copies_the_output_as_it_is(qtbot, fmt: str) -> None:
+def test_original_copies_the_unmasked_text(qtbot, fmt: str) -> None:
     window, output = _with_output(qtbot, fmt)
     shown = output.toPlainText()
+    # Original's source is the unmasked text (#66). It must stay so when
+    # Output can show masked values.
+    assert window._copy_as_source() == shown
     copied = _copy(window, "Original")
     assert copied == shown
-    assert "pat.example@example.com" in copied
+    for hidden in _HIDDEN:
+        assert hidden in copied
+    assert MASK not in copied
     assert window._status.state_text() == COPIED_ORIGINAL
     assert output.toPlainText() == shown
 
@@ -279,13 +300,11 @@ def test_a_selection_copies_only_the_selected_value(qtbot) -> None:
 def test_a_selection_that_is_not_a_whole_value_copies_nothing(qtbot) -> None:
     window, output = _with_output(qtbot, "JSON")
     _select(output, '"email"', '.com"')
-    for label, mode in (("Masked", "masked"), ("Random fake", "fake")):
+    for label in ("Masked", "Random fake"):
         assert _copy(window, label) == _UNTOUCHED
-        assert window._status.state_text() == not_copied_text(
-            mode, "JSON", invalid=True, selection=True
-        )
+        assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
     assert window._status.state_text() == (
-        "Nothing copied. Select a whole JSON value, or clear the selection."
+        "Nothing copied. Galley couldn't start the copy. Try again."
     )
 
 
@@ -293,7 +312,7 @@ def test_output_that_does_not_parse_copies_nothing(qtbot) -> None:
     broken = '{"email": "pat@example.com",\n'
     window, output = _with_output(qtbot, "JSON", broken)
     assert _copy(window, "Masked") == _UNTOUCHED
-    assert window._status.state_text() == "Nothing copied. Output isn't valid JSON."
+    assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
     assert _copy(window, "Original") == broken
     assert output.toPlainText() == broken
 
@@ -302,9 +321,77 @@ def test_a_masking_failure_copies_nothing(qtbot) -> None:
     text = "email: !!pairs\n- a: pat@example.com\n"
     window, _output = _with_output(qtbot, "YAML", text)
     assert _copy(window, "Random fake") == _UNTOUCHED
-    assert window._status.state_text() == (
-        "Nothing copied. Couldn't build the random fake copy."
-    )
+    assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
+
+
+_SECRET = "fake-not-a-real-token"
+# Invalid YAML whose parse error quotes the line with a fake secret on it.
+_BROKEN_YAML = f"name: Pat Example\napi_key: [{_SECRET}\nemail: pat@example.com\n"
+
+
+def _status_texts(window) -> list[str]:
+    """Everything the status bar shows or reads out, temporary tips included."""
+    label = window.findChild(QLabel, "statusMessage")
+    assert isinstance(label, QLabel)
+    return [
+        window._status.state_text(),
+        label.text(),
+        label.toolTip(),
+        label.accessibleName(),
+        label.accessibleDescription(),
+        window.statusBar().currentMessage(),
+    ]
+
+
+def test_the_yaml_error_is_never_shown(qtbot) -> None:
+    with pytest.raises(CopyAsError) as caught:
+        copy_as_text(_BROKEN_YAML, "yaml", "masked")
+    assert _SECRET in str(caught.value)
+    window, output = _with_output(qtbot, "YAML", _BROKEN_YAML)
+    for label in ("Masked", "Random fake"):
+        assert _copy(window, label) == _UNTOUCHED
+        assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
+        for text in _status_texts(window):
+            assert _SECRET not in text
+            assert "pat@example.com" not in text
+    assert output.toPlainText() == _BROKEN_YAML
+
+
+def test_the_yaml_error_is_never_shown_from_the_worker(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(main_window_module, "copy_as_inline_limit", lambda _fmt: 0)
+    window, _output = _with_output(qtbot, "YAML", _BROKEN_YAML)
+    try:
+        _action(window, "Masked").trigger()
+        assert window._copy_as_job is not None
+        qtbot.waitUntil(lambda: window._copy_as_job is None, timeout=_SPAWN_TIMEOUT_MS)
+        assert QApplication.clipboard().text() == _UNTOUCHED
+        assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
+        for text in _status_texts(window):
+            assert _SECRET not in text
+    finally:
+        window.shutdown_parse_worker()
+
+
+def test_only_a_tiny_output_is_copied_on_the_ui_thread(qtbot) -> None:
+    assert copy_as_inline_limit("JSON") == JSON_COPY_AS_INLINE_BYTES == 32_000
+    assert copy_as_inline_limit("YAML") == YAML_COPY_AS_INLINE_BYTES == 2_000
+    rows = [
+        {"email": f"user{index}@example.com", "phone": "555-0142"}
+        for index in range(800)
+    ]
+    text = json.dumps(rows, indent=2)
+    assert len(text.encode()) > JSON_COPY_AS_INLINE_BYTES
+    window, _output = _with_output(qtbot, "JSON", text)
+    try:
+        _action(window, "Masked").trigger()
+        assert window._copy_as_job is not None
+        assert QApplication.clipboard().text() == _UNTOUCHED
+        qtbot.waitUntil(lambda: window._copy_as_job is None, timeout=_SPAWN_TIMEOUT_MS)
+        copied = QApplication.clipboard().text()
+        assert "@example.com" not in copied
+        assert window._status.state_text() == "Copied masked (1,600 values hidden)"
+    finally:
+        window.shutdown_parse_worker()
 
 
 def test_a_large_output_is_copied_on_the_worker(qtbot, monkeypatch) -> None:
@@ -344,20 +431,17 @@ def test_a_large_output_is_copied_on_the_worker(qtbot, monkeypatch) -> None:
 
 def test_a_worker_that_stops_mid_copy_copies_nothing(qtbot) -> None:
     window, _output = _with_output(qtbot)
-    window._copy_as_mode = "masked"
     window._copy_as_job = 41
     window._sync_format_button()
     assert not _action(window, "Masked").isEnabled()
-    stale = CopyAsFailureEvent(40, False, FORMATTER_STOPPED)
+    stale = CopyAsFailureEvent(40, False)
     window._session.copy_as_failed.emit(40, stale)
     assert window._copy_as_job == 41
-    stopped = CopyAsFailureEvent(41, False, FORMATTER_STOPPED)
+    stopped = CopyAsFailureEvent(41, False)
     window._session.copy_as_failed.emit(41, stopped)
     assert window._copy_as_job is None
     assert QApplication.clipboard().text() == _UNTOUCHED
-    assert window._status.state_text() == (
-        "Nothing copied. Couldn't build the masked copy."
-    )
+    assert window._status.state_text() == COPY_AS_FAILED_MESSAGE
     assert _action(window, "Masked").isEnabled()
 
 

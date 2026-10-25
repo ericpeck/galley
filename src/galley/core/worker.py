@@ -167,11 +167,14 @@ class CopyAsEvent:
 
 @dataclass(frozen=True)
 class CopyAsFailureEvent:
-    """Copy As built no text. ``invalid`` is :attr:`CopyAsError.invalid`."""
+    """Copy As built no text. ``invalid`` is :attr:`CopyAsError.invalid`.
+
+    It carries no error text: a parse error can quote the Output, which may
+    hold the values Masked and Random fake are meant to hide.
+    """
 
     job_id: int
     invalid: bool
-    message: str
 
 
 def run_worker(job_queue: Queue, event_queue: Queue) -> None:
@@ -379,7 +382,7 @@ def run_copy_as(job: CopyAsJob) -> CopyAsEvent | CopyAsFailureEvent:
     try:
         result = copy_as_text(job.text, job.fmt, job.mode, job.rules)
     except CopyAsError as exc:
-        return CopyAsFailureEvent(job.job_id, exc.invalid, str(exc))
+        return CopyAsFailureEvent(job.job_id, exc.invalid)
     return CopyAsEvent(job.job_id, result)
 
 

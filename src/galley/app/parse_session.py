@@ -215,7 +215,7 @@ class ParseSession(QObject):
     # The worker exited while comparing. A replacement has already started.
     compare_stopped = Signal(int)
     # Copy As: job id, then a ``CopyAsResult`` or a ``CopyAsFailureEvent``.
-    # A worker that exits mid-copy is a failure with FORMATTER_STOPPED.
+    # A worker that exits mid-copy is a failure too.
     copy_as_finished = Signal(int, object)
     copy_as_failed = Signal(int, object)
 
@@ -612,7 +612,7 @@ class ParseSession(QObject):
         if isinstance(active, _CompareActive) and not self._closing:
             self.compare_stopped.emit(active.job_id)
         elif isinstance(active, _CopyAsActive) and not self._closing:
-            stopped = CopyAsFailureEvent(active.job_id, False, FORMATTER_STOPPED)
+            stopped = CopyAsFailureEvent(active.job_id, False)
             self.copy_as_failed.emit(active.job_id, stopped)
         elif had_job and not self._closing:
             self.failed.emit(FORMATTER_STOPPED)

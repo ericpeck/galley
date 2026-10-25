@@ -2,11 +2,11 @@
 
 Copy As works on Output: the selection, or all of Output when nothing is
 selected. The text itself comes from :func:`galley.core.mask.copy_as_text`.
-A small Output is copied on the UI thread. A larger one goes to the parse
-worker, so the window keeps responding, and Cancel or Esc stops it.
+Only a tiny Output is copied on the UI thread. Anything larger goes to the
+parse worker, so the window keeps responding, and Cancel or Esc stops it.
 """
 
-from galley.app.limits import _SI_KB, _SI_MB
+from galley.app.limits import JSON_COPY_AS_INLINE_BYTES, YAML_COPY_AS_INLINE_BYTES
 from galley.core.mask import CopyAsMode
 
 COPY_AS_TITLE = "Copy As"
@@ -15,9 +15,9 @@ COPY_AS_BUSY_MESSAGE = "Copying…"
 COPY_AS_PROGRESS_NAME = "Copying progress"
 # Cancel or Esc during a Copy As on the worker (Eric, via Chief, on #99).
 COPY_CANCELED_MESSAGE = "Copy canceled. Nothing copied."
-COPY_AS_NOT_STARTED_MESSAGE = (
-    "Nothing copied. The formatter is shut down or already running."
-)
+# Every failure, whatever the cause. Error text can quote the Output, so
+# none of it reaches the status bar.
+COPY_AS_FAILED_MESSAGE = "Nothing copied. Galley couldn't start the copy. Try again."
 
 # Menu order is Bill's brief, without "Placeholders" (dropped by Eric).
 COPY_AS_LABELS: dict[CopyAsMode, str] = {
@@ -36,15 +36,6 @@ MASK_HELP = (
 
 COPIED_ORIGINAL = "Copied original (unmasked)"
 
-# Copy As walks the whole tree in Python, so it costs more per byte than
-# Format, and YAML loads with the pure-Python parser. Format's busy sizes
-# would hold the UI thread for over a second. These sizes keep an inline
-# copy near 250 ms on an Apple M-series Mac (1.6 MB JSON took 390 ms for
-# Random fake; 1 MB YAML took 6.7 s). Anything at or above them runs on
-# the worker.
-JSON_COPY_AS_INLINE_BYTES = 1 * _SI_MB
-YAML_COPY_AS_INLINE_BYTES = 32 * _SI_KB
-
 
 def copy_as_inline_limit(fmt: str) -> int:
     """Bytes below which Copy As runs on the UI thread for ``fmt``."""
@@ -61,14 +52,3 @@ def copied_text(mode: CopyAsMode, count: int) -> str:
     if mode == "masked":
         return f"Copied masked ({values} hidden)"
     return f"Copied random fake ({values} replaced)"
-
-
-def not_copied_text(
-    mode: CopyAsMode, fmt: str, *, invalid: bool, selection: bool
-) -> str:
-    """Status text when Copy As built nothing. The clipboard is unchanged."""
-    if invalid and selection:
-        return f"Nothing copied. Select a whole {fmt} value, or clear the selection."
-    if invalid:
-        return f"Nothing copied. Output isn't valid {fmt}."
-    return f"Nothing copied. Couldn't build the {COPY_AS_LABELS[mode].lower()} copy."

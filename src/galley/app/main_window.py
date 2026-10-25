@@ -40,14 +40,13 @@ from galley.app.appearance import (
 from galley.app.copy_as import (
     COPY_AS_BUSY_MESSAGE,
     COPY_AS_BUSY_NAME,
-    COPY_AS_NOT_STARTED_MESSAGE,
+    COPY_AS_FAILED_MESSAGE,
     COPY_AS_PROGRESS_NAME,
     COPY_AS_TITLE,
     COPY_CANCELED_MESSAGE,
     MASK_HELP,
     copied_text,
     copy_as_inline_limit,
-    not_copied_text,
 )
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
@@ -246,9 +245,6 @@ class MainWindow(QMainWindow):
         # The Copy As job on the worker, and what the status text needs.
         self._copy_as_job: int | None = None
         self._copy_as_started_s = 0.0
-        self._copy_as_mode: CopyAsMode = "original"
-        self._copy_as_fmt = "JSON"
-        self._copy_as_selection = False
         self._copy_as_reveal_timer = QTimer(self)
         self._copy_as_reveal_timer.setSingleShot(True)
         self._copy_as_reveal_timer.timeout.connect(self._show_copying)
@@ -406,7 +402,10 @@ class MainWindow(QMainWindow):
         self._copy_as_menu.setToolTipsVisible(True)
         for mode, item in actions.copy_as_actions().items():
             if mode != "original":
+                # The macOS menu bar shows no tooltips, so the status bar
+                # carries the help too.
                 item.setToolTip(MASK_HELP)
+                item.setStatusTip(MASK_HELP)
             self._copy_as_menu.addAction(item)
         edit.addAction(actions.paste)
         edit.addAction(actions.select_all)
@@ -1450,31 +1449,37 @@ class MainWindow(QMainWindow):
     def _copy_as(self, mode: CopyAsMode) -> None:
         """Copy Output, or its selection, as ``mode``. Output is not changed.
 
-        Original is the text as it is. Masked and Random fake are built
-        from it here when it is small, and on the worker when it is not.
+        Original is the unmasked text as it is. Masked and Random fake are
+        built from it on the worker, unless it is tiny.
         """
         if not self._copy_as_available():
             return
-        editor = self._output_pane.editor
-        cursor = editor.textCursor()
-        selection = cursor.hasSelection()
-        text = cursor.selection().toPlainText() if selection else editor.toPlainText()
+        text = self._copy_as_source()
         fmt = self._output_pane.format_name()
-        self._copy_as_mode = mode
-        self._copy_as_fmt = fmt
-        self._copy_as_selection = selection
         if mode == "original" or _utf8_size(text) < copy_as_inline_limit(fmt):
             self._apply_copy_as(run_copy_as(CopyAsJob(0, text, fmt, mode)))
             return
         self._session.start()
         job_id = self._session.submit_copy_as(text, fmt, mode)
         if job_id is None:
-            self._status.set_state(COPY_AS_NOT_STARTED_MESSAGE)
+            self._status.set_state(COPY_AS_FAILED_MESSAGE)
             return
         self._copy_as_job = job_id
         self._copy_as_started_s = _monotonic()
         self._copy_as_reveal_timer.start(SPINNER_REVEAL_MS)
         self._sync_format_button()
+
+    def _copy_as_source(self) -> str:
+        """The unmasked Output text Copy As starts from: the selection, or all.
+
+        Output never shows masked text yet. When the masking view ships,
+        this must keep returning the unmasked text (#66).
+        """
+        editor = self._output_pane.editor
+        cursor = editor.textCursor()
+        if cursor.hasSelection():
+            return cursor.selection().toPlainText()
+        return editor.toPlainText()
 
     def _show_copying(self) -> None:
         """Show the spinner, then the bar with Cancel, on Format's timings."""
@@ -1523,15 +1528,8 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(result.text)
             self._status.set_state(copied_text(result.mode, result.count))
             return
-        self._status.set_state(
-            not_copied_text(
-                self._copy_as_mode,
-                self._copy_as_fmt,
-                invalid=event.invalid,
-                selection=self._copy_as_selection,
-            ),
-            event.message,
-        )
+        # Never show the error itself: it can quote the Output.
+        self._status.set_state(COPY_AS_FAILED_MESSAGE)
 
     def _copy_as_available(self) -> bool:
         """Copy As needs Output text and no running Format or Copy As job."""
