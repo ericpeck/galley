@@ -15,14 +15,28 @@ concurrency:
 
 jobs:
   strict:
-    name: perf (strict)
+    name: ${{ matrix.name }}
     # Budgets are checked on main only. A dispatch from another branch skips.
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-14
-    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: perf strict (macOS arm64)
+            os: macos-14
+            platform: macOS arm64
+          - name: perf strict (Windows)
+            os: windows-latest
+            platform: Windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
       issues: write
+    defaults:
+      run:
+        # Git Bash on Windows, so both legs run the same scripts.
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +58,8 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           GALLEY_PERF_MODE: strict
+          # The log is read back for the issue body; keep it UTF-8 on Windows.
+          PYTHONUTF8: "1"
         # Strict mode fails when a median passes the budget itself.
         run: |
           set -o pipefail
@@ -54,17 +70,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: "Nightly perf: a strict budget was missed on main"
+          PLATFORM: ${{ matrix.platform }}
+          # One title per platform, so the two legs never race on one issue.
+          TITLE: "Nightly perf: a strict budget was missed on main (${{ matrix.platform }})"
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP}/perf.log"
           body="${RUNNER_TEMP}/issue.md"
           {
-            echo "The nightly strict perf run failed on \`main\` at ${GITHUB_SHA}."
+            echo "The nightly strict perf run failed on \`main\` at ${GITHUB_SHA} on ${PLATFORM}."
             echo
             echo "Run: ${RUN_URL}"
             echo
-            echo "Strict mode fails when a median passes its budget. The pull request \`perf\` job runs gate mode, which allows 3x."
+            echo "Strict mode fails when a median passes its budget. The pull request perf jobs run gate mode, which allows 3x. Ratio budgets get no multiplier in either mode."
             echo "Rerun one test locally with \`GALLEY_PERF_MODE=strict uv run pytest -m perf -k <test>\`."
             echo
             echo '```'

@@ -8,6 +8,11 @@ then the median of five timed runs against the test's budget.
 - ``gate`` (the default, and the ``perf`` CI job): fail only past 3x the
   budget, so a shared runner's noise does not fail a pull request.
 - ``strict`` (the nightly run on ``main``): fail past the budget itself.
+
+A ratio budget (``perf_budget.ratio_within``) compares two operations on
+the same machine instead. Their runs alternate, so both share the runner's
+noise, and the check uses the median of the per-pair ratios. A ratio does
+not depend on how fast the runner is, so neither mode multiplies its limit.
 """
 
 import gc
@@ -52,13 +57,64 @@ def time_runs(
     for run in range(WARMUP_RUNS + TIMED_RUNS):
         if setup is not None:
             setup()
-        gc.collect()
-        started = clock()
-        operation()
-        elapsed = clock() - started
+        elapsed = _timed(operation, clock)
         if run >= WARMUP_RUNS:
             samples.append(elapsed)
     return Timing(tuple(samples))
+
+
+@dataclass(frozen=True)
+class RatioTiming:
+    """Paired runs of a candidate and its baseline, warmup pair left out."""
+
+    candidate: Timing
+    baseline: Timing
+
+    @property
+    def ratios(self) -> tuple[float, ...]:
+        return tuple(
+            candidate / baseline
+            for candidate, baseline in zip(
+                self.candidate.samples, self.baseline.samples, strict=True
+            )
+        )
+
+    @property
+    def median(self) -> float:
+        return statistics.median(self.ratios)
+
+
+def time_ratio_runs(
+    candidate: Callable[[], object],
+    baseline: Callable[[], object],
+    *,
+    clock: Callable[[], float] = time.perf_counter,
+) -> RatioTiming:
+    """Time ``candidate`` and ``baseline`` in alternating pairs.
+
+    One warmup pair, then ``TIMED_RUNS`` timed pairs. The pair order flips
+    on every run, so neither side always runs second on a warm cache.
+    """
+    candidates: list[float] = []
+    baselines: list[float] = []
+    for run in range(WARMUP_RUNS + TIMED_RUNS):
+        if run % 2 == 0:
+            base_s = _timed(baseline, clock)
+            candidate_s = _timed(candidate, clock)
+        else:
+            candidate_s = _timed(candidate, clock)
+            base_s = _timed(baseline, clock)
+        if run >= WARMUP_RUNS:
+            candidates.append(candidate_s)
+            baselines.append(base_s)
+    return RatioTiming(Timing(tuple(candidates)), Timing(tuple(baselines)))
+
+
+def _timed(operation: Callable[[], object], clock: Callable[[], float]) -> float:
+    gc.collect()
+    started = clock()
+    operation()
+    return clock() - started
 
 
 def current_mode(environ: Mapping[str, str] = os.environ) -> str:
@@ -101,6 +157,54 @@ def failure_message(
     )
 
 
+def ratio_failure_message(
+    *, test: str, fixture: str, timing: RatioTiming, limit: float, mode: str
+) -> str:
+    ratios = ", ".join(f"{ratio:.2f}x" for ratio in timing.ratios)
+    candidates = ", ".join(_ms(sample) for sample in timing.candidate.samples)
+    baselines = ", ".join(_ms(sample) for sample in timing.baseline.samples)
+    return "\n".join(
+        [
+            f"perf ratio budget missed: {test}",
+            f"  fixture: {fixture}",
+            f"  median ratio: {timing.median:.2f}x "
+            f"({TIMED_RUNS} alternating pairs after {WARMUP_RUNS} warmup pair)",
+            f"  ratios: {ratios}",
+            f"  candidate samples: {candidates}",
+            f"  baseline samples: {baselines}",
+            f"  limit: {limit:g}x",
+            f"  mode: {mode}, factor 1x (ratios are not multiplied), "
+            f"fails above {limit:g}x",
+            f"  rerun: {rerun_command(test, mode)}",
+        ]
+    )
+
+
+def check_ratio(
+    timing: RatioTiming,
+    limit: float,
+    *,
+    test: str,
+    fixture: str,
+    mode: str | None = None,
+) -> None:
+    """Fail the test when the median ratio is past ``limit``, in either mode."""
+    mode = current_mode() if mode is None else mode
+    print(
+        f"perf: {test} [{fixture}] median ratio {timing.median:.2f}x "
+        f"(candidate {_ms(timing.candidate.median)}, baseline "
+        f"{_ms(timing.baseline.median)}), limit {limit:g}x in {mode} mode",
+        flush=True,
+    )
+    if timing.median > limit:
+        pytest.fail(
+            ratio_failure_message(
+                test=test, fixture=fixture, timing=timing, limit=limit, mode=mode
+            ),
+            pytrace=False,
+        )
+
+
 def check(
     timing: Timing,
     budget_s: float,
@@ -132,15 +236,6 @@ class Budget:
     def __init__(self, test: str) -> None:
         self.test = test
 
-    def measure(
-        self,
-        operation: Callable[[], object],
-        *,
-        setup: Callable[[], object] | None = None,
-    ) -> Timing:
-        """Time ``operation`` without checking it, for a baseline."""
-        return time_runs(operation, setup=setup)
-
     def check(self, timing: Timing, budget_s: float, *, fixture: str) -> None:
         check(timing, budget_s, test=self.test, fixture=fixture)
 
@@ -153,8 +248,24 @@ class Budget:
         setup: Callable[[], object] | None = None,
     ) -> Timing:
         """Time ``operation`` and fail when its median is over ``budget_s``."""
-        timing = self.measure(operation, setup=setup)
+        timing = time_runs(operation, setup=setup)
         self.check(timing, budget_s, fixture=fixture)
+        return timing
+
+    def ratio_within(
+        self,
+        limit: float,
+        candidate: Callable[[], object],
+        baseline: Callable[[], object],
+        *,
+        fixture: str,
+    ) -> RatioTiming:
+        """Fail when ``candidate`` takes over ``limit`` times ``baseline``.
+
+        The limit is the same in gate and strict mode.
+        """
+        timing = time_ratio_runs(candidate, baseline)
+        check_ratio(timing, limit, test=self.test, fixture=fixture)
         return timing
 
 

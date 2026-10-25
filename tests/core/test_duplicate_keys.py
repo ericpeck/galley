@@ -237,6 +237,8 @@ def test_duplicate_check_keeps_large_valid_documents_cheap(
 
     The bound is loose on purpose: the check may cost at most half again the
     format time, which only a per-key scan on the valid path would break.
+    Runs alternate so both share noise. The ratio limit is not multiplied in
+    gate mode.
     """
     text = json.dumps(_large_value(7_500), indent=2, ensure_ascii=False)
     assert 1_800_000 < len(text.encode()) < 2_400_000
@@ -249,16 +251,11 @@ def test_duplicate_check_keeps_large_valid_documents_cheap(
         finally:
             monkeypatch.setattr(format_module, "_json_loads", hooked)
 
-    baseline = perf_budget.measure(without_check)
-    print(
-        f"duplicate-key check: format_json without check, median "
-        f"{baseline.median * 1000:.1f} ms",
-        flush=True,
-    )
-    perf_budget.within(
-        baseline.median * 1.5,
+    perf_budget.ratio_within(
+        1.5,
         lambda: format_json(text),
-        fixture="~2 MB valid JSON; budget is 1.5x format_json without the check",
+        without_check,
+        fixture="~2 MB valid JSON; format_json against format_json without the check",
     )
 
 

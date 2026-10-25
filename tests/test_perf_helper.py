@@ -4,11 +4,15 @@ import pytest
 from tests import perf
 from tests.perf import (
     Budget,
+    RatioTiming,
     Timing,
     budget_for,
     check,
+    check_ratio,
     current_mode,
     failure_message,
+    ratio_failure_message,
+    time_ratio_runs,
     time_runs,
 )
 
@@ -138,6 +142,84 @@ def test_a_budget_checks_its_own_test_name(monkeypatch) -> None:
     monkeypatch.setattr(perf, "time_runs", lambda _op, setup=None: _timing(1.0))
     with pytest.raises(_FAILED, match="-k test_named"):
         Budget("test_named").within(0.5, lambda: None, fixture="f")
+
+
+def test_ratio_runs_alternate_and_drop_the_warmup_pair() -> None:
+    order: list[str] = []
+    # Pairs: warmup (base first), then candidate first, base first, and so on.
+    clock = _clock(
+        [9.0, 9.0]
+        + [0.5, 0.25]
+        + [0.25, 0.75]
+        + [0.75, 0.25]
+        + [0.25, 0.5]
+        + [0.5, 0.5]
+    )
+    timing = time_ratio_runs(
+        lambda: order.append("candidate"),
+        lambda: order.append("baseline"),
+        clock=clock,
+    )
+    assert order == [
+        "baseline",
+        "candidate",
+        "candidate",
+        "baseline",
+        "baseline",
+        "candidate",
+        "candidate",
+        "baseline",
+        "baseline",
+        "candidate",
+        "candidate",
+        "baseline",
+    ]
+    assert timing.candidate.samples == (0.5, 0.75, 0.75, 0.5, 0.5)
+    assert timing.baseline.samples == (0.25, 0.25, 0.25, 0.25, 0.5)
+    assert timing.ratios == (2.0, 3.0, 3.0, 2.0, 1.0)
+    assert timing.median == 2.0
+
+
+def _ratio(*ratios: float) -> RatioTiming:
+    return RatioTiming(Timing(ratios), Timing((1.0,) * len(ratios)))
+
+
+@pytest.mark.parametrize("mode", ["gate", "strict"])
+def test_a_ratio_limit_is_not_multiplied_in_either_mode(mode: str) -> None:
+    check_ratio(_ratio(1.5, 1.5, 1.5, 1.5, 1.5), 1.5, test="t", fixture="f", mode=mode)
+    with pytest.raises(_FAILED):
+        check_ratio(
+            _ratio(1.4, 1.6, 1.6, 1.6, 1.0), 1.5, test="t", fixture="f", mode=mode
+        )
+
+
+def test_the_ratio_failure_message_shows_both_sides() -> None:
+    timing = RatioTiming(
+        Timing((0.2, 0.3, 0.2, 0.4, 0.2)), Timing((0.1, 0.1, 0.1, 0.2, 0.1))
+    )
+    message = ratio_failure_message(
+        test="test_dup", fixture="2 MB", timing=timing, limit=1.5, mode="gate"
+    )
+    assert message.splitlines() == [
+        "perf ratio budget missed: test_dup",
+        "  fixture: 2 MB",
+        "  median ratio: 2.00x (5 alternating pairs after 1 warmup pair)",
+        "  ratios: 2.00x, 3.00x, 2.00x, 2.00x, 2.00x",
+        "  candidate samples: 200.0 ms, 300.0 ms, 200.0 ms, 400.0 ms, 200.0 ms",
+        "  baseline samples: 100.0 ms, 100.0 ms, 100.0 ms, 200.0 ms, 100.0 ms",
+        "  limit: 1.5x",
+        "  mode: gate, factor 1x (ratios are not multiplied), fails above 1.5x",
+        "  rerun: uv run pytest -m perf -k test_dup",
+    ]
+
+
+def test_a_budget_checks_a_ratio_under_its_own_test_name(monkeypatch) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "gate")
+    monkeypatch.setattr(
+        perf, "time_ratio_runs", lambda _c, _b: _ratio(2.0, 2.0, 2.0, 2.0, 2.0)
+    )
+    with pytest.raises(_FAILED, match="-k test_named"):
+        Budget("test_named").ratio_within(1.5, lambda: None, lambda: None, fixture="f")
 
 
 @pytest.mark.perf
