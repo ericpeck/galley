@@ -19,6 +19,7 @@ RECENT_FILES_KEY = "open/recentFiles"
 OPEN_RECENT_MENU = "Open Recent"
 CLEAR_MENU = "Clear Menu"
 FILE_NOT_FOUND = "File not found"
+NOT_FOUND_SUFFIX = " (not found)"
 
 
 def load_recent_files() -> list[str]:
@@ -52,8 +53,9 @@ class RecentFilesMenu(QMenu):
     """The Open Recent submenu, rebuilt from settings each time it opens.
 
     Entries show the file name, and the full path only in the tooltip. A
-    missing file stays listed but disabled, with the tooltip "File not
-    found". ``open_requested(Path)`` reports the entry the user chose.
+    missing file stays listed but disabled, reads "name.json (not found)"
+    so dimming is not the only cue, and has the tooltip "File not found".
+    ``open_requested(Path)`` reports the entry the user chose.
     """
 
     open_requested = Signal(object)
@@ -71,9 +73,10 @@ class RecentFilesMenu(QMenu):
         self.clear()
         entries = load_recent_files()
         for entry, label in zip(entries, recent_labels(entries), strict=True):
-            # A lone & would underline the next letter instead of showing.
-            action = self.addAction(label.replace("&", "&&"))
             found = Path(entry).is_file()
+            text = label if found else label + NOT_FOUND_SUFFIX
+            # A lone & would underline the next letter instead of showing.
+            action = self.addAction(text.replace("&", "&&"))
             action.setEnabled(found)
             action.setToolTip(entry if found else FILE_NOT_FOUND)
             action.setData(entry)

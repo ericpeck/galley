@@ -153,7 +153,8 @@ def test_a_missing_file_stays_listed_but_disabled(qtbot, tmp_path) -> None:
 
     kept_action, gone_action = _entries(window)
 
-    assert gone_action.text() == "gone.json"
+    # Dimming is not the only cue: the text says so too.
+    assert gone_action.text() == "gone.json (not found)"
     assert not gone_action.isEnabled()
     assert gone_action.toolTip() == "File not found"
     assert kept_action.isEnabled()
@@ -170,10 +171,12 @@ def test_the_menu_rechecks_files_each_time_it_opens(qtbot, tmp_path) -> None:
     path.unlink()
     recent.aboutToShow.emit()
     assert not _entries(window)[0].isEnabled()
+    assert _entries(window)[0].text() == "flaky.json (not found)"
 
     _write(path)
     recent.aboutToShow.emit()
     assert _entries(window)[0].isEnabled()
+    assert _entries(window)[0].text() == "flaky.json"
 
 
 def test_a_file_deleted_after_the_menu_opened_reports_it(qtbot, tmp_path) -> None:
@@ -194,6 +197,26 @@ def test_a_file_deleted_after_the_menu_opened_reports_it(qtbot, tmp_path) -> Non
     assert load_recent_files() == [str(path)]
     _recent(window).aboutToShow.emit()
     assert not _entries(window)[0].isEnabled()
+    assert _entries(window)[0].text() == "moved.json (not found)"
+
+
+def test_a_missing_file_with_a_shared_name_ends_with_the_suffix(
+    qtbot, tmp_path
+) -> None:
+    staging = _write(tmp_path / "staging" / "data.json")
+    gone = _write(tmp_path / "Q&A" / "data.json")
+    remember_recent_file(gone)
+    remember_recent_file(staging)
+    gone.unlink()
+    window = _show(qtbot)
+
+    staging_action, gone_action = _entries(window)
+
+    assert staging_action.text() == "data.json — staging"
+    assert gone_action.text() == "data.json — Q&&A (not found)"
+    assert gone_action.iconText() == "data.json — Q&A (not found)"
+    assert not gone_action.isEnabled()
+    assert gone_action.toolTip() == "File not found"
 
 
 def test_clear_menu_empties_the_list(qtbot, tmp_path) -> None:
@@ -325,8 +348,11 @@ def test_keyboard_reaches_and_opens_a_recent_file(qtbot, tmp_path) -> None:
 
 
 def test_entries_have_plain_accessible_names(qtbot, tmp_path) -> None:
+    gone = _write(tmp_path / "gone.json")
+    remember_recent_file(gone)
     remember_recent_file(_write(tmp_path / "R&D.json"))
     remember_recent_file(_write(tmp_path / "plain.yaml"))
+    gone.unlink()
     window = _show(qtbot)
     recent = _recent(window)
     recent.popup(window.mapToGlobal(QPoint(20, 20)))
@@ -339,7 +365,13 @@ def test_entries_have_plain_accessible_names(qtbot, tmp_path) -> None:
         for index in range(menu.childCount())
     ]
 
-    assert names == ["plain.yaml", "R&D.json", "", "Clear Menu"]
+    assert names == [
+        "plain.yaml",
+        "R&D.json",
+        "gone.json (not found)",
+        "",
+        "Clear Menu",
+    ]
     recent.close()
 
 
