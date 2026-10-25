@@ -313,12 +313,10 @@ class ShellActions:
         )
         self.stack_panes.setShortcuts([STACK_PANES, STACK_PANES_ALT])
         self.stack_panes.setObjectName("stackPanes")
-        # Keys only: Bill's #78 spec gives no menu item, so the window owns
-        # these two and no menu lists them.
-        self.next_problem = _action(parent, "Next Problem", shortcut=NEXT_PROBLEM)
-        self.previous_problem = _action(
-            parent, "Previous Problem", shortcut=PREVIOUS_PROBLEM
-        )
+        self.next_problem = _action(parent, "Next Problem")
+        self.next_problem.setShortcuts(list(NEXT_PROBLEM))
+        self.previous_problem = _action(parent, "Previous Problem")
+        self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
         self.appearance_light = _action(parent, "Light", checkable=True)
         self.appearance_dark = _action(parent, "Dark", checkable=True)

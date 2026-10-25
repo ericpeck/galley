@@ -28,8 +28,9 @@ Collapse all is the chord ``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all
 ``Ctrl+K, Ctrl+J`` (⌘K ⌘J). Actual Size is ``Ctrl+0`` on its own, so the
 chord does not clash with it.
 
-Next Problem is F8 and Previous Problem Shift+F8 (Bill's #78 spec). They
-have no modifier to map, so they are the same on every platform.
+Next Problem is F8 and Previous Problem Shift+F8 on every platform (Bill's
+#78 spec). On macOS F8 is Play/Pause unless Fn is held, so macOS lists ⌘'
+and ⇧⌘' first, which the menu shows, and keeps F8 and ⇧F8 as second keys.
 """
 
 import sys
@@ -54,8 +55,12 @@ FOLD = QKeySequence(_FOLD_MODIFIERS + "[", _PORTABLE)
 UNFOLD = QKeySequence(_FOLD_MODIFIERS + "]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
-NEXT_PROBLEM = QKeySequence("F8", _PORTABLE)
-PREVIOUS_PROBLEM = QKeySequence("Shift+F8", _PORTABLE)
+# The first key of each list is the one the menu shows.
+_PROBLEM_KEYS = ("Ctrl+'", "F8") if sys.platform == "darwin" else ("F8",)
+NEXT_PROBLEM = tuple(QKeySequence(key, _PORTABLE) for key in _PROBLEM_KEYS)
+PREVIOUS_PROBLEM = tuple(
+    QKeySequence(f"Shift+{key}", _PORTABLE) for key in _PROBLEM_KEYS
+)
 
 
 def native_chord_text(sequence: QKeySequence) -> str:
