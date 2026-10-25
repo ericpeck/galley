@@ -880,10 +880,19 @@ class CodeEditor(QPlainTextEdit):
             event.accept()
             return
         if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
-            self._insert_indent()
+            # A selection over several lines is left alone until Indent
+            # ships, rather than replaced by spaces.
+            if not self._selection_spans_lines():
+                self._insert_indent()
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _selection_spans_lines(self) -> bool:
+        cursor = self.textCursor()
+        document = self.document()
+        first = document.findBlock(cursor.selectionStart())
+        return first != document.findBlock(cursor.selectionEnd())
 
     def _insert_indent(self) -> None:
         """Replace the selection with spaces up to the next INDENT_WIDTH stop."""

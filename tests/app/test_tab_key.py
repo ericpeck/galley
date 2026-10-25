@@ -92,6 +92,49 @@ def test_tab_replaces_the_selection_with_spaces(qtbot) -> None:
     assert editor.toPlainText() == "key: value\n"
 
 
+_LINES = "a:\n  b: 1\n  c: 2\n"
+
+
+@pytest.mark.parametrize(
+    ("position", "anchor"),
+    [
+        (12, 5),  # forward, from inside line 2 to inside line 3
+        (5, 12),  # backward
+        (13, 1),  # forward, from inside line 1 to inside line 3
+        (3, 0),  # the whole first line, ending at the start of line 2
+        (10, 0),  # lines 1 and 2, ending at the start of line 3
+        (0, 10),  # the same, selected backward
+        (len(_LINES), 0),  # the whole document
+        (0, len(_LINES)),  # the whole document, selected backward
+    ],
+)
+def test_tab_leaves_a_multi_line_selection_alone(qtbot, position, anchor) -> None:
+    window = _show(qtbot)
+    editor = _input(window)
+    editor.set_syntax_mode("YAML")
+    editor.setPlainText(_LINES)
+    editor.document().clearUndoRedoStacks()
+    _focus(qtbot, editor)
+    _place(editor, position, anchor=anchor)
+    qtbot.keyClick(window.windowHandle(), Qt.Key.Key_Tab)
+    assert editor.toPlainText() == _LINES
+    assert not editor.document().isUndoAvailable()
+    assert editor.document().availableUndoSteps() == 0
+    cursor = editor.textCursor()
+    assert (cursor.anchor(), cursor.position()) == (anchor, position)
+    assert QApplication.focusWidget() is editor
+
+
+def test_select_all_then_tab_changes_nothing(qtbot) -> None:
+    editor = _editor(qtbot, _LINES, "JSON")
+    editor.document().clearUndoRedoStacks()
+    editor.selectAll()
+    qtbot.keyClick(editor, Qt.Key.Key_Tab)
+    assert editor.toPlainText() == _LINES
+    assert not editor.document().isUndoAvailable()
+    assert editor.textCursor().selectedText() == _LINES.replace("\n", "\u2029")
+
+
 @pytest.mark.parametrize("mode", ["JSON", "YAML"])
 def test_one_undo_removes_the_spaces(qtbot, mode) -> None:
     original = '{\n"a": 1\n}\n' if mode == "JSON" else "a:\nb: 1\n"
