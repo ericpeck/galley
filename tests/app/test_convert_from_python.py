@@ -19,6 +19,12 @@ from galley.core.convert_python import ConvertResult, convert_python
 # D6: Convert from Python runs on the UI thread, so at its limit the convert
 # itself must stay under about 0.5 s.
 _CONVERT_BUDGET_S = 0.5
+# #112 writes YAML through ruamel's pure-Python emitter on every platform so
+# both engines give identical bytes. The 192 KB YAML case went from about
+# 86 ms to 213 ms locally and measured 506 ms on the macOS CI runner, over the
+# 0.5 s nightly strict budget. The team chose to accept the slowdown (#115
+# tracks making the C emitter match), so YAML gets 1 s until #115 lands.
+_CONVERT_YAML_BUDGET_S = 1.0
 
 _LIMITS = pytest.mark.parametrize(
     ("target", "limit"),
@@ -275,8 +281,9 @@ def test_convert_at_the_limit_is_within_budget(perf_budget, target, limit) -> No
     # Showing the result in Output costs the same as after a Format.
     text = render_python_literal(limit)
     assert isinstance(convert_python(text, target), ConvertResult)
+    budget = _CONVERT_YAML_BUDGET_S if target == "YAML" else _CONVERT_BUDGET_S
     perf_budget.within(
-        _CONVERT_BUDGET_S,
+        budget,
         lambda: convert_python(text, target),
         fixture=f"{si_size(limit)} plain-catalog Python literal to {target}",
     )
