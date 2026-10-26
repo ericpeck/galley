@@ -409,6 +409,8 @@ class MainWindow(QMainWindow):
         edit.addAction(actions.select_all)
         edit.addSeparator()
         edit.addAction(actions.find)
+        edit.addAction(actions.find_next)
+        edit.addAction(actions.find_previous)
         edit.addAction(actions.find_replace)
         edit.addSeparator()
         edit.addAction(actions.escape_string)
@@ -617,6 +619,9 @@ class MainWindow(QMainWindow):
         actions.copy.triggered.connect(self._copy)
         actions.paste.triggered.connect(self._paste)
         actions.select_all.triggered.connect(self._select_all)
+        actions.find.triggered.connect(self._open_find)
+        actions.find_next.triggered.connect(self._find_next)
+        actions.find_previous.triggered.connect(self._find_previous)
         actions.word_wrap.toggled.connect(self._set_word_wrap)
         actions.show_whitespace.toggled.connect(self._set_show_whitespace)
         actions.bigger.triggered.connect(self._zoom_in)
@@ -1290,6 +1295,25 @@ class MainWindow(QMainWindow):
         if focused is not None:
             return focused
         return self._active_editor
+
+    def _find_pane(self) -> PaneWidget:
+        """The pane Find works in: the one with focus, else the last editor's."""
+        focused = QApplication.focusWidget()
+        for pane in (self._input_pane, self._output_pane):
+            if _is_inside(focused, pane):
+                return pane
+        if self._active_editor is self._output_pane.editor:
+            return self._output_pane
+        return self._input_pane
+
+    def _open_find(self) -> None:
+        self._find_pane().find_bar.open()
+
+    def _find_next(self) -> None:
+        self._find_pane().find_bar.find_next()
+
+    def _find_previous(self) -> None:
+        self._find_pane().find_bar.find_previous()
 
     def _editors(self) -> tuple[CodeEditor, CodeEditor]:
         return self._input_pane.editor, self._output_pane.editor

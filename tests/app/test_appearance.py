@@ -468,9 +468,7 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
     assert paste.isEnabled()
-    coming_soon = [
-        _tool_button(window, name) for name in ("Minify", "Validate", "Find…")
-    ]
+    coming_soon = [_tool_button(window, name) for name in ("Minify", "Validate")]
     for button in coming_soon:
         assert not button.isEnabled()
 

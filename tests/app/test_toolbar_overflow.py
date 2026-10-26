@@ -205,7 +205,6 @@ _UNBUILT_ICON_NAMES = (
     "Indent",
     "Minify",
     "Validate",
-    "Find…",
 )
 
 
