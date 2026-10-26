@@ -46,7 +46,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Guides",
     "Pop out",
     "Indent",
-    "Sort keys",
     "Minify",
     "Validate",
     "Tabs",
@@ -340,7 +339,9 @@ class ShellActions:
 
         self.outdent = _action(parent, "Outdent")
         self.indent = _action(parent, "Indent")
-        self.sort_keys = _action(parent, "Sort keys")
+        # On: the next Format writes keys A–Z at every level. Output only.
+        self.sort_keys = _action(parent, "Sort keys", checkable=True)
+        self.sort_keys.setObjectName("sortKeys")
         self.minify = _action(parent, "Minify")
         self.expand_all = _action(parent, "Expand all", shortcut=EXPAND_ALL)
         self.collapse_all = _action(parent, "Collapse all", shortcut=COLLAPSE_ALL)
@@ -417,7 +418,6 @@ class ShellActions:
             self.close_tabs_right,
             self.new_tab,
             self.indent,
-            self.sort_keys,
             self.minify,
             self.validate,
         ]

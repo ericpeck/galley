@@ -130,6 +130,8 @@ NOT_YET_MESSAGE = "Not yet available."
 NOTHING_TO_FOLD = "nothing to fold"
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+# Words, not only the pressed Sort keys button, say the output was sorted.
+SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
 FORMAT_ACCESSIBLE_NAME = "Format"
 FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
 FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
@@ -235,6 +237,7 @@ class MainWindow(QMainWindow):
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
+        self._format_sorted = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
         self._session = ParseSession(self)
@@ -790,7 +793,13 @@ class MainWindow(QMainWindow):
         self._apply_deferred_reveal()
         self._accepted_job_id = None
         self._session.start()
-        self._session.submit(text, self._format_source, self._format_target)
+        self._format_sorted = self._actions.sort_keys.isChecked()
+        self._session.submit(
+            text,
+            self._format_source,
+            self._format_target,
+            sort_keys=self._format_sorted,
+        )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
             self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
@@ -1207,10 +1216,14 @@ class MainWindow(QMainWindow):
         source = self._format_source.casefold()
         target = self._format_target.casefold()
         if source != target:
-            return "Converted"
-        if target == "yaml":
-            return "Valid YAML"
-        return "Valid JSON"
+            status = "Converted"
+        elif target == "yaml":
+            status = "Valid YAML"
+        else:
+            status = "Valid JSON"
+        if self._format_sorted:
+            return f"{status} {SORTED_KEYS_SUFFIX}"
+        return status
 
     def _focus_input(self) -> None:
         editor = self._input_pane.editor

@@ -296,6 +296,7 @@ class ParseSession(QObject):
         chunk_size: int = WRITE_CHUNK_SIZE,
         chunk_pause_s: float = 0.0,
         fault: str | None = None,
+        sort_keys: bool = False,
     ) -> None:
         """Send one job. A second submit while a job is active is ignored."""
         if self._shut_down or self._active is not None:
@@ -320,6 +321,7 @@ class ParseSession(QObject):
             chunk_size=chunk_size,
             chunk_pause_s=chunk_pause_s,
             fault=fault,
+            sort_keys=sort_keys,
         )
         active = _Active(job.job_id, destination)
         active.temp_path = temp_path
