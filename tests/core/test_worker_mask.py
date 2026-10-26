@@ -355,7 +355,7 @@ def test_a_repeated_yaml_key_names_the_key_and_place_but_no_value(
     events = _run_in_child([_job(_REPEATED_PASSWORD, "yaml", target)])
     failure = events[-1]
     assert isinstance(failure, FailureEvent)
-    assert failure.message == 'duplicate_key "password" at line 3, column 1'
+    assert failure.message == 'duplicate_key "password" at line 3'
     assert failure.problems == (Problem("yaml_duplicate", 3, "password"),)
     assert failure.error is None
     for event in events:
@@ -378,7 +378,7 @@ def test_a_repeated_json_key_names_the_key_and_place_but_no_value() -> None:
             '{"password": "hunter22",}',
             "json",
             "json",
-            "Expecting property name enclosed in double quotes at line 1, column 25",
+            "Expecting property name enclosed in double quotes at line 1, column 24",
         ),
         (
             '{"password": hunter22}',
@@ -431,7 +431,7 @@ def test_a_repeated_key_that_looks_personal_is_masked_too() -> None:
     failure = _run_here(_job(text, "yaml"))[-1]
     assert isinstance(failure, FailureEvent)
     assert failure.problems == (Problem("yaml_duplicate", 2, MASK),)
-    assert failure.message == f'duplicate_key "{MASK}" at line 2, column 1'
+    assert failure.message == f'duplicate_key "{MASK}" at line 2'
     _assert_clean(failure)
 
 
@@ -454,6 +454,91 @@ def test_a_write_failure_keeps_its_path(tmp_path: Path) -> None:
     assert isinstance(failure, FailureEvent)
     assert "out.json" in failure.message
     _assert_clean(failure)
+
+
+# A masked failure's place: "at" once, and the first problem's line and column
+
+# Every message CPython's JSON decoder raises (eight in ``_json.c``, plus
+# "Extra data" from ``json.decoder``), each with a fake value in the text.
+_JSON_DECODE_FAILURES = (
+    ("Expecting value", '{"password": "hunter22", "pin": }'),
+    (
+        "Expecting property name enclosed in double quotes",
+        '{"password": "hunter22", 7: 1}',
+    ),
+    ("Expecting ':' delimiter", '{"password": "hunter22", "pin" 1}'),
+    ("Expecting ',' delimiter", '{"password": "hunter22" "pin": 1}'),
+    ("Unterminated string starting at", '{"password": "hunter22", "note": "abc'),
+    ("Invalid control character at", '{"password": "hunter22\n"}'),
+    ("Invalid \\escape", '{"password": "hunter22\\x"}'),
+    ("Invalid \\uXXXX escape", '{"password": "hunter22\\u12"}'),
+    ("Extra data", '{"password": "hunter22"} 7'),
+)
+_PLACE_RE = re.compile(r" at line (\d+)(?:, column (\d+))?$")
+
+
+def _place(message: str) -> tuple[int, int]:
+    """The line and column a message names; column 0 when it names none."""
+    found = _PLACE_RE.search(message)
+    assert found is not None, message
+    return int(found.group(1)), int(found.group(2) or 0)
+
+
+def _decoder_failures() -> list[tuple[str, FailureEvent]]:
+    """Each decoder message, checked against the stdlib, and its masked failure."""
+    failures = []
+    for message, text in _JSON_DECODE_FAILURES:
+        with pytest.raises(json.JSONDecodeError) as caught:
+            json.loads(text)
+        assert caught.value.msg == message
+        failure = _run_here(_job(text, "json"))[-1]
+        assert isinstance(failure, FailureEvent)
+        _assert_clean(failure, ("hunter22",))
+        failures.append((message, failure))
+    return failures
+
+
+def test_every_json_decoder_message_says_at_once() -> None:
+    said = {message: failure.message for message, failure in _decoder_failures()}
+    twice = {message: text for message, text in said.items() if "at at" in text}
+    assert twice == {}
+    for message, text in said.items():
+        assert text.count(" at ") == 1, text
+        assert text.startswith(f"{message.removesuffix(' at')} at line "), text
+
+
+def test_every_json_decoder_message_names_the_first_problems_place() -> None:
+    places = {
+        message: (_place(failure.message), failure.problems[0])
+        for message, failure in _decoder_failures()
+    }
+    moved = {
+        message: (said, (first.lineno, first.colno))
+        for message, (said, first) in places.items()
+        if said != (first.lineno, first.colno)
+    }
+    assert moved == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("password: hunter22\n  pin: 1234\n", "yaml_scanner_error"),
+        ("password: hunter22\nlist: [a, b\n\n", "yaml_parser_error"),
+        ("password: hunter22\npassword: fake-other-22\n", 'duplicate_key "password"'),
+    ],
+    ids=["scanner", "parser", "duplicate-key"],
+)
+@pytest.mark.parametrize("target", ["yaml", "json"])
+def test_a_yaml_failure_names_the_first_problems_place(
+    text: str, kind: str, target: str
+) -> None:
+    failure = _run_here(_job(text, "yaml", target))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message.startswith(f"{kind} at line ")
+    first = failure.problems[0]
+    assert _place(failure.message) == (first.lineno, first.colno)
+    _assert_clean(failure, ("hunter22", "fake-other-22", "1234"))
 
 
 # Deep YAML: past 256 levels Format walks parser events, not ruamel's loader

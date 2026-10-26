@@ -475,7 +475,10 @@ def _masked_message(exc: Exception, problems: tuple[Problem, ...]) -> str:
         (p.token for p in problems if p.code in _DUPLICATE_CODES and p.token), ""
     )
     named = f' "{key}"' if key else ""
-    return _failure_kind(exc) + named + _failure_place(exc, problems)
+    # Some json messages end in "at", such as "Unterminated string starting
+    # at", and the place adds its own.
+    kind = _failure_kind(exc).removesuffix(" at")
+    return kind + named + _failure_place(exc, problems)
 
 
 def _failure_kind(exc: Exception) -> str:
@@ -497,16 +500,21 @@ def _failure_kind(exc: Exception) -> str:
 
 
 def _failure_place(exc: Exception, problems: tuple[Problem, ...]) -> str:
-    """`` at line L, column C`` from the parser, else from the first problem."""
+    """`` at line L, column C`` from the first problem, else from the parser.
+
+    The first problem is the row the app shows for this failure, so the
+    message names the same place. A problem with no column (``colno`` 0,
+    as for YAML) gives the line alone. ``problem_mark`` is 0-based.
+    """
     line: int | None = None
     column: int | None = None
-    mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
-    if isinstance(exc, MarkedYAMLError) and mark is not None:
+    mark = getattr(exc, "problem_mark", None)
+    if problems:
+        line, column = problems[0].lineno, problems[0].colno
+    elif isinstance(exc, MarkedYAMLError) and mark is not None:
         line, column = mark.line + 1, mark.column + 1
     elif isinstance(getattr(exc, "lineno", None), int):
         line, column = exc.lineno, getattr(exc, "colno", None)
-    elif problems:
-        line, column = problems[0].lineno, problems[0].colno
     if line is None:
         return ""
     if column:
