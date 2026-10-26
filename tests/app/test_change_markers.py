@@ -282,8 +282,9 @@ def test_a_problem_outranks_a_change_on_the_same_line(qtbot, scheme: QPalette) -
 # Eric's order, bottom to top: change tint, problem tint, Find highlight.
 
 _UNDER_FIND = ["problem", *_KINDS]
-# Line 2's run of spaces is the match, so no glyph sits where it is sampled.
-_FIND_TEXT = "x\nx        y\nx\n"
+# Line 2's trailing spaces are the match, so no glyph sits where it is
+# sampled and the tint shows on both sides of it.
+_FIND_TEXT = "x\nx        \nx\n"
 _FIND_START, _FIND_END = 3, 11
 
 
@@ -343,6 +344,81 @@ def test_a_find_match_is_readable_on_every_tint(
     assert image.pixelColor(past).rgb() == tint.rgb()
     ratio = contrast_ratio(colors.ink, fill)
     assert ratio >= TEXT_MIN_CONTRAST, f"Find ink on {under}: {ratio:.2f}:1"
+
+
+def _walk(image: QImage, start: QPoint, step: QPoint, fill: QColor) -> QPoint:
+    """The first point from ``start`` along ``step`` that is not ``fill``."""
+    point = QPoint(start)
+    while image.pixelColor(point).rgb() == fill.rgb():
+        point += step
+    return point
+
+
+@pytest.mark.parametrize("current", [True, False], ids=["current", "other"])
+@pytest.mark.parametrize("under", _UNDER_FIND)
+def test_a_find_match_stands_out_3_to_1_from_every_tint(
+    qtbot, scheme: QPalette, under: str, current: bool
+) -> None:
+    editor = _find_over(qtbot, under, current=current)
+    palette = editor.palette()
+    colors = find_match_colors(palette)
+    tint = (
+        problem_line_tint(palette)
+        if under == "problem"
+        else change_tint(under, palette)
+    )
+    fill = colors.current if current else colors.other
+    # The fill alone can't reach 3:1 and keep its text 4.5:1, so the
+    # outline carries the edge.
+    assert contrast_ratio(fill, tint) < EDGE_CONTRAST
+    ratio = contrast_ratio(colors.edge, tint)
+    assert ratio >= EDGE_CONTRAST, f"Find outline on {under}: {ratio:.2f}:1"
+
+    image = editor.viewport().grab().toImage()
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition((_FIND_START + _FIND_END) // 2)
+    inside = editor.cursorRect(cursor).center() + QPoint(2, 0)
+    assert image.pixelColor(inside).rgb() == fill.rgb()
+    # Out from the fill to each side: one outline pixel, then the tint.
+    for step in (QPoint(-1, 0), QPoint(1, 0)):
+        edge = _walk(image, inside, step, fill)
+        assert image.pixelColor(edge).rgb() == colors.edge.rgb(), step
+        assert image.pixelColor(edge + step).rgb() == tint.rgb(), step
+    # The fill is the line's full height, so above and below the outline
+    # are the lines next to it. The current match's underline is inside.
+    for step in (QPoint(0, -1), QPoint(0, 1)):
+        edge = _walk(image, inside, step, fill)
+        if edge.y() > inside.y() and current:
+            edge = _walk(image, edge, step, colors.ink)
+        assert image.pixelColor(edge).rgb() == colors.edge.rgb(), step
+        assert image.pixelColor(edge + step).rgb() not in (fill.rgb(), tint.rgb())
+
+
+def test_the_find_outline_draws_with_a_fold_closed(qtbot, scheme: QPalette) -> None:
+    text = '{\n  "a": [\n    1\n  ],\n  "b": "x        "\n}\n'
+    editor = _editor(qtbot, text)
+    editor.set_folding_enabled(True)
+    editor.set_change_tints("left", [(5, 5, "changed")])
+    start = text.index("x ") + 1
+    editor.set_find_matches([start], [start + 8], 0)
+    assert editor.fold_line(2)
+    colors = find_match_colors(editor.palette())
+
+    image = editor.viewport().grab().toImage()
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition(start + 4)
+    inside = editor.cursorRect(cursor).center()
+    assert image.pixelColor(inside).rgb() == colors.current.rgb()
+    edge = _walk(image, inside, QPoint(-1, 0), colors.current)
+    assert image.pixelColor(edge).rgb() == colors.edge.rgb()
+
+
+def test_the_find_outline_follows_a_scheme_switch(qtbot, install_scheme) -> None:
+    install_scheme("light")
+    editor = _find_over(qtbot, "changed", current=True)
+    assert find_match_colors(editor.palette()).edge == QColor(ACCENT)
+    install_scheme("dark")
+    assert find_match_colors(editor.palette()).edge == QColor(ACCENT_TEXT_DARK)
 
 
 # --- Tints ----------------------------------------------------------------

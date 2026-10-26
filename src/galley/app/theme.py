@@ -206,11 +206,13 @@ _FIND_OTHER_SHARE: Final = 0.25
 
 
 class FindColors(NamedTuple):
-    """Opaque fills for find matches and the text drawn on them."""
+    """Opaque fills for find matches, the text drawn on them, and the
+    1 px outline around each match."""
 
     current: QColor
     other: QColor
     ink: QColor
+    edge: QColor
 
 
 def find_match_colors(palette: QPalette) -> FindColors:
@@ -218,12 +220,15 @@ def find_match_colors(palette: QPalette) -> FindColors:
 
     Syntax colors fall under 4.5:1 on these fills (the light string color is
     about 4.2:1 on the current match), so matched text is drawn in Text.
+    The fills are under 3:1 against Base and the line tints, so each match
+    gets an accent outline that clears 3:1 against all of them.
     """
     base = palette.color(QPalette.ColorRole.Base)
     ink = composite(palette.color(QPalette.ColorRole.Text), base)
     current = mix(base, find_highlight_color(), FIND_CURRENT_OPACITY)
     other = mix(base, ink, _FIND_OTHER_SHARE)
-    return FindColors(current, other, ink)
+    edge = QColor(ACCENT_TEXT_DARK if is_dark(palette) else ACCENT)
+    return FindColors(current, other, ink, edge)
 
 
 def light_palette(current: QPalette) -> QPalette:

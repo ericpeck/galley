@@ -424,6 +424,8 @@ class CodeEditor(QPlainTextEdit):
         self._find_starts: list[int] = []
         self._find_ends: list[int] = []
         self._find_current = -1
+        # The matches given extra selections, outlined after each paint.
+        self._outlined: list[tuple[int, int]] = []
         # True while setExtraSelections runs. See _highlight_current_line.
         self._setting_selections = False
         self._selections_again = QTimer(self)
@@ -1034,9 +1036,11 @@ class CodeEditor(QPlainTextEdit):
         self._fold_summaries = []
         if not self._folded:
             super().paintEvent(event)
-            return
-        self._paint_shown_blocks(event.rect())
-        self._paint_fold_summaries(event.rect())
+        else:
+            self._paint_shown_blocks(event.rect())
+            self._paint_fold_summaries(event.rect())
+        if self._outlined:
+            self._paint_find_outlines()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1222,6 +1226,48 @@ class CodeEditor(QPlainTextEdit):
             if offset.y() > viewport_height:
                 break
             block = self._next_shown_block(block)
+        painter.end()
+
+    def _paint_find_outlines(self) -> None:
+        """A 1 px accent outline around each find match on screen.
+
+        The match fills are under 3:1 against Base and the line tints; the
+        outline clears 3:1 against all of them. It traces the fill on each
+        row of the match, so a match that wraps gets a box per row.
+        """
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(find_match_colors(self.palette()).edge, 0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        document = self.document()
+        offset = self.contentOffset()
+        for start, end in self._outlined:
+            block = document.findBlock(start)
+            while block.isValid() and block.position() < end:
+                layout = block.layout()
+                if block.isVisible() and layout.lineCount():
+                    rect = self.blockBoundingGeometry(block).translated(offset)
+                    origin = rect.topLeft() + layout.position()
+                    first = max(start, block.position()) - block.position()
+                    last = min(end, block.position() + block.length() - 1)
+                    last -= block.position()
+                    # Only the rows the match is on, for one very long line.
+                    row = layout.lineForTextPosition(first).lineNumber()
+                    while 0 <= row < layout.lineCount():
+                        line = layout.lineAt(row)
+                        if line.textStart() >= last:
+                            break
+                        left = max(first, line.textStart())
+                        right = min(last, line.textStart() + line.textLength())
+                        x1 = line.cursorToX(left)[0]
+                        x2 = line.cursorToX(right)[0]
+                        if x2 <= x1:
+                            continue
+                        # Aligned outward, as Qt fills the match.
+                        box = QRectF(x1, line.y(), x2 - x1, line.height())
+                        box = box.translated(origin).toAlignedRect()
+                        painter.drawRect(box.adjusted(0, 0, -1, -1))
+                        row += 1
+                block = block.next()
         painter.end()
 
     def _paint_fold_summaries(self, area: QRect) -> None:
@@ -1579,6 +1625,7 @@ class CodeEditor(QPlainTextEdit):
         is skipped, and the first and last blocks are cut at the viewport's
         corners, so one very long line gives only the part on screen.
         """
+        self._outlined = []
         if not self._find_starts:
             return []
         colors = find_match_colors(self.palette())
@@ -1613,6 +1660,10 @@ class CodeEditor(QPlainTextEdit):
         if current is not None:
             # Last, so it paints over a neighbor.
             selections.append(current)
+        self._outlined = [
+            (selection.cursor.selectionStart(), selection.cursor.selectionEnd())
+            for selection in selections
+        ]
         return selections
 
     def _shown_spans(self) -> list[tuple[int, int]]:
