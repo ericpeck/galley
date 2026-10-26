@@ -7,7 +7,8 @@ that is, as a whole, an email address or a phone number, wherever it is,
 including inside arrays with no keys. Text that only contains one, like
 ``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
 three Copy As trees from the same rules. Serializing a tree is
-``format.dump_value``.
+``format.dump_value``. ``mask_document`` is Format with masking: it hands
+``mask_tree`` to ``format_document`` as its ``prepare`` step.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -35,6 +36,8 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
+from galley.core.format import format_document
+from galley.core.formats import format_named
 
 MASK = "•••"
 
@@ -286,6 +289,14 @@ class MaskResult:
     masked_count: int
 
 
+@dataclass(frozen=True)
+class MaskedDocument:
+    """Masked output text and how many values ``mask_tree`` replaced."""
+
+    text: str
+    masked_count: int
+
+
 def looks_like_email(text: str) -> bool:
     """Say whether ``text``, apart from spaces at either end, is an email.
 
@@ -384,6 +395,41 @@ def mask_tree(value: object, rules: MaskRules | None = None) -> MaskResult:
     or sequence shared through a YAML alias is built, and counted, once.
     """
     return _rewrite(value, rules or MaskRules(), lambda _scalar, _key: MASK)
+
+
+def mask_document(
+    text: str | bytes,
+    source: str,
+    target: str,
+    rules: MaskRules | None = None,
+    *,
+    sort_keys: bool = False,
+) -> MaskedDocument:
+    """Format ``text`` from ``source`` into ``target`` with values masked.
+
+    This is ``format_document`` with ``mask_tree`` as its ``prepare`` step,
+    so the text passes the same checks and raises the same errors, and
+    ``sort_keys`` orders the masked output the same way. A format that does
+    not load to a value, such as XML, can't be masked and raises
+    ``MaskError``, so it never shows unmasked.
+    """
+    fmt = format_named(source)
+    if not fmt.loads_to_value:
+        raise MaskError(f"{fmt.label} can't be masked")
+    counts: list[int] = []
+
+    def prepare(value: object) -> object:
+        result = mask_tree(value, rules)
+        counts.append(result.masked_count)
+        return result.value
+
+    text_out = format_document(
+        text, source, target, sort_keys=sort_keys, prepare=prepare
+    )
+    if not counts:
+        raise MaskError("the document was not masked")
+    # A YAML retry masks the document again. The last count is the one shown.
+    return MaskedDocument(text_out, counts[-1])
 
 
 def copy_as_tree(

@@ -16,11 +16,17 @@ name and ordered by ``repr``, so the order does not follow
 ``sort_keys=True`` reorders the output only; the input text is never
 changed. See :func:`sort_mapping_keys` for the ordering rule.
 
+``prepare`` rewrites the loaded value before it is written; masking uses
+it. It runs after the checks and before ``sort_keys``. With it set, a YAML
+document that has an alias loads with the pure-Python parser, because the
+C parser gives each alias of a scalar its own string object.
+
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
 It reaches ``format_document`` once the format table has an XML row, which
 #63 slice 3 adds with the picker item.
 """
 
+import functools
 import json
 import os
 import re
@@ -43,6 +49,7 @@ from ruamel.yaml.nodes import MappingNode, ScalarNode
 from ruamel.yaml.reader import ReaderError
 from ruamel.yaml.representer import SafeRepresenter
 from ruamel.yaml.tokens import (
+    AliasToken,
     BlockEndToken,
     BlockMappingStartToken,
     BlockSequenceStartToken,
@@ -119,6 +126,9 @@ _LONE_SURROGATE_RE = re.compile(
 )
 _CHARACTER_WALK = object()
 
+# Rewrites a loaded value before it is written. See the module docstring.
+Prepare = Callable[[object], object]
+
 # A surrogate in a YAML value, and the escape the pure-Python emitter writes
 # for one. YAML ``\u`` and ``\U`` escapes are code points, so two escapes
 # that would be a UTF-16 pair in JSON are two surrogates here.
@@ -134,7 +144,9 @@ _KEY_OR_BRACKET_RE = re.compile(
 )
 
 
-def format_json(text: str | bytes, *, sort_keys: bool = False) -> str:
+def format_json(
+    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+) -> str:
     """Return ``text`` parsed as JSON and pretty-printed.
 
     ``sort_keys`` writes every object's keys in code-point order. Arrays
@@ -148,9 +160,9 @@ def format_json(text: str | bytes, *, sort_keys: bool = False) -> str:
     source = _decode_json(text)
     parsed = _json_fast_value(source)
     if parsed is _CHARACTER_WALK:
-        return _format_json_walk_first(source, sort_keys=sort_keys)
+        return _format_json_walk_first(source, sort_keys=sort_keys, prepare=prepare)
     try:
-        return _dump_json(parsed, sort_keys=sort_keys)
+        return _dump_json(_apply(prepare, parsed), sort_keys=sort_keys)
     except RecursionError:
         opened = _json_limits(source)
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
@@ -203,13 +215,17 @@ def _wait_for_pure_retry_gate() -> None:
         time.sleep(0.01)
 
 
-def _pure_python_yaml(text: str | bytes, *, sort_keys: bool = False) -> str:
+def _pure_python_yaml(
+    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+) -> str:
     """Re-parse with pure Python and return that result, success or error."""
     _wait_for_pure_retry_gate()
-    return _format_yaml_impl(text, pure=True, sort_keys=sort_keys)
+    return _format_yaml_impl(text, pure=True, sort_keys=sort_keys, **_given(prepare))
 
 
-def format_yaml(text: str | bytes, *, sort_keys: bool = False) -> str:
+def format_yaml(
+    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+) -> str:
     """Return ``text`` parsed as YAML and dumped as a block document.
 
     When ``ruamel.yaml.clib`` is installed, the C loader runs first. The
@@ -225,45 +241,71 @@ def format_yaml(text: str | bytes, *, sort_keys: bool = False) -> str:
 
     ``sort_keys`` reorders every mapping with :func:`sort_mapping_keys`
     after the document loads, so duplicate keys are still an error.
+    ``prepare`` runs on the loaded value before that. With ``prepare`` set,
+    a document with an alias is parsed again with pure Python too.
     """
+    retry = functools.partial(_pure_python_yaml, sort_keys=sort_keys, **_given(prepare))
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
         if _force_c_parser_error():
-            return _pure_python_yaml(text, sort_keys=sort_keys)
-        return _format_yaml_impl(text, pure=False, sort_keys=sort_keys)
+            return retry(text)
+        return _format_yaml_impl(
+            text, pure=False, sort_keys=sort_keys, **_given(prepare)
+        )
     reparse = True
     loaded: object = None
     try:
         if _force_c_parser_error():
             raise YAMLError("forced C parser failure")
         opened, tokens, failed = _scan_yaml(text, pure=False, keep_tokens=True)
-        if not failed and not _needs_pure_reparse(text, tokens):
+        if (
+            not failed
+            and not _needs_pure_reparse(text, tokens)
+            and not (prepare is not None and _has_alias(tokens))
+        ):
             loaded = _load_parsed(text, opened, pure=False)
             reparse = False
     except Exception:
-        return _pure_python_yaml(text, sort_keys=sort_keys)
+        return retry(text)
     if reparse:
-        return _pure_python_yaml(text, sort_keys=sort_keys)
+        return retry(text)
+    # Outside the retry, so a masking failure is not retried in pure Python.
+    loaded = _apply(prepare, loaded)
     try:
         return _dump_parsed(_ordered(loaded, sort_keys), pure=True)
     except Exception:
-        return _pure_python_yaml(text, sort_keys=sort_keys)
+        return retry(text)
 
 
-def _format_yaml_impl(text: str | bytes, *, pure: bool, sort_keys: bool = False) -> str:
+def _format_yaml_impl(
+    text: str | bytes,
+    *,
+    pure: bool,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+) -> str:
     """Parse and dump ``text`` with safe YAML, optionally forcing pure Python."""
     opened = _yaml_limits(text, pure=pure)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
-            parsed = _yaml_from_events(text, pure=pure)
+            parsed = _apply(prepare, _yaml_from_events(text, pure=pure))
             return _dump_block(_ordered(parsed, sort_keys))
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
     try:
-        loaded = _load_parsed(text, opened, pure=pure)
+        loaded = _apply(prepare, _load_parsed(text, opened, pure=pure))
         return _dump_parsed(_ordered(loaded, sort_keys), pure=pure)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+
+
+def _given(prepare: Prepare | None) -> dict[str, Prepare]:
+    """``prepare`` as a keyword only when set, so calls without it are unchanged."""
+    return {} if prepare is None else {"prepare": prepare}
+
+
+def _has_alias(tokens: list[object]) -> bool:
+    return any(isinstance(token, AliasToken) for token in tokens)
 
 
 def _load_parsed(
@@ -531,7 +573,9 @@ def _decode_json(text: str | bytes) -> str:
     return decoded
 
 
-def _format_json_walk_first(text: str | bytes, *, sort_keys: bool = False) -> str:
+def _format_json_walk_first(
+    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+) -> str:
     """Format JSON by walking characters before ``json.loads``.
 
     This is the path ``format_json`` used before the fast scan. It still
@@ -541,7 +585,8 @@ def _format_json_walk_first(text: str | bytes, *, sort_keys: bool = False) -> st
     source = _decode_json(text)
     opened = _json_limits(source)
     try:
-        return _dump_json(_json_walked_value(source, opened), sort_keys=sort_keys)
+        parsed = _apply(prepare, _json_walked_value(source, opened))
+        return _dump_json(parsed, sort_keys=sort_keys)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1034,7 +1079,12 @@ def _scalar_text(value: object) -> str:
 
 
 def format_document(
-    text: str | bytes, source: str, target: str, *, sort_keys: bool = False
+    text: str | bytes,
+    source: str,
+    target: str,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
 ) -> str:
     """Format ``text`` from ``source`` into ``target``.
 
@@ -1043,21 +1093,25 @@ def format_document(
     located ``InputError`` checks stay exactly those functions. A pair
     ``targets_for`` does not list raises ``ValueError``. ``sort_keys`` orders
     JSON and YAML output keys with :func:`sort_mapping_keys`; XML ignores it.
+    ``prepare`` rewrites the loaded JSON or YAML value before it is written.
+    XML does not load to a value, so it raises ``ValueError`` with ``prepare``.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
     if target_kind not in (fmt.name for fmt in targets_for(source_kind)):
         raise ValueError(f"Can't write {source.strip()} as {target.strip()}.")
+    if prepare is not None:
+        _value_format(source)
     if source_kind == "xml":
         return format_xml(text)
     if source_kind == "json" and target_kind == "json":
-        return format_json(text, sort_keys=sort_keys)
+        return format_json(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "yaml" and target_kind == "yaml":
-        return format_yaml(text, sort_keys=sort_keys)
+        return format_yaml(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "json":
         value = json.loads(format_json(text, sort_keys=sort_keys))
-        return _dump_yaml_value(value)
-    value = yaml_json_value(text)
+        return _dump_yaml_value(_apply(prepare, value))
+    value = yaml_json_value(text, prepare=prepare)
     opened = _yaml_limits(text)
     try:
         return _dump_json(_ordered(value, sort_keys), default=_not_json_value)
@@ -1140,6 +1194,10 @@ def _ordered(value: object, sort_keys: bool) -> object:
     return sort_mapping_keys(value) if sort_keys else value
 
 
+def _apply(prepare: Prepare | None, value: object) -> object:
+    return value if prepare is None else prepare(value)
+
+
 def _key_order(item: tuple[object, object]) -> str:
     key = item[0]
     if isinstance(key, str):
@@ -1201,16 +1259,19 @@ def _dump_yaml_value(value: object) -> str:
     return dumped
 
 
-def yaml_json_value(text: str | bytes) -> object:
+def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> object:
     """Return the value Format to JSON writes for YAML ``text``.
 
     The text passes ``format_yaml``'s checks and raises its errors. The
     rendered text is loaded back, and a surrogate in that value raises a
     ``bad_escape`` ``InputError`` at its escape in ``text``. JSON output
     can't hold a lone surrogate, and JSON input rejects one the same way.
+    ``prepare`` goes to ``format_yaml``, so the rendered text is rewritten.
+    A reload too deep for ruamel then walks the rendered text, not ``text``,
+    so a value ``prepare`` replaced can't come back.
     """
-    rendered = format_yaml(text)
-    value = _load_rendered_yaml(text, rendered)
+    rendered = format_yaml(text, prepare=prepare)
+    value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
     return value
