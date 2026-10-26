@@ -2,7 +2,6 @@
 
 import json
 import random
-import time
 
 import pytest
 
@@ -241,12 +240,20 @@ def test_yaml_nesting_past_max_depth_has_no_ranges() -> None:
     assert fold_ranges(text, "YAML") == []
 
 
-def test_the_scan_of_2_mb_of_json_is_within_budget() -> None:
+def test_the_scan_of_2_mb_of_json_finds_every_container() -> None:
     text = _two_mb_json()
     assert len(text.encode("utf-8")) >= TWO_MB
-    best = _best_of(3, lambda: fold_ranges(text, "JSON"))
     assert len(fold_ranges(text, "JSON")) > 20_000
-    assert best <= SCAN_BUDGET_S, f"2 MB scan took {best * 1000:.1f} ms"
+
+
+@pytest.mark.perf
+def test_the_scan_of_2_mb_of_json_is_within_budget(perf_budget) -> None:
+    text = _two_mb_json()
+    perf_budget.within(
+        SCAN_BUDGET_S,
+        lambda: fold_ranges(text, "JSON"),
+        fixture="2 MB JSON, API-response records",
+    )
 
 
 @pytest.mark.parametrize("fmt", ["JSON", "YAML"])
@@ -257,15 +264,6 @@ def test_scanning_never_raises_on_odd_text(fmt: str) -> None:
         text = "".join(generator.choice(alphabet) for _ in range(80))
         for item in fold_ranges(text, fmt):
             assert item.end_line > item.start_line
-
-
-def _best_of(runs: int, operation) -> float:
-    best = float("inf")
-    for _ in range(runs):
-        started = time.perf_counter()
-        operation()
-        best = min(best, time.perf_counter() - started)
-    return best
 
 
 def _two_mb_json() -> str:

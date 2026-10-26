@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 
+from galley.app.copy_as import COPY_AS_LABELS
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
     CLOSE_OTHERS,
@@ -24,6 +25,8 @@ from galley.app.shortcuts import (
     EXPAND_ALL,
     FOLD,
     FORMAT,
+    NEXT_PROBLEM,
+    PREVIOUS_PROBLEM,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     STACK_PANES,
@@ -33,6 +36,7 @@ from galley.app.shortcuts import (
     WORD_WRAP,
     apply_standard,
 )
+from galley.core.mask import CopyAsMode
 
 COMING_SOON = "Coming soon"
 
@@ -40,10 +44,9 @@ COMING_SOON = "Coming soon"
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
-    "Find",
     "Guides",
+    "Pop out",
     "Indent",
-    "Sort keys",
     "Minify",
     "Validate",
     "Tabs",
@@ -57,6 +60,8 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Find": ("find",),
     # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
     "Guides": ("guides_off", "guides_lines", "guides_depth"),
+    # The Window menu and the tab strip's Pop out ship together (#91 D8).
+    "Pop out": ("pop_out", "show_window", "bring_back"),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -247,6 +252,13 @@ class ShellActions:
         self.redo = _action(parent, "Redo", standard=QKeySequence.StandardKey.Redo)
         self.cut = _action(parent, "Cut", standard=QKeySequence.StandardKey.Cut)
         self.copy = _action(parent, "Copy", standard=QKeySequence.StandardKey.Copy)
+        # Edit › Copy As and the Output right-click menu (#66). Each one
+        # copies from Output, so all three stay disabled until it has text.
+        self.copy_as_original = _action(
+            parent, COPY_AS_LABELS["original"], enabled=False
+        )
+        self.copy_as_masked = _action(parent, COPY_AS_LABELS["masked"], enabled=False)
+        self.copy_as_fake = _action(parent, COPY_AS_LABELS["fake"], enabled=False)
         self.paste = _action(parent, "Paste", standard=QKeySequence.StandardKey.Paste)
         self.select_all = _action(
             parent,
@@ -254,6 +266,12 @@ class ShellActions:
             standard=QKeySequence.StandardKey.SelectAll,
         )
         self.find = _action(parent, "Find…", standard=QKeySequence.StandardKey.Find)
+        self.find_next = _action(
+            parent, "Find Next", standard=QKeySequence.StandardKey.FindNext
+        )
+        self.find_previous = _action(
+            parent, "Find Previous", standard=QKeySequence.StandardKey.FindPrevious
+        )
         self.find_replace = _action(
             parent,
             "Find and Replace…",
@@ -311,6 +329,10 @@ class ShellActions:
         )
         self.stack_panes.setShortcuts([STACK_PANES, STACK_PANES_ALT])
         self.stack_panes.setObjectName("stackPanes")
+        self.next_problem = _action(parent, "Next Problem")
+        self.next_problem.setShortcuts(list(NEXT_PROBLEM))
+        self.previous_problem = _action(parent, "Previous Problem")
+        self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
         self.appearance_light = _action(parent, "Light", checkable=True)
         self.appearance_dark = _action(parent, "Dark", checkable=True)
@@ -331,7 +353,9 @@ class ShellActions:
 
         self.outdent = _action(parent, "Outdent")
         self.indent = _action(parent, "Indent")
-        self.sort_keys = _action(parent, "Sort keys")
+        # On: the next Format writes keys A–Z at every level. Output only.
+        self.sort_keys = _action(parent, "Sort keys", checkable=True)
+        self.sort_keys.setObjectName("sortKeys")
         self.minify = _action(parent, "Minify")
         self.expand_all = _action(parent, "Expand all", shortcut=EXPAND_ALL)
         self.collapse_all = _action(parent, "Collapse all", shortcut=COLLAPSE_ALL)
@@ -350,6 +374,14 @@ class ShellActions:
             enabled=False,
         )
         self._apply_unbuilt()
+
+    def copy_as_actions(self) -> dict[CopyAsMode, QAction]:
+        """The Copy As items by mode, in menu order."""
+        return {
+            "original": self.copy_as_original,
+            "masked": self.copy_as_masked,
+            "fake": self.copy_as_fake,
+        }
 
     def _apply_unbuilt(self) -> None:
         for name in UNBUILT_ACTIONS:
@@ -394,10 +426,12 @@ class ShellActions:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
             self.preferences,
-            self.find,
             self.guides_off,
             self.guides_lines,
             self.guides_depth,
+            self.pop_out,
+            self.show_window,
+            self.bring_back,
             self.rename,
             self.duplicate,
             self.close_tab,
@@ -405,7 +439,6 @@ class ShellActions:
             self.close_tabs_right,
             self.new_tab,
             self.indent,
-            self.sort_keys,
             self.minify,
             self.validate,
         ]
@@ -419,9 +452,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.pop_out,
-            self.show_window,
-            self.bring_back,
             self.outdent,
         ]
 

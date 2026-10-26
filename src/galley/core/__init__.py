@@ -1,4 +1,4 @@
-"""Pure Python JSON and YAML helpers. This package does not import Qt."""
+"""Pure Python JSON, YAML, and XML helpers. This package does not import Qt."""
 
 from galley.core.convert_python import ConvertError, ConvertNotice, ConvertResult
 from galley.core.errors import MAX_DEPTH, InputError

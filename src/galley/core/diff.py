@@ -68,10 +68,10 @@ from galley.core.format import (
     _json_limits,
     _json_walked_value,
     _needs_pure_reparse,
-    _normalize_format,
     _safe_yaml,
     _scalar_value,
     _scan_yaml,
+    _value_format,
 )
 from galley.core.keypath import render_path
 
@@ -207,8 +207,9 @@ def load_document(text: str | bytes, source: str) -> Doc:
     invalid UTF-8, nesting past ``MAX_DEPTH``, and JSON lone surrogates;
     ``JSONDuplicateKeyError`` for a JSON object that repeats a key;
     ``json.JSONDecodeError`` or ruamel's ``YAMLError`` for other syntax.
+    Any other format, such as XML, raises ``ValueError``.
     """
-    if _normalize_format(source) == "json":
+    if _value_format(source) == "json":
         return _load_json(text)
     return _load_yaml(text)
 

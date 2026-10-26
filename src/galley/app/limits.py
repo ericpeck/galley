@@ -21,3 +21,17 @@ YAML_WARNING_BYTES = 352 * _SI_KB
 JSON_BUSY_BYTES = 5 * _SI_MB
 JSON_PROGRESS_BYTES = 20 * _SI_MB
 JSON_WARNING_BYTES = 100 * _SI_MB
+# Convert from Python runs on the UI thread with no busy indicator. Above
+# these UTF-8 sizes of Input, it is refused so the window stays responsive.
+# The size bench rows ``python_to_json`` and ``python_to_yaml`` time them.
+PYTHON_TO_JSON_BYTES = 1 * _SI_MB
+PYTHON_TO_YAML_BYTES = YAML_BUSY_BYTES
+
+# Copy As (#66) builds Masked and Random fake on the worker unless the text
+# is smaller than these, so the UI thread stays inside its 100 ms budget.
+# Copy As walks the whole tree in Python, and YAML loads with the pure
+# parser. On an Apple M4 Pro, Random fake took 11 ms for 32 KB of JSON and
+# 14 ms for 2 KB of YAML, which leaves room for a machine about 4x slower.
+# Interim values; the size bench ``copy_as`` rows time Copy As.
+JSON_COPY_AS_INLINE_BYTES = 32 * _SI_KB
+YAML_COPY_AS_INLINE_BYTES = 2 * _SI_KB

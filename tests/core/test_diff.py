@@ -11,7 +11,6 @@ import os
 import pickle
 import subprocess
 import sys
-import time
 from io import StringIO
 
 import pytest
@@ -387,9 +386,7 @@ def _records(count: int) -> list[dict[str, object]]:
     ]
 
 
-def test_diffing_two_one_and_a_half_megabyte_documents_takes_under_half_a_second() -> (
-    None
-):
+def _one_and_a_half_megabyte_pair() -> tuple[Doc, Doc]:
     base = _records(6000)
     edited = [{"id": -1}, *base]
     edited[3000] = {**edited[3000], "name": "changed"}
@@ -397,17 +394,26 @@ def test_diffing_two_one_and_a_half_megabyte_documents_takes_under_half_a_second
     assert len(left_text) > 1_400_000
     left = load_document(left_text, "json")
     right = load_document(json.dumps(edited, indent=2), "json")
-    timings = []
-    for _ in range(3):
-        start = time.perf_counter()
-        result = diff(left, right)
-        timings.append(time.perf_counter() - start)
+    return left, right
+
+
+def test_diffing_two_one_and_a_half_megabyte_documents_aligns_them() -> None:
+    result = diff(*_one_and_a_half_megabyte_pair())
     assert result.aligned is True
     assert [(c.kind, c.path_text) for c in result.changes] == [
         ("added", "[0]"),
         ("changed", "[2999].name"),
     ]
-    assert min(timings) < 0.5, timings
+
+
+@pytest.mark.perf
+def test_diffing_two_one_and_a_half_megabyte_documents_takes_under_half_a_second(
+    perf_budget,
+) -> None:
+    left, right = _one_and_a_half_megabyte_pair()
+    perf_budget.within(
+        0.5, lambda: diff(left, right), fixture="1.5 MB JSON array, 6000 records"
+    )
 
 
 # --- Value rules ----------------------------------------------------------

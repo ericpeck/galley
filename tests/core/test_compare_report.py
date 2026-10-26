@@ -4,7 +4,6 @@ import json
 import os
 import pickle
 import random
-import time
 from unittest import mock
 
 import pytest
@@ -464,11 +463,9 @@ def test_a_document_too_deep_to_compare_fails_without_a_report() -> None:
     assert event.error is not None and event.error.kind == "too_deep"
 
 
-@pytest.mark.skip(
-    reason="needs PR #100 (Sort keys, #59): format_document(sort_keys=...) "
-    "is not on main yet"
-)
 def test_reformat_ignores_the_sort_keys_setting() -> None:
+    # Sort keys (#59) changes Output only. Compare reformats both sides and
+    # never sorts, and a compare job has no way to ask for sorting.
     text = '{"b": 1, "a": {"d": 2, "c": 3}}'
     event = run_compare(_job(text, text, reformat=True))
     assert isinstance(event, CompareEvent)
@@ -481,14 +478,13 @@ def test_reformat_ignores_the_sort_keys_setting() -> None:
 
 # --- Performance --------------------------------------------------------
 
-# Local budget for building the report of a 1.5 MB pair. Gating CI is about
-# 3.5x slower on its shared runners, so it gets the loose budget (Erik, #65
-# point 6). The case prints its time either way.
+# Building the report of a 1.5 MB pair, after the diff.
 _REPORT_BUDGET_S = 0.25
 # The whole job in-process, pickling the event as the queue does: both
 # loads, the diff, the report, and Format first when ``reformat`` is set.
 _JOB_BUDGET_S = 1.5
-_CI_FACTOR = 3.5
+# Isaac's #65 budgets for the diff, here with the report built as well.
+_ISAAC_BUDGET_S = 0.5
 
 
 def _large_pair() -> tuple[str, str]:
@@ -514,44 +510,107 @@ def _large_pair() -> tuple[str, str]:
     return json.dumps(left, indent=2), json.dumps(right, indent=2)
 
 
+def _keys_changed_pair() -> tuple[str, str]:
+    """About 1 MB a side, with 10% of the record keys changed."""
+    rng = random.Random(59)
+    records = [
+        {
+            "id": index,
+            "name": f"user-{index}",
+            "email": f"u{index}@example.com",
+            "city": rng.choice(["Oslo", "Lima", "Pune"]),
+            "score": rng.randint(0, 999),
+        }
+        for index in range(7_500)
+    ]
+    changed = [dict(record) for record in records]
+    keys = [
+        (index, key)
+        for index in range(len(changed))
+        for key in ("name", "email", "city", "score")
+    ]
+    for index, key in rng.sample(keys, len(keys) // 10):
+        changed[index][key] = f"{changed[index][key]}x"
+    return (
+        json.dumps({"records": records}, indent=2),
+        json.dumps({"records": changed}, indent=2),
+    )
+
+
+def _reordered_pair() -> tuple[str, str]:
+    """A 10,000-item array and the same items shuffled."""
+    items = [{"id": index, "value": f"value-{index}"} for index in range(10_000)]
+    shuffled = list(items)
+    random.Random(60).shuffle(shuffled)
+    return json.dumps(items, indent=2), json.dumps(shuffled, indent=2)
+
+
+def _aligned_pair() -> tuple[str, str]:
+    """A 5,000-item array with edits, inserts and deletes that all align."""
+    rng = random.Random(61)
+    items = [{"id": index, "value": f"value-{index}"} for index in range(5_000)]
+    edited = [dict(item) for item in items]
+    for index in rng.sample(range(5_000), 250):
+        edited[index]["value"] += "!"
+    for index in sorted(rng.sample(range(5_000), 50), reverse=True):
+        del edited[index]
+    for index in rng.sample(range(4_900), 50):
+        edited.insert(index, {"id": -index, "value": "new"})
+    return json.dumps(items, indent=2), json.dumps(edited, indent=2)
+
+
+def _loaded(pair: tuple[str, str]) -> tuple[Doc, Doc]:
+    return load_document(pair[0], "json"), load_document(pair[1], "json")
+
+
 @pytest.mark.perf
-def test_building_the_report_for_a_1_5_mb_pair_is_within_budget() -> None:
+def test_building_the_report_for_a_1_5_mb_pair_is_within_budget(perf_budget) -> None:
     left_text, right_text = _large_pair()
     assert len(left_text.encode()) > 1_400_000
-    left_doc = load_document(left_text, "json")
-    right_doc = load_document(right_text, "json")
+    left_doc, right_doc = _loaded((left_text, right_text))
     result, pairs = diff_with_pairs(left_doc, right_doc)
     assert result.unaligned == (("flags",),)
     assert len(result.changes) > 5_000
-    samples = []
-    for _ in range(3):
-        started = time.perf_counter()
-        report = build_report(result, left_doc, right_doc, pairs)
-        samples.append(time.perf_counter() - started)
-    best = min(samples)
-    budget = _REPORT_BUDGET_S * (_CI_FACTOR if os.environ.get("CI") else 1.0)
-    print(
-        f"\nreport build, 1.5 MB pair: best {best * 1000:.0f} ms of 3, "
-        f"{len(result.changes)} changes, {len(report.rows)} rows, "
-        f"{len(report.anchors)} anchor bytes, "
-        f"{len(pickle.dumps(report))} pickled bytes"
-    )
+    report = build_report(result, left_doc, right_doc, pairs)
     assert len(report.anchors) <= ANCHOR_LIMIT * 8
-    assert best <= budget, samples
+    perf_budget.within(
+        _REPORT_BUDGET_S,
+        lambda: build_report(result, left_doc, right_doc, pairs),
+        fixture=f"1.5 MB JSON pair, {len(result.changes)} changes, report only",
+    )
 
 
 @pytest.mark.perf
 @pytest.mark.parametrize("reformat", [False, True])
-def test_a_compare_job_for_a_1_5_mb_pair_is_within_budget(reformat: bool) -> None:
+def test_a_compare_job_for_a_1_5_mb_pair_is_within_budget(
+    perf_budget, reformat: bool
+) -> None:
     left_text, right_text = _large_pair()
     job = _job(left_text, right_text, reformat=reformat)
-    samples = []
-    for _ in range(2):
-        started = time.perf_counter()
-        event = pickle.loads(pickle.dumps(run_compare(job)))
-        samples.append(time.perf_counter() - started)
-    assert isinstance(event, CompareEvent)
-    best = min(samples)
-    budget = _JOB_BUDGET_S * (_CI_FACTOR if os.environ.get("CI") else 1.0)
-    print(f"\ncompare job, 1.5 MB pair, reformat={reformat}: best {best:.2f} s of 2")
-    assert best <= budget, samples
+    assert isinstance(run_compare(job), CompareEvent)
+    perf_budget.within(
+        _JOB_BUDGET_S,
+        lambda: pickle.loads(pickle.dumps(run_compare(job))),
+        fixture=f"1.5 MB JSON pair, whole job and pickle, reformat={reformat}",
+    )
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize(
+    ("make_pair", "fixture"),
+    [
+        (_keys_changed_pair, "1 MB JSON pair, 10% of keys changed"),
+        (_reordered_pair, "10,000-item array reordered"),
+        (_aligned_pair, "5,000-item array, aligned edits"),
+    ],
+)
+def test_diff_and_report_meet_isaacs_budgets(perf_budget, make_pair, fixture) -> None:
+    left_doc, right_doc = _loaded(make_pair())
+    result, _pairs = diff_with_pairs(left_doc, right_doc)
+    assert result.changes and not result.unaligned
+
+    def _diff_and_report() -> CompareReport:
+        result, pairs = diff_with_pairs(left_doc, right_doc)
+        return build_report(result, left_doc, right_doc, pairs)
+
+    perf_budget.within(_ISAAC_BUDGET_S, _diff_and_report, fixture=fixture)
