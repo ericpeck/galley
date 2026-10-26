@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import random
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -33,11 +34,12 @@ from tests.core.test_compare_report import (
 )
 
 from galley.core.compare_report import build_report
-from galley.core.diff import diff_with_pairs, load_document
+from galley.core.diff import Doc, Span, _segment, diff_with_pairs, load_document
 from galley.core.format import _dump_yaml_value
 from galley.core.worker import CompareJob, run_compare
 
 _GOLDEN = Path(__file__).parent / "data" / "diff_identity.json"
+_KEYS_GOLDEN = Path(__file__).parent / "data" / "diff_identity_keys.json"
 _WRITE = os.environ.get("GALLEY_WRITE_DIFF_IDENTITY") == "1"
 _DIGEST_CHARS = 24
 _RANDOM_PAIRS = 300
@@ -211,3 +213,90 @@ def test_the_1_5_mb_perf_pair_gives_mains_diff_and_pairs() -> None:
     assert result.unaligned == (("flags",),)
     assert _digest((result, sorted(pairs.items(), key=repr))) == expected["diff"]
     assert _digest(build_report(result, left, right, pairs)) == expected["report"]
+
+
+# --- Non-string keys ------------------------------------------------------
+
+_WHEN = date(2026, 10, 18)
+
+
+def _reversed_spans(value: object) -> dict[tuple[object, ...], Span]:
+    """Fake spans at the paths the diff builds, last member first.
+
+    Every path gets a span, keyed by the diff's own segment text, and each
+    object's members start in reverse dict order, so the walk has to look
+    every span up and sort the members.
+    """
+    spans: dict[tuple[object, ...], Span] = {}
+    line = 1000
+    stack: list[tuple[tuple[object, ...], object]] = [((), value)]
+    while stack:
+        path, node = stack.pop()
+        spans[path] = Span(line, 1, line, 9)
+        line -= 1
+        # Pushed in order, so the first member pops first and gets the
+        # highest line: members start in reverse dict order.
+        if isinstance(node, dict):
+            stack.extend(
+                ((*path, _segment(key)), child) for key, child in reversed(node.items())
+            )
+        elif isinstance(node, list):
+            stack.extend(
+                ((*path, index), child)
+                for index, child in reversed(list(enumerate(node)))
+            )
+    return spans
+
+
+def _non_string_key_docs() -> dict[str, tuple[Doc, Doc]]:
+    """Small flat dicts keyed by an int, None, and a date (fake data)."""
+    left_value = {
+        "flat": {1: "one", None: "nothing", _WHEN: "launch", "x": 1.5},
+        "rows": [{2: True, None: None}, {_WHEN: [1, 2]}],
+        "gone": {None: 0},
+    }
+    right_value = {
+        "flat": {1: "uno", None: "nothing", _WHEN: "launch day", "y": 2},
+        "rows": [{2: False}, {_WHEN: [1, 2, 3]}, {None: "new"}],
+        "here": {1: 0},
+    }
+    yaml_left = "1: one\nnull: nothing\n2026-10-18: launch\nx: 1.5\n"
+    yaml_right = "1: uno\nnull: nothing\n2026-10-18: launch day\ny: 2\n"
+    return {
+        "hand-built json": (
+            Doc(left_value, "json", _reversed_spans(left_value)),
+            Doc(right_value, "json", _reversed_spans(right_value)),
+        ),
+        "hand-built, no spans": (
+            Doc(left_value, "json"),
+            Doc(right_value, "json"),
+        ),
+        "yaml": (
+            load_document(yaml_left, "yaml"),
+            load_document(yaml_right, "yaml"),
+        ),
+    }
+
+
+def test_non_string_keys_give_mains_diff_pairs_and_report() -> None:
+    """Small flat dicts with int, None, and date keys, through every layer.
+
+    The hand-built documents keep the raw keys, so the walk, the span
+    lookups, the member sort, and the summaries all see non-string keys;
+    the summary fast path must decline them. The YAML document's keys reach
+    the diff as text. ``data/diff_identity_keys.json`` was written from
+    ``main``'s code at ``f79164f``, before the #129 speed-up, with the same
+    ``GALLEY_WRITE_DIFF_IDENTITY=1`` switch.
+    """
+    actual = {}
+    for name, (left, right) in _non_string_key_docs().items():
+        result, pairs = diff_with_pairs(left, right)
+        assert result.changes
+        actual[name] = {
+            "diff": _digest((result, sorted(pairs.items(), key=repr))),
+            "report": _digest(build_report(result, left, right, pairs)),
+        }
+    if _WRITE:
+        _KEYS_GOLDEN.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")
+        pytest.skip("wrote the non-string key golden")
+    assert actual == json.loads(_KEYS_GOLDEN.read_text(encoding="utf-8"))

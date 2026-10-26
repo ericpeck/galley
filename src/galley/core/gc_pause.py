@@ -1,12 +1,15 @@
 """Pause Python's cyclic garbage collector around allocation-heavy work.
 
 Loading, diffing, and reporting a large document pair allocate hundreds of
-thousands of tuples, lists, and ``Span`` objects that hold no reference
-cycles. Each allocation burst triggers a collection, and the older
-generations walk every live object of both documents again. On the 1.5 MB
-``reformat=True`` compare job that was 54 ms of the 178 ms this pause and
-the rest of #129 saved. Reference counting still frees everything while the
-collector is paused; only cycle detection waits.
+thousands of tuples, lists, and ``Span`` objects. Each allocation burst
+triggers a collection, and the older generations walk every live object of
+both documents again. On the 1.5 MB ``reformat=True`` compare job that was
+54 ms of the 178 ms this pause and the rest of #129 saved.
+
+Pausing defers cycle collection; it does not skip it. Reference counting
+frees objects that are not in a cycle as usual. Anything in a cycle, such as
+ruamel's loader objects, waits until the outermost pause ends, and then the
+collector runs as usual.
 
 Pauses nest and overlap across threads. A module lock guards a count of
 active pauses: the first to start turns the collector off, if it was on,
