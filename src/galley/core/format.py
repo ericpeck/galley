@@ -1405,6 +1405,23 @@ def _not_json_value(value: object) -> object:
     raise NotJSONValueError(f"JSON can't hold a {type(value).__name__} value")
 
 
+# The text of the two errors ``json.dumps`` raises before its hook runs. Like
+# ``InputError.kind`` they are names, and ``galley.app`` chooses the words.
+NOT_JSON_KEY = "not_json_key"
+SELF_REFERENCE = "self_reference"
+# The key types ``json.dumps`` writes; it turns numbers, bools and null into
+# strings.
+_JSON_KEY_TYPES = (str, int, float, bool, type(None))
+
+
+class NotJSONKeyError(NotJSONValueError):
+    """A YAML key JSON can't hold, such as a date or binary data."""
+
+
+class SelfReferenceError(NotJSONValueError):
+    """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
+
+
 def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
@@ -1425,13 +1442,48 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     can't hold a lone surrogate, and JSON input rejects one the same way.
     ``prepare`` goes to ``format_yaml``, so the rendered text is rewritten.
     A reload too deep for ruamel then walks the rendered text, not ``text``,
-    so a value ``prepare`` replaced can't come back.
+    so a value ``prepare`` replaced can't come back. A key JSON can't hold
+    raises ``NotJSONKeyError`` and an alias that contains itself raises
+    ``SelfReferenceError``, because ``json.dumps`` rejects both before its
+    ``default`` hook can.
     """
     rendered = format_yaml(text, prepare=prepare)
     value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
+    _check_json_shape(value)
     return value
+
+
+def _check_json_shape(value: object) -> None:
+    """Raise for a key JSON can't hold, or a mapping or list inside itself.
+
+    Each mapping and list is walked once, with an explicit stack, so an
+    alias shared many times costs no more than one copy. A list or mapping
+    still being walked when it is reached again contains itself.
+    """
+    walking: set[int] = set()
+    walked: set[int] = set()
+    stack: list[tuple[object, bool]] = [(value, False)]
+    while stack:
+        node, leaving = stack.pop()
+        if leaving:
+            walking.discard(id(node))
+            walked.add(id(node))
+            continue
+        if not isinstance(node, (dict, list)) or id(node) in walked:
+            continue
+        if id(node) in walking:
+            raise SelfReferenceError(SELF_REFERENCE)
+        walking.add(id(node))
+        stack.append((node, True))
+        if isinstance(node, dict):
+            if not all(isinstance(key, _JSON_KEY_TYPES) for key in node):
+                raise NotJSONKeyError(NOT_JSON_KEY)
+            children = node.values()
+        else:
+            children = node
+        stack.extend((child, False) for child in children)
 
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:
