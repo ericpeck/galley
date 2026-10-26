@@ -82,9 +82,35 @@ def _appearance_actions(window) -> dict[str, QAction]:
 
 
 def _pick(qtbot, window, label: str) -> None:
-    """Trigger View › Appearance › ``label`` and let deferred refreshes run."""
+    """Trigger View › Appearance › ``label`` and let deferred refreshes run.
+
+    The split rail and the format pickers copy palette colors on the next
+    event-loop turn. A slow runner can take longer than a fixed wait, so
+    this waits until those copies match the new palette.
+    """
     _appearance_actions(window)[label].trigger()
-    qtbot.wait(20)
+    qtbot.waitUntil(lambda: _deferred_copies_landed(window), timeout=5000)
+
+
+def _deferred_copies_landed(window) -> bool:
+    if not window.isVisible():
+        return True
+    muted = _palette().color(_R.PlaceholderText).name()
+    ratio = window.findChild(QLabel, "splitRatio")
+    if (
+        isinstance(ratio, QLabel)
+        and ratio.palette().color(_R.WindowText).name() != muted
+    ):
+        return False
+    ink = window.palette().color(_R.ButtonText).name()
+    for name in ("inputFormat", "outputFormat"):
+        picker = window.findChild(QComboBox, name)
+        if (
+            isinstance(picker, QComboBox)
+            and picker.palette().color(_R.ButtonText).name() != ink
+        ):
+            return False
+    return True
 
 
 def _palette() -> QPalette:
@@ -443,8 +469,7 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
     paste = _tool_button(window, "Paste")
     assert paste.isEnabled()
     coming_soon = [
-        _tool_button(window, name)
-        for name in ("Sort keys", "Minify", "Validate", "Find…")
+        _tool_button(window, name) for name in ("Minify", "Validate", "Find…")
     ]
     for button in coming_soon:
         assert not button.isEnabled()
@@ -494,27 +519,27 @@ def test_icon_only_coming_soon_buttons_draw_3_to_1(qtbot) -> None:
     """
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
-    sort_keys = _tool_button(window, "Sort keys")
+    minify = _tool_button(window, "Minify")
     width = window.width()
     while (
-        sort_keys.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
+        minify.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
         and width > window.minimumWidth()
     ):
         width -= 20
         window.resize(width, window.height())
         QApplication.processEvents()
-    assert sort_keys.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-    assert sort_keys.isVisible() and not sort_keys.isEnabled()
+    assert minify.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert minify.isVisible() and not minify.isEnabled()
 
     for label in ("Light", "Dark"):
         _pick(qtbot, window, label)
         paste_ink, paste_bg = _label_ink(paste)
         paste_ratio = contrast_ratio(paste_ink, paste_bg)
-        ink, background = _label_ink(sort_keys)
+        ink, background = _label_ink(minify)
         ratio = contrast_ratio(ink, background)
         assert DISABLED_TEXT_CONTRAST <= ratio < paste_ratio - 1.5, (
-            f"{label} icon-only Sort keys: {ratio:.2f}; "
-            + _render_details(sort_keys, ink, background, paste_ink, paste_bg)
+            f"{label} icon-only Minify: {ratio:.2f}; "
+            + _render_details(minify, ink, background, paste_ink, paste_bg)
         )
 
 

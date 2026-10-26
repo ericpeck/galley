@@ -15,7 +15,7 @@ from multiprocessing.queues import Queue
 from typing import BinaryIO, Literal
 
 from galley.core.diff import DiffResult, diff, load_document
-from galley.core.errors import InputError
+from galley.core.errors import InputError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.problems import Problem, collect_problems
@@ -33,7 +33,10 @@ WRITE_PROGRESS_EVERY_CHUNKS = 1
 
 @dataclass(frozen=True)
 class FormatJob:
-    """One document to format. The body is a copy; the worker does not share it."""
+    """One document to format. The body is a copy; the worker does not share it.
+
+    ``sort_keys`` orders the output's keys; the text in ``text`` is unchanged.
+    """
 
     job_id: int
     text: str
@@ -44,6 +47,7 @@ class FormatJob:
     chunk_size: int = WRITE_CHUNK_SIZE
     chunk_pause_s: float = 0.0
     fault: str | None = None
+    sort_keys: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,8 +79,9 @@ class FailureEvent:
     """Formatting failed. ``temp_path`` is set when a temp file was created.
 
     ``error`` is set when the failure is an ``InputError``. Its ``kind``,
-    ``lineno``, ``colno``, and ``details`` are the structured fields. The
-    banner sentence is built in the app, not here.
+    ``lineno``, ``colno``, and ``details`` are the structured fields.
+    ``not_json_value`` is True for a ``NotJSONValueError``. The banner
+    sentence is built in the app, not here.
     """
 
     job_id: int
@@ -84,6 +89,7 @@ class FailureEvent:
     temp_path: str | None = None
     error: InputError | None = None
     problems: tuple[Problem, ...] = ()
+    not_json_value: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,7 +190,9 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
         event_queue.put(FailureEvent(job.job_id, "", None, None, early))
         return
     try:
-        text = format_document(job.text, job.source, job.target)
+        text = format_document(
+            job.text, job.source, job.target, sort_keys=job.sort_keys
+        )
     except Exception as exc:
         event_queue.put(_failure_event(job, exc, None))
         return
@@ -271,7 +279,14 @@ def _failure_event(
     problems: tuple[Problem, ...] = ()
     if error is None:
         problems = collect_problems(job.text, job.source, exc)
-    return FailureEvent(job.job_id, _failure_message(exc), temp_path, error, problems)
+    return FailureEvent(
+        job.job_id,
+        _failure_message(exc),
+        temp_path,
+        error,
+        problems,
+        not_json_value=isinstance(exc, NotJSONValueError),
+    )
 
 
 def _failure_message(exc: Exception) -> str:
