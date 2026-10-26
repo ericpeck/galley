@@ -281,6 +281,25 @@ def test_with_the_slice_3_row_format_document_formats_xml(
     assert _scan_folds(format_xml(text), "xml") == b""
 
 
+# Attributes and child elements deliberately out of A-Z order.
+_UNSORTED_XML = (
+    '<?xml version="1.0"?>\n'
+    '<root zeta="1" alpha="2"><z>last</z><a>first</a><m b="2" a="1"/></root>\n'
+)
+
+
+def test_sort_keys_leaves_xml_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sort keys orders JSON and YAML keys only. XML keeps attribute and
+    # element order exactly as written, whatever the toggle says.
+    add_xml_row(monkeypatch)
+    plain = format_document(_UNSORTED_XML, "xml", "xml")
+    assert plain == format_xml(_UNSORTED_XML)
+    assert format_document(_UNSORTED_XML, "xml", "xml", sort_keys=True) == plain
+    assert plain.index('zeta="1"') < plain.index('alpha="2"')
+    assert plain.index("<z>") < plain.index("<a>")
+    assert '<m b="2" a="1"/>' in plain
+
+
 @pytest.mark.parametrize(("source", "target"), [("xml", "json"), ("json", "xml")])
 def test_xml_does_not_convert(
     monkeypatch: pytest.MonkeyPatch, source: str, target: str

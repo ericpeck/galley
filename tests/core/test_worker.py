@@ -228,6 +228,18 @@ def test_worker_formats_xml_with_no_fold_ranges() -> None:
     assert success.folds == b""
 
 
+def test_worker_xml_job_ignores_sort_keys() -> None:
+    # The sort flag crosses spawn with the job, and XML output stays as written.
+    text = '<r zeta="1" alpha="2"><z/><a/></r>'
+    plain = _run_xml_job(FormatJob(job_id=6, text=text, source="xml", target="xml"))
+    sorted_on = _run_xml_job(
+        FormatJob(job_id=7, text=text, source="xml", target="xml", sort_keys=True)
+    )
+    assert isinstance(plain[-1], SuccessEvent)
+    assert isinstance(sorted_on[-1], SuccessEvent)
+    assert sorted_on[-1].text == plain[-1].text == format_xml(text)
+
+
 def test_worker_xml_problem_crosses_spawn() -> None:
     text = "<r>\n  <a>\n  </b>\n</r>\n"
     events = _run_xml_job(FormatJob(job_id=4, text=text, source="xml", target="xml"))
