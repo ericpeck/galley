@@ -165,3 +165,43 @@ def test_keyboard_and_accessible_names_are_unchanged(qtbot, saved: bool) -> None
     assert action.objectName() == "sortKeys"
     assert button.accessibleName() in ("", "Sort keys")
     assert button.text() == "Sort keys"
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("raw", "restored"),
+    [
+        ("true", True),
+        ("false", False),
+        # Not a value Galley writes: the fallback is off, the default.
+        ("maybe", False),
+        (True, True),
+        (False, False),
+        (_MISSING, False),
+    ],
+    ids=["str-true", "str-false", "str-maybe", "bool-true", "bool-false", "missing"],
+)
+def test_raw_stored_value_restores_at_launch(
+    qtbot, raw: object, restored: bool
+) -> None:
+    """Windows QSettings can hand values back as strings; each form restores."""
+    settings = problems_settings()
+    if raw is not _MISSING:
+        settings.setValue(_KEY, raw)
+    settings.sync()
+    if isinstance(raw, str):
+        assert problems_settings().value(_KEY) == raw
+    assert load_sort_keys() is restored
+    window = _show(qtbot)
+    assert window._actions.sort_keys.isChecked() is restored
+    assert _sort_button(window).isChecked() is restored
+    output, status = _first_format(qtbot, window)
+    assert output == format_json(_UNSORTED, sort_keys=restored)
+    expected = f"Valid JSON {SORTED_KEYS_SUFFIX}" if restored else "Valid JSON"
+    assert status == expected
+    entry = _overflow_entry(qtbot, window)
+    assert entry.isChecked() is restored
+    if raw is _MISSING:
+        assert problems_settings().value(_KEY) is None
