@@ -76,7 +76,7 @@ def test_one_row_per_kind_with_label_glyph_and_spoken_name() -> None:
     assert rows == [
         ("changed", "~", "Changed", "role", 'Changed, role, "user" to "admin"'),
         ("removed", "−", "Removed", "old", "Removed, old, 1"),
-        ("moved", "⇄", "Moved", "from.x", "Moved, from x, to to x"),
+        ("moved", "⇄", "Moved", "from.x", "Moved, from, x, to to, x"),
         ("added", "+", "Added", "new", "Added, new, […]"),
     ]
     assert report.count == 4
@@ -92,7 +92,7 @@ def test_rows_carry_the_summaries_spans_and_moved_target() -> None:
     assert isinstance(changed, ChangeRow) and isinstance(moved, ChangeRow)
     assert changed.path_text == "a.b.c"
     assert (changed.old.text, changed.new.text) == ("40", "45")
-    assert changed.accessible_name == "Changed, a b c, 40 to 45"
+    assert changed.accessible_name == "Changed, a, b, c, 40 to 45"
     assert changed.left_span == left_doc.spans[("a", "b", "c")]
     assert changed.right_span == right_doc.spans[("a", "b", "c")]
     assert (changed.left_line, changed.right_line) == (4, 4)
@@ -106,8 +106,8 @@ def test_nested_paths_read_aloud_without_brackets() -> None:
     right = {"orders": [{"total": 45}, {"total": 1}], "a.b": {"0": False}}
     report = _report(left, right)
     assert [(row.path_text, row.accessible_name) for row in report.rows] == [
-        ("orders[0].total", "Changed, orders 0 total, 40 to 45"),
-        ('["a.b"]["0"]', "Changed, a.b 0, true to false"),
+        ("orders[0].total", "Changed, orders, 0, total, 40 to 45"),
+        ('["a.b"]["0"]', "Changed, a.b, 0, true to false"),
     ]
 
 
@@ -117,6 +117,17 @@ def test_the_root_is_labelled_whole_document() -> None:
     assert isinstance(row, ChangeRow)
     assert row.path_text == ROOT_LABEL == "Whole document"
     assert row.accessible_name == "Changed, Whole document, {…} to […]"
+
+
+def test_a_key_with_a_space_sounds_different_from_a_dotted_path() -> None:
+    spaced = _report({"first name": 1}, {"first name": 2})
+    dotted = _report({"first": {"name": 1}}, {"first": {"name": 2}})
+    assert [row.accessible_name for row in spaced.rows] == [
+        "Changed, first name, 1 to 2"
+    ]
+    assert [row.accessible_name for row in dotted.rows] == [
+        "Changed, first, name, 1 to 2"
+    ]
 
 
 def test_empty_containers_are_spoken_as_written() -> None:
@@ -153,14 +164,17 @@ def test_runs_in_an_unaligned_array_fold_into_groups() -> None:
         report = _report(left, right)
     info, first, second = report.rows
     assert isinstance(info, InfoRow)
-    assert info.text == "users items: compared by position (too complex to align)."
-    assert info.accessible_name == info.text
+    assert info.text == "users: items compared by position (too complex to align)"
+    assert info.accessible_name == (
+        "users, items compared by position, too complex to align"
+    )
     assert isinstance(first, GroupRow) and isinstance(second, GroupRow)
     assert (first.path_text, first.text) == (
         "users[1–2]",
         "users[1–2]: 2 items differ",
     )
     assert [row.path_text for row in first.children] == ["users[1]", "users[2]"]
+    assert first.accessible_name == "users, 1 to 2, 2 items differ"
     assert second.text == "users[4–6]: 3 items differ"
     assert [(row.kind, row.path_text) for row in second.children] == [
         ("changed", "users[4]"),
@@ -182,7 +196,7 @@ def test_a_run_of_one_index_stays_as_plain_rows_under_the_info_row() -> None:
         "ChangeRow",
     ]
     assert report.rows[0].text == (
-        "users items: compared by position (too complex to align)."
+        "users: items compared by position (too complex to align)"
     )
     assert [row.path_text for row in report.rows[1:]] == ["users[0]", "users[1501]"]
 
@@ -193,10 +207,14 @@ def test_an_over_budget_array_is_one_group_counting_every_item() -> None:
     report = _report(left, right)
     info, group, *rest = report.rows
     assert info.text == (
-        "data.items items: compared by position (too complex to align)."
+        "data.items: items compared by position (too complex to align)"
+    )
+    assert info.accessible_name == (
+        "data, items, items compared by position, too complex to align"
     )
     assert isinstance(group, GroupRow)
-    assert group.text == "data.items[0–5999]: 6000 items differ"
+    assert group.text == "data.items[0–5,999]: 6,000 items differ"
+    assert group.accessible_name == "data, items, 0 to 5,999, 6,000 items differ"
     assert group.count == 6000
     assert all(isinstance(row, ChangeRow) for row in rest)
     assert report.count == 6000 + len(rest)
@@ -245,7 +263,7 @@ def test_an_unaligned_array_inside_a_group_gets_its_info_row_inside() -> None:
         "ChangeRow",
     ]
     assert group.children[0].text == (
-        "rows[0] items: compared by position (too complex to align)."
+        "rows[0]: items compared by position (too complex to align)"
     )
     assert group.count == report.count == len(result.changes)
 
@@ -270,13 +288,49 @@ def test_neighbouring_unaligned_arrays_keep_their_own_info_rows_and_groups() -> 
     ]
 
 
+@pytest.mark.parametrize("swap", [False, True])
+def test_a_group_jumps_to_the_first_child_that_has_a_line_on_each_side(
+    swap: bool,
+) -> None:
+    # Each item gains key "a" before "b" changes. Left to right, "a" is
+    # Added and has no left line; swapped, it is Removed and has no right
+    # line. Either way the group's first child lacks a line on one side.
+    item_left = {"b": 2}
+    item_right = {"a": 1, "b": 3}
+    left = {"users": [item_left, item_left, "p", "q"]}
+    right = {"users": [item_right, item_right, "q", "p"]}
+    left_doc, right_doc = _doc(left), _doc(right)
+    if swap:
+        left_doc, right_doc = right_doc, left_doc
+    with mock.patch.object(diff_module, "ALIGN_BUDGET", 0):
+        result, pairs = diff_with_pairs(left_doc, right_doc)
+    report = build_report(result, left_doc, right_doc, pairs)
+    _info, group = report.rows
+    assert isinstance(group, GroupRow)
+    first, second = group.children[:2]
+    assert second.kind == "changed"
+    if swap:
+        assert (first.kind, first.right_line) == ("removed", None)
+        assert group.right_line == second.right_line is not None
+        assert group.left_line == first.left_line is not None
+    else:
+        assert (first.kind, first.left_line) == ("added", None)
+        assert group.left_line == second.left_line is not None
+        assert group.right_line == first.right_line is not None
+
+
 def test_an_unaligned_root_array_uses_the_root_label() -> None:
     report = _report([0, 1] * 3000, [1, 0] * 3000)
     info, group = report.rows
     assert info.text == (
-        "Whole document items: compared by position (too complex to align)."
+        "Whole document: items compared by position (too complex to align)"
     )
-    assert group.text == "[0–5999]: 6000 items differ"
+    assert info.accessible_name == (
+        "Whole document, items compared by position, too complex to align"
+    )
+    assert group.path_text == "Whole document [0–5,999]"
+    assert group.text == "Whole document [0–5,999]: 6,000 items differ"
+    assert group.accessible_name == ("Whole document, 0 to 5,999, 6,000 items differ")
 
 
 @_SETTINGS
@@ -359,6 +413,17 @@ def test_the_first_change_on_a_shared_line_wins_the_marker() -> None:
 # --- Anchors ------------------------------------------------------------
 
 
+def test_scalar_array_items_are_not_anchored_by_index() -> None:
+    # After an insert, left "a" sits at index 0 and right "a" at index 1.
+    # Scalar items carry no pairing, so only the array and its neighbours
+    # anchor: pairing by index would join left "a" to right "new".
+    left_doc = _doc({"items": ["a", "b", "c"], "k": 1})
+    right_doc = _doc({"items": ["new", "a", "b", "c"], "k": 1})
+    result, pairs = diff_with_pairs(left_doc, right_doc)
+    report = build_report(result, left_doc, right_doc, pairs)
+    assert report.anchor_pairs() == [(1, 1), (2, 2), (6, 7), (7, 8), (8, 9)]
+
+
 def test_anchors_follow_the_alignment_after_an_early_insert() -> None:
     items = [{"id": index, "name": f"n{index}"} for index in range(20)]
     left_doc = _doc({"items": items})
@@ -398,6 +463,12 @@ def test_two_left_lines_on_one_right_line_keep_one_anchor() -> None:
 
 def test_anchor_limit_is_ten_thousand_pairs() -> None:
     assert ANCHOR_LIMIT == 10_000
+
+
+def test_the_anchor_payload_is_at_most_80_kb() -> None:
+    value = {f"key{index:05d}": index for index in range(ANCHOR_LIMIT * 2)}
+    report = _report(value, value)
+    assert len(report.anchors) == 80_000
 
 
 def test_anchors_at_exactly_the_limit_are_all_kept() -> None:
