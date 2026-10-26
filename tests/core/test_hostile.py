@@ -1,16 +1,21 @@
-"""Hostile JSON, YAML, and Python-literal input.
+"""Hostile JSON, YAML, XML, and Python-literal input.
 
 Deep nesting past the recursion limit, alias expansion, very long scalars,
 duplicate keys, custom YAML tags, and Python literals must not run code or
-build arbitrary objects. Gaps that still crash or skip a location are xfail.
+build arbitrary objects. XML entity declarations are rejected before any
+expansion, and nothing is fetched. Gaps that still crash or skip a location are xfail.
 """
 
 import ast
+import builtins
 import importlib
 import json
 import pkgutil
+import socket
 import subprocess
 import sys
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -18,8 +23,9 @@ from ruamel.yaml import YAML
 
 import galley.core as core
 from galley.core import MAX_DEPTH
-from galley.core.errors import InputError, JSONDuplicateKeyError
+from galley.core.errors import InputError, JSONDuplicateKeyError, XMLSyntaxError
 from galley.core.format import format_json, format_yaml
+from galley.core.xml_format import format_xml, validate_xml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORE_ROOT = REPO_ROOT / "src" / "galley" / "core"
@@ -472,3 +478,154 @@ def test_json_surrogate_pair_formats_as_utf8() -> None:
     formatted = format_json('{"a": "\\uD800\\uDC00"}')
     assert json.loads(formatted) == {"a": "\U00010000"}
     formatted.encode("utf-8")
+
+
+# --- XML --------------------------------------------------------------------
+
+
+def _billion_laughs() -> str:
+    lines = ['<?xml version="1.0"?>', "<!DOCTYPE lolz [", '  <!ENTITY lol "lol">']
+    previous = "lol"
+    for level in range(1, 10):
+        name = f"lol{level}"
+        lines.append(f'  <!ENTITY {name} "{f"&{previous};" * 10}">')
+        previous = name
+    lines.extend(["]>", f"<lolz>&{previous};</lolz>"])
+    return "\n".join(lines) + "\n"
+
+
+_QUADRATIC_BLOWUP = (
+    f'<!DOCTYPE r [\n  <!ENTITY a "{"a" * 50_000}">\n]>\n<r>{"&a;" * 50_000}</r>\n'
+)
+
+# Each case and the line its first <!ENTITY is on.
+_HOSTILE_XML = {
+    "billion laughs": (_billion_laughs(), 3),
+    "quadratic blowup": (_QUADRATIC_BLOWUP, 2),
+    "XXE file": (
+        '<!DOCTYPE r [\n  <!ENTITY xxe SYSTEM "file:///etc/passwd">\n]>\n'
+        "<r>&xxe;</r>\n",
+        2,
+    ),
+    "external parameter entity": (
+        "<!DOCTYPE r [\n"
+        '  <!ENTITY % ext SYSTEM "http://example.invalid/evil.dtd">\n'
+        "  %ext;\n]>\n<r/>\n",
+        2,
+    ),
+    "unparsed entity": (
+        '<!DOCTYPE r [\n  <!NOTATION gif SYSTEM "image/gif">\n'
+        '  <!ENTITY logo SYSTEM "logo.gif" NDATA gif>\n]>\n<r/>\n',
+        3,
+    ),
+}
+
+
+class _NoNetwork:
+    """Patch sockets, urllib, and ``open`` to fail, and record each try."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[str] = []
+        targets = (
+            (socket, "socket"),
+            (socket, "create_connection"),
+            (socket, "getaddrinfo"),
+            (urllib.request, "urlopen"),
+            (urllib.request.OpenerDirector, "open"),
+            (builtins, "open"),
+        )
+        for owner, name in targets:
+            monkeypatch.setattr(owner, name, self._refuse(f"{owner.__name__}.{name}"))
+
+    def _refuse(self, name: str) -> Callable[..., object]:
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            self.calls.append(name)
+            raise AssertionError(f"XML tried {name}")
+
+        return refuse
+
+
+@pytest.mark.parametrize("case", list(_HOSTILE_XML))
+def test_xml_entity_declarations_are_rejected_and_nothing_is_fetched(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    text, line = _HOSTILE_XML[case]
+    guard = _NoNetwork(monkeypatch)
+    try:
+        with pytest.raises(XMLSyntaxError) as caught:
+            format_xml(text)
+        with pytest.raises(XMLSyntaxError):
+            validate_xml(text)
+    finally:
+        monkeypatch.undo()
+    assert guard.calls == []
+    assert (caught.value.code, caught.value.lineno, caught.value.colno) == (
+        "xml_entity_declared",
+        line,
+        3,
+    )
+
+
+@pytest.mark.perf
+def test_billion_laughs_is_rejected_in_under_a_tenth_of_a_second(perf_budget) -> None:
+    text = _billion_laughs()
+    found: list[tuple[str, int]] = []
+
+    def reject() -> None:
+        try:
+            format_xml(text)
+        except XMLSyntaxError as exc:
+            found.append((exc.code, exc.lineno))
+
+    perf_budget.within(0.1, reject, fixture="billion laughs, 9 levels of 10")
+    # Every run stopped at the first declaration, before the root, so no
+    # entity was ever expanded.
+    assert found == [("xml_entity_declared", 3)] * 6
+
+
+@pytest.mark.parametrize(
+    "doctype",
+    [
+        '<!DOCTYPE r SYSTEM "http://example.invalid/evil.dtd">',
+        '<!DOCTYPE r SYSTEM "file:///etc/passwd">',
+        '<!DOCTYPE r PUBLIC "-//Fake//DTD Fake//EN" "https://example.invalid/x.dtd">',
+    ],
+)
+def test_an_external_dtd_is_kept_and_never_fetched(
+    monkeypatch: pytest.MonkeyPatch, doctype: str
+) -> None:
+    text = f"{doctype}\n<r><a>&undeclared;</a></r>\n"
+    guard = _NoNetwork(monkeypatch)
+    try:
+        output = format_xml(text)
+    finally:
+        monkeypatch.undo()
+    assert guard.calls == []
+    assert output == f"{doctype}\n<r>\n  <a>&undeclared;</a>\n</r>\n"
+
+
+def test_xml_reads_utf8_whatever_the_declaration_says() -> None:
+    # Read as ISO-8859-1, these UTF-8 bytes would hold a C1 control
+    # inside the element name, and expat would reject it.
+    for encoding in ("ISO-8859-1", "UTF-16", "Shift_JIS", "not-an-encoding"):
+        text = f'<?xml version="1.0" encoding="{encoding}"?>\n<名前>値</名前>\n'
+        assert format_xml(text) == text
+
+
+def test_the_network_guard_records_each_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    guard = _NoNetwork(monkeypatch)
+    try:
+        for attempt in (
+            lambda: socket.create_connection(("example.invalid", 80)),
+            lambda: urllib.request.urlopen("http://example.invalid/"),
+            lambda: open("/etc/passwd"),  # noqa: SIM115
+        ):
+            with pytest.raises(AssertionError, match="XML tried"):
+                attempt()
+    finally:
+        monkeypatch.undo()
+    assert guard.calls == [
+        "socket.create_connection",
+        "urllib.request.urlopen",
+        "builtins.open",
+    ]

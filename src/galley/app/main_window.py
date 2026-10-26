@@ -8,6 +8,10 @@ from typing import NamedTuple
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QResizeEvent,
@@ -40,11 +44,13 @@ from galley.app.appearance import (
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
+    convert_python_too_large_message,
     escape_input,
     escape_too_large_message,
     unescape_input,
     unescape_too_large_message,
 )
+from galley.app.file_drop import dropped_files
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
 
@@ -56,6 +62,8 @@ from galley.app.limits import (
     JSON_BUSY_BYTES,
     JSON_PROGRESS_BYTES,
     JSON_WARNING_BYTES,
+    PYTHON_TO_JSON_BYTES,
+    PYTHON_TO_YAML_BYTES,
     YAML_BUSY_BYTES,
     YAML_PROGRESS_BYTES,
     YAML_TAB_BUSY_BYTES,
@@ -75,15 +83,21 @@ from galley.app.open_file import (
     save_last_open_dir,
 )
 from galley.app.open_text import (
+    DROP_WHILE_FORMATTING_TEXT,
     input_window_title,
     open_error_text,
+    opened_first_text,
     opened_text,
     opening_text,
     replace_input_text,
 )
 from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
-from galley.app.problem_text import DisplayProblem, problem_count_text
+from galley.app.problem_text import (
+    DisplayProblem,
+    announcement_text,
+    problem_count_text,
+)
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import (
     MIN_WIDTH,
@@ -92,12 +106,15 @@ from galley.app.problems_settings import (
     STATE_OPEN,
     STRIP_WIDTH,
     load_problems_preferences,
+    load_sort_keys,
     load_split_sizes,
     load_stacked_panes,
     save_problems_preferences,
+    save_sort_keys,
     save_split_sizes,
     save_stacked_panes,
 )
+from galley.app.recent_files import RecentFilesMenu, remember_recent_file
 from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
 from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
@@ -116,12 +133,15 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
+from galley.core.formats import YAML, format_named
 from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
 NOTHING_TO_FOLD = "nothing to fold"
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+# Words, not only the pressed Sort keys button, say the output was sorted.
+SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
 FORMAT_ACCESSIBLE_NAME = "Format"
 FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
 FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
@@ -207,6 +227,7 @@ class MainWindow(QMainWindow):
         self._size_warning: QMessageBox | None = None
         self._replace_box: QMessageBox | None = None
         self._loading_path: Path | None = None
+        self._loading_of_files = 1
         self._open_job = 0
         self._reader = FileReader(self)
         self._reader.finished.connect(self._on_file_read)
@@ -227,6 +248,7 @@ class MainWindow(QMainWindow):
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
+        self._format_sorted = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
         self._session = ParseSession(self)
@@ -235,6 +257,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
         self.setAutoFillBackground(True)
+        self.setAcceptDrops(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -261,6 +284,7 @@ class MainWindow(QMainWindow):
         self._apply_saved_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._restore_sort_keys()
         self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
@@ -287,6 +311,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._settle_split()
+        self._layout_problems()
 
     def _settle_split(self) -> None:
         splitter = self._splitter
@@ -371,6 +396,8 @@ class MainWindow(QMainWindow):
         file_menu = _add_menu(bar, "File")
         file_menu.setToolTipsVisible(True)
         file_menu.addAction(actions.open_file)
+        self._recent_menu = RecentFilesMenu(file_menu)
+        file_menu.addMenu(self._recent_menu)
 
         edit = _add_menu(bar, "Edit")
         edit.addAction(actions.undo)
@@ -407,6 +434,8 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_lines)
         guides.addAction(actions.guides_depth)
         view.addAction(actions.show_problems)
+        view.addAction(actions.next_problem)
+        view.addAction(actions.previous_problem)
         view.addSeparator()
         view.addAction(actions.expand_all)
         view.addAction(actions.collapse_all)
@@ -579,6 +608,8 @@ class MainWindow(QMainWindow):
         actions = self._actions
         actions.about.triggered.connect(self._show_about)
         actions.open_file.triggered.connect(self._open_file)
+        self._recent_menu.open_requested.connect(self.open_path)
+        self.open_finished.connect(self._remember_recent)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -603,6 +634,9 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.sort_keys.toggled.connect(save_sort_keys)
+        actions.next_problem.triggered.connect(self._next_problem)
+        actions.previous_problem.triggered.connect(self._previous_problem)
         actions.expand_all.triggered.connect(self._expand_all)
         actions.collapse_all.triggered.connect(self._collapse_all)
         actions.fold.triggered.connect(self._output_pane.editor.fold_at_cursor)
@@ -671,6 +705,8 @@ class MainWindow(QMainWindow):
         for pane in (self._input_pane, self._output_pane):
             coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
+            coming_soon_wrapper(pane.pop_out_button, actions.pop_out)
+            pane.pop_out_button.sync_tool_tip()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format from whichever editor has focus."""
@@ -780,19 +816,36 @@ class MainWindow(QMainWindow):
         self._apply_deferred_reveal()
         self._accepted_job_id = None
         self._session.start()
-        self._session.submit(text, self._format_source, self._format_target)
+        self._format_sorted = self._actions.sort_keys.isChecked()
+        self._session.submit(
+            text,
+            self._format_source,
+            self._format_target,
+            sort_keys=self._format_sorted,
+        )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
             self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
 
     def _convert_python(self) -> None:
-        """Convert the input literal into the output editor and show notices."""
+        """Convert the input literal into the output editor and show notices.
+
+        This runs on the UI thread, so Input must be no larger than the limit
+        for the Output format. Above it, Output is left unchanged.
+        """
         if self._formatting:
             return
         text = self._input_pane.editor.toPlainText()
         if _is_blank(text):
             return
-        result = convert_python(text, self._output_pane.format_name())
+        target = self._output_pane.format_name()
+        size = _utf8_size(text)
+        yaml_target = target.casefold() == "yaml"
+        limit = PYTHON_TO_YAML_BYTES if yaml_target else PYTHON_TO_JSON_BYTES
+        if size > limit:
+            self._status.set_state(convert_python_too_large_message(si_size(size)))
+            return
+        result = convert_python(text, target)
         if isinstance(result, ConvertError):
             self._status.set_state(result.message)
             return
@@ -802,7 +855,6 @@ class MainWindow(QMainWindow):
                 " ".join(notice.message for notice in result.notices)
             )
             return
-        target = self._output_pane.format_name()
         self._status.set_state(f"Converted to {target}.")
 
     def _escape_string(self) -> None:
@@ -967,7 +1019,8 @@ class MainWindow(QMainWindow):
             self._reveal_timer.stop()
             self._apply_problems(rows)
             return
-        self._finish_format(problem_count_text(len(rows)))
+        count = sum(1 for row in rows if not row.is_note())
+        self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
 
     def _finish_format(self, status: str) -> None:
@@ -992,24 +1045,55 @@ class MainWindow(QMainWindow):
         self._output_pane.editor.setReadOnly(locked)
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
-        self._problems_pane.set_problems(rows)
+        """Fill the pane, mark the gutter, count, and tell screen readers.
+
+        Only listed rows get a gutter marker, so every marker has a row to
+        select. The count is every problem.
+        """
+        pane = self._problems_pane
+        pane.set_problems(rows)
+        shown = pane.shown()
         messages: dict[int, list[str]] = {}
-        for row in rows:
-            messages.setdefault(row.lineno, []).append(row.message)
+        for row in shown:
+            messages.setdefault(row.lineno, []).append(row.full_message())
         self._input_pane.editor.set_problem_messages(
             {lineno: "\n".join(texts) for lineno, texts in messages.items()}
         )
         self._layout_problems()
-        self._status.set_problem_count(len(rows))
+        self._status.set_problem_count(pane.count())
+        if shown:
+            self._status.announce(announcement_text(pane.count(), shown[0]))
 
     def _clear_problems(self) -> None:
         self._problems_pane.set_problems(())
         self._input_pane.editor.set_problem_lines(set())
         self._layout_problems()
 
-    def _jump_to_problem(self, lineno: int) -> None:
+    def _next_problem(self) -> None:
+        self._step_problem(forward=True)
+
+    def _previous_problem(self) -> None:
+        self._step_problem(forward=False)
+
+    def _step_problem(self, *, forward: bool) -> None:
+        """Go to the listed problem after or before the Input cursor, wrapping."""
+        shown = self._problems_pane.shown()
+        if not shown:
+            return
+        here = self._input_pane.editor.cursor_place()
+        places = [(row.lineno, max(row.colno, 1)) for row in shown]
+        if forward:
+            later = [index for index, place in enumerate(places) if place > here]
+            index = later[0] if later else 0
+        else:
+            earlier = [index for index, place in enumerate(places) if place < here]
+            index = earlier[-1] if earlier else len(places) - 1
+        self._problems_pane.select_row(index)
+        self._jump_to_problem(shown[index].lineno, shown[index].colno)
+
+    def _jump_to_problem(self, lineno: int, colno: int = 0) -> None:
         editor = self._input_pane.editor
-        editor.reveal_line(lineno)
+        editor.reveal_line(lineno, colno)
         self._active_editor = editor
         self._update_caption()
         self._update_focus_ring()
@@ -1034,9 +1118,16 @@ class MainWindow(QMainWindow):
         action.blockSignals(False)
         self._apply_stacked_layout(stacked)
 
+    def _restore_sort_keys(self) -> None:
+        action = self._actions.sort_keys
+        action.blockSignals(True)
+        action.setChecked(load_sort_keys())
+        action.blockSignals(False)
+
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
         save_stacked_panes(stacked)
+        self._layout_problems()
 
     def _apply_stacked_layout(self, stacked: bool) -> None:
         splitter = self._splitter
@@ -1111,8 +1202,21 @@ class MainWindow(QMainWindow):
             return
         pane.setMaximumWidth(16_777_215)
         pane.setMinimumWidth(MIN_WIDTH)
-        width = min(self._problems_width, max(MIN_WIDTH, total - 240))
+        # Shrink toward MIN_WIDTH before the tab strips shed (#91 D2).
+        # The saved width stays as the user left it.
+        room = total - splitter.handleWidth() - self._panes_full_width()
+        width = min(self._problems_width, max(MIN_WIDTH, min(room, total - 240)))
         splitter.setSizes([width, max(0, total - width)])
+
+    def _panes_full_width(self) -> int:
+        """Input / Output width at which neither tab strip sheds, split evenly."""
+        widths = [
+            pane.full_strip_width() for pane in (self._input_pane, self._output_pane)
+        ]
+        splitter = self._splitter
+        if splitter is None or splitter.orientation() == Qt.Orientation.Vertical:
+            return max(widths)
+        return 2 * max(widths) + splitter.handleWidth()
 
     def _on_problems_splitter_moved(self, pos: int, _index: int) -> None:
         sizes = self._problems_splitter.sizes()
@@ -1141,10 +1245,14 @@ class MainWindow(QMainWindow):
         source = self._format_source.casefold()
         target = self._format_target.casefold()
         if source != target:
-            return "Converted"
-        if target == "yaml":
-            return "Valid YAML"
-        return "Valid JSON"
+            status = "Converted"
+        elif target == "yaml":
+            status = "Valid YAML"
+        else:
+            status = "Valid JSON"
+        if self._format_sorted:
+            return f"{status} {SORTED_KEYS_SUFFIX}"
+        return status
 
     def _focus_input(self) -> None:
         editor = self._input_pane.editor
@@ -1251,7 +1359,7 @@ class MainWindow(QMainWindow):
         """True when a file may replace the source pane's text now.
 
         Never while a format job runs, a file is loading, or a sheet is up.
-        Menu, shortcut, button, and later drop and recents all ask this.
+        Menu, shortcut, button, Open Recent, and drop all ask this.
         """
         return not (
             self._formatting
@@ -1260,19 +1368,20 @@ class MainWindow(QMainWindow):
             or self._size_warning is not None
         )
 
-    def open_path(self, path: Path) -> None:
+    def open_path(self, path: Path, *, of_files: int = 1) -> None:
         """Load ``path`` into the source pane. Opening never formats.
 
         Every way of opening a file comes through here. Unsaved edits are
-        confirmed first.
+        confirmed first. ``of_files`` counts a drop of several files, of
+        which ``path`` is the first and the only one opened (#86).
         """
         if not self.can_open():
             return
         pane = self._source_pane()
         if input_needs_replace(pane.editor.toPlainText(), pane.document):
-            self._ask_replace_input(path)
+            self._ask_replace_input(path, of_files)
             return
-        self._start_loading(path)
+        self._start_loading(path, of_files)
 
     def cancel_open(self) -> None:
         """Drop the file being read. The read itself runs to its end."""
@@ -1283,6 +1392,45 @@ class MainWindow(QMainWindow):
         self._loading_path = None
         self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._source_pane().set_drop_highlight(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Open the first dropped file. A format in progress refuses it."""
+        self._source_pane().set_drop_highlight(False)
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        if self._formatting:
+            self._status.set_state(DROP_WHILE_FORMATTING_TEXT)
+            return
+        self.open_path(files[0], of_files=len(files))
+
+    def _follow_file_drag(self, event: QDragMoveEvent) -> None:
+        """Take a file anywhere in the window and outline the source pane.
+
+        Every drop opens into the source pane, so it is outlined wherever
+        the file is. While a format runs the drag is still taken, so the
+        drop can say why it was refused, but the pane gets no outline (#86).
+        """
+        pane = self._source_pane()
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            pane.set_drop_highlight(False)
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        pane.set_drop_highlight(self.can_open())
 
     def _source_pane(self) -> PaneWidget:
         """The pane Open fills: the one whose spec is a source (#73)."""
@@ -1312,7 +1460,7 @@ class MainWindow(QMainWindow):
             return None
         return Path(filename)
 
-    def _ask_replace_input(self, path: Path) -> None:
+    def _ask_replace_input(self, path: Path, of_files: int = 1) -> None:
         """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
         box = QMessageBox(self)
         box.setObjectName("replaceInput")
@@ -1340,16 +1488,17 @@ class MainWindow(QMainWindow):
             if not accepted or not self.can_open():
                 self._return_focus_to_input()
                 return
-            self._start_loading(path)
+            self._start_loading(path, of_files)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_loading(self, path: Path) -> None:
+    def _start_loading(self, path: Path, of_files: int = 1) -> None:
         """Read ``path`` off the UI thread. Open and Format wait for it."""
         self._opened_status_timer.stop()
         self._open_job += 1
         self._loading_path = path
+        self._loading_of_files = of_files
         self._sync_format_button()
         self._open_reveal_timer.start(OPEN_REVEAL_MS)
         self.open_started.emit()
@@ -1401,11 +1550,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(input_window_title(path.name))
         self.setWindowFilePath(str(path))
         status = opened_text(path.name, si_size(loaded.size))
+        if self._loading_of_files > 1:
+            status = opened_first_text(self._loading_of_files)
         self._opened_status = status
         self._status.set_state(status, str(path))
         self._opened_status_timer.start(OPENED_STATUS_MS)
         self.open_finished.emit(document)
         self._return_focus_to_input()
+
+    def _remember_recent(self, document: InputDocument) -> None:
+        remember_recent_file(document.path)
+        self._recent_menu.rebuild()
 
     def _clear_opened_status(self) -> None:
         if self._formatting or self._status.state_text() != self._opened_status:
@@ -1420,6 +1575,9 @@ class MainWindow(QMainWindow):
         available = self.can_open()
         action.setEnabled(available)
         action.setToolTip(OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else "")
+        recent = self._recent_menu.menuAction()
+        recent.setEnabled(available)
+        recent.setToolTip(action.toolTip())
         open_button = self._source_pane().open_button
         if open_button is not None:
             open_button.setEnabled(available)
@@ -1660,7 +1818,7 @@ def _utf8_size(text: str) -> int:
 
 
 def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         if _has_tab(text):
             return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
@@ -1668,7 +1826,7 @@ def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
 
 
 def _warning_bytes(source: str) -> int:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
 

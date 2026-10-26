@@ -1,0 +1,3538 @@
+[
+ {
+  "from": "tests/app/test_about.py",
+  "text": "href=\"([^\"]+)\""
+ },
+ {
+  "from": "tests/app/test_about.py",
+  "text": "https://github.com/ericpeck/galley/tree/v9.9.9/LICENSES"
+ },
+ {
+  "from": "tests/app/test_about.py",
+  "text": "href=\""
+ },
+ {
+  "from": "tests/app/test_about.py",
+  "text": "\">License texts</a>"
+ },
+ {
+  "from": "tests/app/test_about.py",
+  "text": "file:"
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "No shortcut uses Ctrl+Alt on Windows or Linux (#95).\n\nWindows treats AltGr as Ctrl+Alt. A German layout types ``[``, ``]``, ``{``,\n``}``, ``@``, ``\\`` and ``\u20ac`` with AltGr, so a Ctrl+Alt shortcut would fire\nwhile someone types. Ctrl+Alt is \u2318\u2325 on macOS, which has no AltGr.\n"
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "Press ``key`` with Ctrl+Alt, as Windows reports an AltGr press.\n\n    qtbot.keyClick goes through Qt's shortcut matching before the widget\n    sees the key. A one-character str also sets that character as the text.\n    "
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "ignore:Enum value .*Key_mu:DeprecationWarning"
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "{"
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "["
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "Ctrl+Alt+["
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "[]"
+ },
+ {
+  "from": "tests/app/test_altgr_shortcuts.py",
+  "text": "macOS has no AltGr; \u2325\u2318[ and \u2325\u2318] are Fold and Unfold"
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "View \u203a Appearance: System, Light, Dark (issue #54).\n\nOffscreen CI ignores the OS dark setting, and ``setColorScheme`` does not\nchange the offscreen palette. Each test picks the mode itself, through the\nmenu action, and checks that the palette really changed before it\nmeasures anything.\n"
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "Strongest opaque label pixel and the button's most common pixel.\n\n    The label sits right of the icon, so the left 40% is skipped.\n    "
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "Carries #69's faded-text fix: Coming soon must not look like Paste."
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "The Windows runner's wider fallback font made the toolbar overflow.\n\n    Overflow shows Coming soon buttons icon-only, so the drawn disabled\n    ink is the glyph's strokes. Off-center 1.6 px strokes covered each\n    pixel at 80% and drew 2.57:1; centered strokes draw the role's color.\n    "
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "Bill: 3:1 on the face the toolbar buttons actually sit on."
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": "{\n  \"a\": 1,\n  \"b\": tru\n}\n"
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": ": "
+ },
+ {
+  "from": "tests/app/test_appearance.py",
+  "text": " icon-only Sort keys: "
+ },
+ {
+  "from": "tests/app/test_banner.py",
+  "text": "Banner wording for the three located input errors.\n\nCore reports a kind and structured details. These tests lock the sentences\nBill approved, including the depth number taken from ``MAX_DEPTH``.\n"
+ },
+ {
+  "from": "tests/app/test_banner.py",
+  "bytes": "eyJhIjogIv8ifQ=="
+ },
+ {
+  "from": "tests/app/test_banner.py",
+  "text": "{\"a\": \"\\ud800\"}"
+ },
+ {
+  "from": "tests/app/test_banner.py",
+  "text": "k:"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Visit commands in menu order: menu bar, toolbar, then the tab menu."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Unbuilt names as they first appear: menu bar, toolbar, tab menu."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Not yet release labels as they first appear: menu bar, toolbar, tab menu."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Release blocked: these actions still show \"Coming soon\": "
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": ".\n"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Release blocked: these actions still show \"Not yet\": "
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Release blocked: these actions still show \"Coming soon\": Open, Find.\nBuild them or remove them from UNBUILT_ACTIONS in actions.py before tagging."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "- name: Check copyright notice"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "- name: Check unbuilt actions"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "- name: Build Galley.app"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "- name: Check unbuilt actions\n"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "if: startsWith(github.ref, 'refs/tags/v')"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "\n        if:"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "workflow_dispatch:"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "{}"
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Release blocked: these actions still show \"Coming soon\": Open, Find."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "Release blocked: these actions still show \"Not yet\": Escape as String, Outdent."
+ },
+ {
+  "from": "tests/app/test_coming_soon.py",
+  "text": "- name: Check release version"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "{\"name\": \"Ada\", \"orders\": [{\"total\": 40}]}"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "{\"name\": \"Ada\", \"orders\": [{\"total\": 45}], \"vip\": true}"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "a: 1"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "{\"a\": \"\\uD800\"}"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "{\"a\": 1}"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "{\"b\": 2}"
+ },
+ {
+  "from": "tests/app/test_compare_session.py",
+  "text": "orders[0].total"
+ },
+ {
+  "from": "tests/app/test_convert_from_python.py",
+  "text": "{'nums': (1, 2), 3: 'x'}"
+ },
+ {
+  "from": "tests/app/test_convert_from_python.py",
+  "text": "[1, 2]"
+ },
+ {
+  "from": "tests/app/test_convert_from_python.py",
+  "text": "previous\n"
+ },
+ {
+  "from": "tests/app/test_convert_from_python.py",
+  "text": "{\n  \"a\": 1\n}\n"
+ },
+ {
+  "from": "tests/app/test_ctrl_k_chords.py",
+  "text": "Every Ctrl+K chord runs from the keyboard wherever focus is (#95).\n\nThe keys go to the focused widget as real key events, so the editor's\nShortcutOverride and Qt's standard keys get their chance to take Ctrl+K\nfirst. This runs on every platform, so Windows CI checks it too.\n\nTests run offscreen, and the offscreen platform uses Qt's Windows keyboard\nscheme on every OS. X11's Ctrl+K (DeleteEndOfLine) never applies here.\n"
+ },
+ {
+  "from": "tests/app/test_ctrl_k_chords.py",
+  "text": "{\"name\": \"galley\", \"owner\": {\"id\": 7}, \"tags\": [1, 2]}"
+ },
+ {
+  "from": "tests/app/test_ctrl_k_chords.py",
+  "text": "{\"name\": \"galley\",,}"
+ },
+ {
+  "from": "tests/app/test_ctrl_k_chords.py",
+  "text": "Record every action that fires, with the command's own work cut off.\n\n    The test checks key dispatch only. Close others is still Coming soon\n    and Collapse all needs foldable Output, so all four are switched on.\n    "
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\n  \"a\": \"b\",\n  \"n\": [1, 2]\n}\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":[1,2],\\\"b\\\":\\\"\u00e9\\\"}\"\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"\\\"{\\\\\\\"a\\\\\\\":1}\\\"\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\n  \"a\": 1\n  \"b\": 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":\\\"b\\\",\\\"n\\\":[1,2]}\"\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "a: \u00e9 \ud83d\ude00\nq: 'say \"hi\"'\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":\\\"\u00e9 \ud83d\ude00\\\",\\\"q\\\":\\\"say \\\\\\\"hi\\\\\\\"\\\"}\"\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": \"\u00e9\"\n}\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "a:\n- 1\n- 2\nb: \u00e9\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":1}\"\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "day: 2020-01-01\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\"nested\": {\"list\": [1, {\"deep\": [true, null]}]}, \"empty\": {}, \"none\": []}"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\"quote\": \"\\\"\", \"slash\": \"\\\\\", \"lines\": \"a\\nb\\tc\\r\\n\"}"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\"unicode\": \"caf\u00e9 \u65e5\u672c\u8a9e\", \"emoji\": \"\ud83d\ude00 \\ud83d\\ude00 \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\"}"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"[1]\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "[\n  1\n]\n"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "{\"a\": \"b\"}"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"unclosed"
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"hello\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":}\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\\"a\\\":1,\\\"a\\\":2}\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "Remove the repeated key \"a\" on line 1."
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "\"{\\n  \\\"a\\\": 1,\\n  \\\"a\\\": 2\\n}\""
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "Remove the repeated key \"a\" on line 3."
+ },
+ {
+  "from": "tests/app/test_escape_string.py",
+  "text": "[1]"
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "Collapse all: nothing to fold"
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "Expand all: nothing to fold"
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "{\n  \"new\": [\n    1\n  ],\n  \"old\": "
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "{\n  \"a\": [\n    1\n  ]\n}\n"
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "a:\n  b: 1\n  c:\n  - 1\n  - 2\nd: 2\n"
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "\u2325\u2318["
+ },
+ {
+  "from": "tests/app/test_folding.py",
+  "text": "Ctrl+Shift+["
+ },
+ {
+  "from": "tests/app/test_format_picker_contrast.py",
+  "text": "Ask Qt for ``scheme``. Return whether the hint actually changed.\n\n    Offscreen ignores the OS dark-mode setting, and this PySide build\n    keeps ``colorScheme()`` at ``Unknown`` after ``setColorScheme``.\n    Callers then apply an explicit palette so the dark pass is not a\n    second look at the light colors.\n    "
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "Formatting\u2026 0:12"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "keep\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "CHANGED\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "old\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "base\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "OLD\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "NEW\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "NEWER\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "a: 1\n"
+ },
+ {
+  "from": "tests/app/test_format_progress.py",
+  "text": "note: \"a\tb\"\n"
+ },
+ {
+  "from": "tests/app/test_gutter_error_marker.py",
+  "text": "Gutter error marker: the Problems pane's \u2297, its tooltip, and its click (#79)."
+ },
+ {
+  "from": "tests/app/test_gutter_error_marker.py",
+  "text": "{\n  \"price\": 4.5\n  \"qty\": 3\n}\n"
+ },
+ {
+  "from": "tests/app/test_gutter_error_marker.py",
+  "text": "a:\n\tb: 1\n\tc: 2\n"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "Gutter lanes: numbers, fold, and markers."
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "one\ntwo\nthree\nfour\nfive\n"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "  \"ok\": true\n}\n"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "\"name\": \"Galley\","
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "\"name\": \"Galley\""
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "  \"k"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "\": "
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": ",\n"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "\",\n  \"count\": 3,\n"
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "{\n  \"name\": \"Galley\",\n  \"note\": \""
+ },
+ {
+  "from": "tests/app/test_gutter_lanes.py",
+  "text": "\"k"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "{\n  \"name\": \"Ada\",\n  \"size\": -1.5e3,\n  \"ok\": true,\n  \"gone\": null\n}"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "name: Ada  # who\nsize: 42\nok: true\ngone: null\ntags:\n  - \"quoted\"\n  - plain words\nflow: {a: 1, b: [x, false]}\n"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "Set the color scheme, then the palette that scheme would bring.\n\n    Offscreen CI ignores the OS appearance and has no dark theme, so the\n    scheme request alone leaves the palette light. The test supplies the\n    macOS dark palette, or #57's light one, and restores both afterwards.\n    "
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "steps:\n  - run: |\n      echo: hi\n      # not a comment\n    name: 1\n"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "[\"a, [b]: c\", 1]"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "{\"\ud83d\ude00\": 1, \"k\": null}"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "name: Ada\n"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"a\": 1\n"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "{\"a\": [1, 2]}"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"name\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"Ada\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": ":"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"a, [b]: c\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"quoted\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "echo: hi"
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"\ud83d\ude00\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"k\""
+ },
+ {
+  "from": "tests/app/test_highlighter.py",
+  "text": "\"a\""
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"name\": \"Galley\",\n  \"tags\": [\n    {\"id\": 1, \"id\": 2}\n  ],\n  \"owner\": {\n    \"team\": \"a\",\n    \"team\": \"b\"\n  },\n  \"name\": \"Galley 2\"\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"a\": 1,\n  \"a\": 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"a\": 1,\n  b: 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  'a': 1\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"tags\": [1, 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Missing ] for the [ opened on line 2."
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "[\n  {\"a\": 1\n]\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Missing } for the { opened on line 2."
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"a\": [\n    1,\n    2\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "[\n  {\n    \"a\": 1,\n    \"b\": 2\n]\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "[\n  {\"a\": 1}\n  {\"b\": 2}\n]\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "[\n  1,\n  2,\n]\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"a\": 1,\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"a\": \"hi\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"name\": \"a\",\n  \"age\": 1,\n  \"name\": \"b\"\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Remove the repeated key \"name\" on line 4."
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "{\n  \"name\": \"Galley\",\n  version: 2,\n  \"tags\": [\"json\"\n}\n"
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": ": Missing "
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Remove the repeated key \"id\" on line 4."
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Remove the repeated key \"team\" on line 8."
+ },
+ {
+  "from": "tests/app/test_json_problem_messages.py",
+  "text": "Remove the repeated key \"name\" on line 10."
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Time large JSON documents and check the format size gates.\n\nThe 1 MB and 2 MB fixtures are built in memory from ``random.Random`` with a\nfixed seed: nested objects and arrays, long strings, and non-ASCII text.\nNothing large is written into the tree. Timings are printed as one table.\nThey are not a pass/fail gate. One sample from each CI runner is not a\nmedian, and a shared runner is too noisy to fail the job on raw seconds.\n\nParse and format go through ``format_json``. Collapse is the editor's\nCollapse all (#64), with folding turned on as it is for Output; the fold\nscan runs before the clock starts, as the Format worker runs it. Search uses\nthe editor's find on a marker planted at the end of the fixture. Syntax\ncoloring is the editor highlighter turning on for that document. Change\nmarkers use the gutter API from the Compare prep work. The diff engine is\ntimed only when ``galley.core.diff.diff`` is importable; this checkout does\nnot invent one.\n\nThe hard checks are the JSON busy spinner, the progress bar, and the size\nwarning. Those follow ``JSON_BUSY_BYTES``, ``JSON_PROGRESS_BYTES``, and\n``JSON_WARNING_BYTES``.\n\nA second table times the same content on one line: 1.6 MB of compact JSON\nin a single block, the shape that stalled the editor (#91). It records\nsetText and a keystroke with Show Whitespace and colors wanted and with\nboth off. The long-line guard in ``editor.py`` keeps the two close; the\nhard budget for that keystroke lives in ``test_long_line_guard.py``.\n"
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "large-file compare: no public API"
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Return ``count`` items from ``seed``.\n\n    The generator is reseeded on every call, so item ``i`` does not depend on\n    how many items a binary search asked for earlier.\n    "
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Return pretty-printed JSON of exactly ``target`` UTF-8 bytes.\n\n    The item count is a binary search, so generation does not re-dump the\n    document once per item. The pad is ASCII, so each extra character is one\n    UTF-8 byte.\n    "
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Return compact JSON of exactly ``target`` UTF-8 bytes on one line.\n\n    The same items as ``_build``, without indentation. The pad is ASCII.\n    "
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Return formatted text, parse seconds, and the rest of ``format_json``.\n\n    Parse runs from the start of the call through ``json.loads``, including\n    the checks in front of the parser. Format is the rest of the call.\n    "
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "Return ``(diff, load_document)``, or None when Compare has no engine yet.\n\n    ``diff`` compares two documents that ``load_document`` parsed and located.\n    "
+ },
+ {
+  "from": "tests/app/test_large_file_stress.py",
+  "text": "{\n"
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "Very long lines switch off whitespace dots and colors until they go (#91).\n\nQPlainTextEdit lays out a whole block on every edit to it. On a one-line\n1.6 MB JSON document, Show Whitespace made a keystroke take 10 s and the\nhighlighter added up to half a second more. The editor keeps the user's\nchoices and applies them only while every line is under the gates in\n``editor.py``. Fixtures are built in memory: nothing large is in the tree.\n"
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "One giant line: no dots, highlighter detached, View action still checked."
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "ab \n"
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "1.6 MB on one line, both options wanted: a keystroke takes under 3 s."
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "{}\n"
+ },
+ {
+  "from": "tests/app/test_long_line_guard.py",
+  "text": "long-line guard: setText "
+ },
+ {
+  "from": "tests/app/test_main_window.py",
+  "text": "{\u00b7} Format"
+ },
+ {
+  "from": "tests/app/test_main_window.py",
+  "bytes": "e30="
+ },
+ {
+  "from": "tests/app/test_main_window.py",
+  "text": ": prefix is "
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "{\"keep\": true}\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "{\"a\":1,\"b\":[true,null]}"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "old output\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "{\"next\": 1}\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "stay\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "{\"next\": 1}\n "
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "out\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "b: 2\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "just some words\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "bytes": "77u/e30K"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "bytes": "77u/eyJhIjogMX0NCg=="
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "{\"a\": 1}\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "leave\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "c: 3\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "  {\"a\": 1}\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "text": "[1]\n"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "bytes": "YTogMQpiOiAyCmM6IGNhZukK"
+ },
+ {
+  "from": "tests/app/test_open_file.py",
+  "bytes": "YjogMg0K"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "Cancel, format, and cancel again while the first worker is still alive.\n\n    Both cancels stay inside the reap deadline. A second job must not start\n    another replacement, queue a stuck worker twice, or replace the\n    Cancelled status with the crash banner.\n    "
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "Cancel the replacement after the first child's reap deadline.\n\n    Both children stay stuck. Each temp stays queued once, and neither\n    file is deleted until its own child exits or the window shuts down.\n    The poll and shutdown do not join. After the second Cancel the window\n    shows the previous result, with Format enabled and no crash banner.\n    "
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "Format right after a second cancel does not announce an earlier reap.\n\n    The first worker is already past ``REAP_DEADLINE_MS``. The second has\n    just been cancelled. Format then runs on the replacement. The user did\n    not wait on a worker that died, so the crash banner stays hidden.\n    "
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "previous output\n"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "bytes": "eyJrZWVwIjogdHJ1ZX0K"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "bytes": "eyJvbGQiOiB0cnVlfQo="
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "{\"keep\": true}"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "partial result\n"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "{\"c\": 3}"
+ },
+ {
+  "from": "tests/app/test_parse_session.py",
+  "text": "{\n  \"b\": 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "a:\n\tb: 1\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\n  \"name\": \"a\",\n  \"tags\": [{\"id\": 1, \"id\": 2}],\n  \"name\": \"b\"\n}\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\"a\": \"hi}"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\"a\": 1,}"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\"a\": 1}}"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "[1]]"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{name: 1}"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{'a': 1}"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\n  \"a\": [1, 2\n}\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "{\"a\": 1"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "Missing } for the { opened on line 1."
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "Line 2: Starts with a tab. YAML needs spaces for indenting."
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "a: 1\na: 2\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "Remove the repeated key \"a\" on line 2."
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "a: \"hi\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "a: 1\nb\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "a: [1, 2\n"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "Line 4: Remove the repeated key \"name\" on line 4."
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "Remove the repeated key \"id\" on line 3."
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "say \"hi\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"say \\\"hi\\\"\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"back\\\\slash\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "two\nlines"
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"two\\nlines\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"tab\\there\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"zero\\u200bwidth\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"right\\u202eleft\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\"caf\u00e9 \u65e5\u672c\u8a9e \ud83d\ude00\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\\\"\u2026\""
+ },
+ {
+  "from": "tests/app/test_problem_text.py",
+  "text": "\u2026\""
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "The top edge stands out 3:1 from the window, as an outline must."
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "  b: 1"
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "  c: 2"
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "one\ntwo\nthree\n"
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "Line 2: Missing comma at the end of line 2."
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "{\"price\": 4.5, \"qty\": 3}\n"
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "\"price\""
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "Line 3: Starts with a tab. YAML needs spaces for indenting."
+ },
+ {
+  "from": "tests/app/test_problems_pane.py",
+  "text": "Line 3: "
+ },
+ {
+  "from": "tests/app/test_readability.py",
+  "text": "Readability: system font, undo availability, editor page, and the reset rail."
+ },
+ {
+  "from": "tests/app/test_results_panel.py",
+  "text": "Results panel tabs: hidden while Problems is the only tab."
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "ruamel.yaml.clib self-check: ok\n"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "ruamel.yaml.clib self-check: failed: C parser did not load\n"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "license\n"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "LICENSES self-check: failed:"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "notes\n"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "ruamel.yaml.clib self-check: failed:"
+ },
+ {
+  "from": "tests/app/test_self_check.py",
+  "text": "LICENSES self-check: ok "
+ },
+ {
+  "from": "tests/app/test_status_bar.py",
+  "text": "Status-bar slots: state, counts, progress, and info."
+ },
+ {
+  "from": "tests/app/test_status_bar.py",
+  "text": "Narrow enough to elide every message, and the window still reads them whole.\n\n    Windows' wider font elided the crash banner first; a narrow slot shows\n    the same thing on any platform.\n    "
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'name': 'caf\u00e9', 'n': 1, 'ok': True, 'no': False, 'empty': None}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'b': [1, {'c': 'x'}], 'a': []}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "[-1, +2, -3.5, -(4)]"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'t': (1, 2), 'u': (3, 4)}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{1: 'a', 1.5: 'b', True: 'c', False: 'd', None: 'e', -2: 'f'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "[\n  1e309,\n  -1e309\n]\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{1: 'a', '1': 'b'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'1': 'a', 1: 'b'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{1: 'a', '1': 'b', 2: 'c', '2': 'd'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'a': 1, 'a': 2}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'a': 1, 'a': 2, 'b': 3, 'b': 4}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{1: 'a', 1: 'b'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{1: 'a', 1: 'b', 1: 'c'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{'a': 1, 'a': 2, 1: 'x', '1': 'y'}"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "NaN and Infinity can't be converted to JSON: line 2 column 3"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "[\n  datetime(2026, 10, 18),\n]\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "Function calls can't be converted: line 2 column 3. Use a string instead, such as \"2026-10-18\"."
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "12:30"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': <Customer object at 0x10>,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "invalid syntax: line 2 column 8"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "lambda: None"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "too many nested parentheses: line 1 column 201"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": ": line "
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': __import__('os'),\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': missing,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': ().real,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': {'b': 1}['b'],\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': [1 for x in [1]],\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': {1 for x in [1]},\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': {1: 2 for x in [1]},\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': (1 for x in [1]),\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': lambda: 1,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': f'hi',\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': 9 ** 9,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': True and False,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': 1 < 2,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': not True,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': ~1,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': 1 if True else 0,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': {1, 2},\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': b'hi',\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{\n  'a': 1j,\n}\n"
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "Function calls can't be converted: line "
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": ". Use a string instead, such as \"2026-10-18\"."
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": ". Use a string instead, such as \"12:30\"."
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": " levels deep: line 1 column "
+ },
+ {
+  "from": "tests/core/test_convert_python.py",
+  "text": "{True: 'a', 1: 'b'}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "Structural diff of two JSON or YAML documents (#65 PR 1).\n\nObjects match by key and ignore key order. Arrays match by index. Scalars\ncompare by type and value. A unique identical subtree under a different\nparent is Moved. Changes come in left-document order with spans into\neach side's text.\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\n  \"a\": {\n    \"b\": 1\n  },\n  \"c\": [\n    10,\n    \"twenty\"\n  ],\n  \"d\\\"e\": true\n}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "name: Ada\ntags: [x, y]\naddress:\n  city: Town\n  zip: \"01234\"\nnote: |\n  line one\n  line two\nitems:\n  - id: 1\n  - id: 2\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "import json\nfrom galley.core.diff import diff, load_document\nleft = load_document(json.dumps(['x', 'y', {'a': 1}, 'z']), 'json')\nright = load_document(json.dumps(['y', 'x', 'z', {'a': 1}]), 'json')\nprint([(c.kind, c.path_text) for c in diff(left, right).changes])\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: &a {k: 1}\nb: &b {k: 2, j: 3}\nm:\n  <<: [*a, *b]\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: 1\nb: 2\na: 3\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": 1, \"b\": {\"x\": 1, \"y\": 2}}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"b\": {\"y\": 2, \"x\": 1}, \"a\": 1}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: 1\nb:\n  x: 1\n  y: 2\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "b:\n  y: 2\n  x: 1\na: 1\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "orders[2].total"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[\"a.b\"][\"0\"]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[\"a\", \"b\", {\"id\": 1, \"role\": \"user\"}]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[\"new\", \"a\", \"b\", {\"id\": 1, \"role\": \"admin\"}]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[2].role"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"n\": 1, \"m\": [2]}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"n\": 1.0, \"m\": [2.0]}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: .nan\nb: [.NaN]\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": NaN, \"b\": [NaN]}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: .inf\nb: -.inf\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": Infinity, \"b\": -Infinity}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "base: &b {x: 1, y: [1, 2]}\ncopy: *b\nname: &n Ada\nwho: *n\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "base: &b {x: 1}\ncopy: *b\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "base: {x: 1}\ncopy: {x: 2}\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "base: &b\n  x: 1\n  y: 2\nm:\n  <<: *b\n  y: 3\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "d: 2026-10-18\nt: 2026-10-18 09:30:00\nb: !!binary aGk=\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"d\": \"2026-10-18\", \"t\": \"2026-10-18T09:30:00\", \"b\": \"aGk=\"}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "1: a\ntrue: b\nnull: c\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"1\": \"a\", \"true\": \"b\", \"null\": \"c\"}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"name\": \"Ada\", \"tags\": [\"x\", \"y\"], \"age\": 36, \"admin\": false}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "age: 37\nname: Ada\ntags: [x]\nteam: core\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": {\"x\": {\"p\": 1, \"q\": 2}}, \"b\": {}}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": {}, \"b\": {\"x\": {\"q\": 2, \"p\": 1}}}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "active[0]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "archived[0]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\n  \"z\": 1,\n  \"a\": {\"k\": 1},\n  \"m\": [1, 2]\n}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\n  \"m\": [1, 3],\n  \"a\": {\"k\": 2},\n  \"z\": 2\n}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "base: &b {x: 1, z: 1}\nm:\n  y: 3\n  <<: *b\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "flow: {a: [1, {b: 2}]}\nquoted: 'it''s'\nmulti: >\n  a\n  b\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\n  \"a\": 1,\n  \"b\": {\n    \"c\": [1, 2]\n  }\n}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "b:\n  c:\n    - 1\n    - 3\na: 1\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "b.c[1]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\n  \"keep\": 1,\n  \"gone\": {\n    \"x\": 1\n  }\n}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"keep\": 1}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"xxx"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[0, 1, 2, "
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: &a {x: [1, 2]}\nb: *a\nc:\n  <<: *a\n  y: 3\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "c: 1.5\nd: ~\ne: 'q'\nf: !!int '7'\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "- [1, 2]\n- {a: b}\n- |\n  text\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"user\""
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"admin\""
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"sku\": \"A-1\", \"qty\": 3}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"x\": 1}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[0]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "users[0]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "users[1501]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"1\""
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: .nan\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!str 1\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": \"1\"}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!float 1\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!int '7'\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": 7}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!bool true\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": true}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!null ''\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": null}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!map {b: 1}\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": {\"b\": 1}}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!seq [1]\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": [1]}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !!set {x}\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"a\": {\"x\": null}}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "d: 2026-10-18\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"d\": \"2026-10-19\"}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"2026-10-18\""
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\"2026-10-19\""
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "m[1]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[{\"a\": [1, {}]}, null]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"k\": [1, \"two\", null, false]}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: &x [1, *x]\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: *nope\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "---\na: 1\n---\nb: 2\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !custom {b: 1}\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a: !custom x\n"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a[1]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "a[2]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "rows[0]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[2]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[3]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[4]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[2].y"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[1].x"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[0].k"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[3000]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[5999].k"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[5000]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "[2999].name"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "tags[1]"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "d\"e"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "{\"\u00e9\": \"\u00f1\", \"b\": 1}"
+ },
+ {
+  "from": "tests/core/test_diff.py",
+  "text": "\ufeffa: 1\n"
+ },
+ {
+  "from": "tests/core/test_diff_properties.py",
+  "text": "Property checks for the structural diff (#65 PR 1).\n\nThe generators stay small (few leaves, a three-letter key alphabet) so\nthe two sides share keys often and the suite stays fast on Windows CI.\n"
+ },
+ {
+  "from": "tests/core/test_diff_properties.py",
+  "text": "Equality under the diff's value rules: 1 == 1.0, true != 1, NaN == NaN."
+ },
+ {
+  "from": "tests/core/test_diff_properties.py",
+  "text": "Rebuild the right document from the left one and ``changes``.\n\n    A Change carries summaries, which are cut at 80 characters, so the new\n    values of Added, Changed, and Moved are read from ``right`` at their\n    right path. That lookup is test-only. Everything else comes from the\n    changes: which left values go (Removed, the source of a Moved), which\n    are replaced (Changed), and where right-only values go in each parent\n    (Added, the target of a Moved). Kept array items keep their order, so\n    they fill the right indexes no insertion takes.\n    "
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "[\n  {\"id\": 1},\n  {\n    \"id\": 2,\n    \"id\": 3\n  }\n]\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\n  \"outer\": {\n    \"x\": 1,\n    \"x\": 2\n  },\n  \"x\": 3\n}\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "[{\"a\": 1}, {\"a\": 2}, {\"a\": {\"a\": 3}}]"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\n  \"a\": 1,\n  \"b\": [{\"c\": 1, \"c\": 2}],\n  \"a\": 2,\n  \"d\": {\"e\": 1,\n        \"e\": 2},\n  \"a\": 3\n}\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2, \"a\": 3, \"b\": 1, \"b\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\n  \"v\": 1,\n  \"v\": {\"nested\": [true, null]}\n}\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"note\": \"\\\"a\\\": 1, \\\"a\\\": 2\", \"a\": \"{\\\"a\\\": 1}\"}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1,\n \"\\u0061\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"\\ud83d\\ude00\": 1, \"\ud83d\ude00\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"say \\\"hi\\\"\": 1,\n\"say \\\"hi\\\"\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\r\n  \"a\": 1,\r\n  \"a\": 2\r\n}\r\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "bytes": "77u/ewogICJhIjogMSwKICAiYSI6IDIKfQo="
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": \"\\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1,\n\"a\": 2,\n\"b\": 1,\n\"b\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\n  \"a\": 1,\n  \"b\": {\"c\": 1, \"c\": 2},\n  \"a\": 3\n}\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "name: a\nage: 1\nname: b\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "Time ``format_json`` with and without the duplicate check on ~2 MB.\n\n    The printed numbers go in the PR. The bound is loose on purpose: the\n    check may cost at most half again the format time, which only a per-key\n    scan on the valid path would break. Runs alternate so both share noise.\n    "
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "\"a\": 1, \"a\": 2"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"\": 1, \"\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2}\n[1,]"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2,"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2}}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "a:\n  x: 1\n  x: 2\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "\"say \\\"hi\\\"\": 1\n\"say \\\"hi\\\"\": 2\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{a: 1, a: 2}\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "1: a\n1: b\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "? [1]\n: a\n? [1]\n: b\n"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"Name\": 1, \"name\": 2, \"NAME\": 3}"
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": "{\"a\": 1, \"a\": 2, \"b\": "
+ },
+ {
+  "from": "tests/core/test_duplicate_keys.py",
+  "text": " MB (median ms): "
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"outer\": {\"inner\": {\"deep\": [1, 2, {\"x\": null}]}}}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "[1, [2, [3, [4]]], {}, []]"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"plain string\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"quote\": \"she said \\\"hi\\\"\", \"slash\": \"C:\\\\path\\\\to\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"lines\": \"one\\ntwo\\r\\nthree\", \"tab\": \"a\\tb\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"control\": \"\\u0000\\u0001\\u001f\\b\\f\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"unicode\": \"caf\u00e9 na\u00efve \u65e5\u672c\u8a9e \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"emoji\": \"\ud83d\ude00 \ud83d\udc4d\ud83c\udffd \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\", \"pair\": \"\\ud83d\\ude00\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"separators\": \"\\u2028 \\u2029\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"\u00fcn\u00ef \ud83d\ude00 key\": [\"\\\"\", \"\\\\\", \"/\"]}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"escaped already\": \"{\\\"a\\\":\\\"b\\\"}\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "1: one\n2.5: two\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"a\\\":[1,2],\\\"b\\\":\\\"\u00e9\\\"}\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"a\\\":1,\\\"b\\\":{\\\"c\\\":2,\\\"c\\\":3},\\\"a\\\":4}\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"a\\\":\\\"b\\\"}\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"a\\\":[1,2]}\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{}\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"[]\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "a: b\nn: [1, 2]\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"k\": \"\u00e9 \ud83d\ude00 \\\" \\\\ \\n \\t \\u0001\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"k\\\":\\\"\u00e9 \ud83d\ude00 \\\\\\\" \\\\\\\\ \\\\n \\\\t \\\\u0001\\\"}\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "a: b\nlist:\n  - 1\n  - two\n  - {c: d}\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "quote: 'she said \"hi\"'\nslash: 'C:\\path'\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "emoji: \"\ud83d\ude00 \\U0001F44D\"\nmulti: |\n  line one\n  line two\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "anchor: &x [1, 2]\nalias: *x\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "[]\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{\\\"1\\\":\\\"one\\\",\\\"2.5\\\":\\\"two\\\"}\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"one\" \"two\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "'{\"a\":1}'"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "a: b\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{a: 1}\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{'a': 1}\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"[1, 2,]\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"\\\"\\\\ud800\\\"\""
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"\\\"{\\\\\\\"a\\\\\\\":\\\\\\\"b\\\\\\\"}\\\"\"\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\n  \"a\": \"b\"\n}\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "blob: !!binary aGk=\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "set: !!set {a, b}\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "? [1, 2]\n: pair key\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "loop: &x [1, *x]\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\n  \"a\": [1, 2]\n}\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "  \n\"{\\\"a\\\":1}\"\n\n"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "{\"a\": [1, 2], \"b\": \"\u00e9\"}"
+ },
+ {
+  "from": "tests/core/test_escape.py",
+  "text": "\"{}\""
+ },
+ {
+  "from": "tests/core/test_fake.py",
+  "text": "[a-z][a-z0-9]*"
+ },
+ {
+  "from": "tests/core/test_fake.py",
+  "text": "[A-Z][a-z]{3} \\d[A-Z], [A-Z][a-z]{6} [A-Z][a-z]{5}"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "[{\n  \"a\": 1\n}, {\n  \"b\": 2\n}]\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "items:\n- id: 1\n  tags:\n  - a\n  - b\n- id: 2\n  name: x\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "- - 1\n  - 2\n-\n  a: 1\n  b: 2\n- x\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "a: |\n  line one: x\n  - line two\nb: \"long text: that\n  wraps: here\"\nc:\n- plain words\n  that wrap\n- 2\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "a: {}\nb: []\nc: &id001\n  x: 1\nd: *id001\n---\n- 1\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "\"a: b\":\n  'c'': d': 1\n  e: 2\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "YAML has the JSON ranges below the root, in order, less some.\n\n    A block that fits on one YAML line (``- - {}``) does not fold, and an\n    item's first key can open a block on the item's own ``-`` line, where\n    YAML keeps only the outer one.\n    "
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{}[]\",:\\- \n#&!|>'?abc"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "Just over 2 MB of records shaped like an API response.\n\n    About 90 bytes a container, with brackets, commas and escaped quotes in\n    the strings.\n    "
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "q\"{"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "[},"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "a:\n- 1\n- 2\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": " 1\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{\"a\": [1, 2], \"b\": {\"c\": 3}}"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{\n  \"a\": [\n  ],\n  \"b\": {\n}\n}\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "\\\"["
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{\n  \"a\": [\n    1\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "]\n}\n{\n  1\n}\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{\n  \"a\": \"unterminated\n}\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "{\n}\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "just a scalar\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "quote \" and [brackets] {x}"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "a \"b\""
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "b{"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "[\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "]\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "1\n"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "a{"
+ },
+ {
+  "from": "tests/core/test_folds.py",
+  "text": "b\"]"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "{\"b\": 1, \"a\": [2, 3]}"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "{\n  \"b\": 1,\n  \"a\": [\n    2,\n    3\n  ]\n}\n"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "a: 1\nb:\n  - 2\n  - 3\n"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "b: 1  # keep\na: 2\n"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "z: 1\na:\n  y: 2\n  b: 3\n"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "{\"z\": 1, \"a\": {\"y\": 2, \"b\": 3}}"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "{\n  \"z\": 1,\n  \"a\": {\n    \"y\": 2,\n    \"b\": 3\n  }\n}\n"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "{\"a\":1}"
+ },
+ {
+  "from": "tests/core/test_format.py",
+  "text": "b: 1\na:\n  - 2\n  - 3\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "Hostile JSON, YAML, and Python-literal input.\n\nDeep nesting past the recursion limit, alias expansion, very long scalars,\nduplicate keys, custom YAML tags, and Python literals must not run code or\nbuild arbitrary objects. Gaps that still crash or skip a location are xfail.\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "\nimport sys\n\nfrom galley.core.format import format_json, format_yaml\n\n\ndef line_column(exc):\n    lineno = getattr(exc, \"lineno\", None)\n    colno = getattr(exc, \"colno\", None)\n    if isinstance(lineno, int) and isinstance(colno, int):\n        return lineno, colno\n    mark = getattr(exc, \"problem_mark\", None)\n    if (\n        mark is not None\n        and isinstance(getattr(mark, \"line\", None), int)\n        and isinstance(getattr(mark, \"column\", None), int)\n    ):\n        return mark.line + 1, mark.column + 1\n    return None\n\n\nkind = sys.argv[1]\ndepth = sys.getrecursionlimit() + 100\nif kind == \"json\":\n    text = \"[\" * depth + \"0\" + \"]\" * depth\n    format_text = format_json\nelse:\n    lines = [f\"{'  ' * level}k:\" for level in range(depth)]\n    lines.append(f\"{'  ' * depth}1\")\n    text = \"\\n\".join(lines) + \"\\n\"\n    format_text = format_yaml\ntry:\n    format_text(text)\nexcept RecursionError:\n    raise SystemExit(2)\nexcept Exception as exc:\n    located = line_column(exc)\n    if located is None:\n        raise SystemExit(3)\n    line, column = located\n    if line < 1 or column < 1:\n        raise SystemExit(3)\n    raise SystemExit(0)\nraise SystemExit(4)\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{'a': True, 'b': None, 'c': (1, 2,), 'd': datetime(2026, 1, 1),}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{'name': __import__('os').name}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": " does not name a line and column: "
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "a0: &a0 [\"x\"]"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "a: &a [*a]\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": ": 1\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "\n: 1\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!python/object/apply:os.getcwd []\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!python/name:os.system\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!python/object/apply:operator.mul [\"PWNED\", 3]\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!python/object/new:tuple\n- pwned\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!MyType value\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "value: !custom [1, 2]\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{'a': True, 'b': None}\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{\"a\": true, \"b\": null, \"c\": [1, 2], \"d\": \"datetime(2026, 1, 1)\"}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{\"a\": \"\\uD800\\uDC00\"}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "root: *a"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "k: 1"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "k: "
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{\"a\": 1, \"a\": {\"b\": 2}, \"a\": {\"b\": 3}}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "a:\n  b: 1\n  b: 2\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "a: &a {v: 1}\nb:\n  <<: *a\n  <<: *a\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "{'a': True, 'b': None,}"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": ": &a"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": " ["
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "\nx\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "x\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!str hello\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "!!int 5\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "get_rate()\n"
+ },
+ {
+  "from": "tests/core/test_hostile.py",
+  "text": "datetime(2026, 1, 1)\n"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "The JSON fast path must match the character walk's errors.\n\nValid input is scanned, parsed, and measured for depth without the walk.\nA surrogate, a depth past the limit, ``RecursionError``, or a located\nsyntax error falls back to that walk, so the message and the caret stay\nthe same.\n"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uDC00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\udc00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uDC00\\uD800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\udc00\\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uD800\\uD800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uDC00\\uDC00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\ud800\\udc00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uD800\\uDC00\\uD800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uDBFF\\uDFFF\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\uD7FF\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\\\uD800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\\\\\uD800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\\\uD800\\uDC00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\\\\\uD800\\uDC00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\udc00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\ud800\udc00\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\udc00\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\\\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\": \"\n\ud800\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\n  \"a\": \"\\uD800\"\n}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "\"\\uD800\""
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "\"ok\""
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"a\":\"\\t\\n\\u0041\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "A valid ~1 MB document must not run the character walk.\n\n    The walk used to dominate format time. This checks the call, not the clock.\n    "
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"emoji\":\"\\uD800\\uDC00\",\"note\":\"a\\nb\"}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\n  \"a\": \"\\ud800\"\n}"
+ },
+ {
+  "from": "tests/core/test_json_fast_path.py",
+  "text": "{\"k\":"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "Dotted and bracketed paths over formatted JSON and YAML.\n\nKeys that contain dots, brackets, or non-ASCII characters stay single keys.\nArray indexes are zero-based. Missing keys and indexes fail. Formatting twice\ndoes not change the text or the value at a path.\n"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "a[0]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "a\"b"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "order.items[2].price"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"order\"][\"items\"][2][\"price\"]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[10, 20, 30]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "{\"b\": 1, \"a\": 2, \"\u8ba2\u5355\": 3}"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"order\"][\"a.b\"].c"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "\u8ba2\u5355.caf\u00e9[0]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"a[0]\"]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"0\"].n"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"a\\\"b\"]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "c[0]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "items[-1]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "items[01]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "items["
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "order.items[0].name"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "order.items[2].sku"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "x[0]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "\u8ba2\u5355.caf\u00e9[1]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"order\"][\"a.b\"][\"c\"]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "order.items[3]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "order.items[0].price[0]"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "\"b\""
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "\"\u8ba2\u5355\""
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "{\"a\": {\"b\": 1}, \"a\": {\"b\": 2}}"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "\": 7\n"
+ },
+ {
+  "from": "tests/core/test_key_paths.py",
+  "text": "[\"order.items[2].price\"]"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "Reading a file for Open: decoding, size cap, error kinds, and format."
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "ewoKICAiYSI6ICJjYWbpIgp9"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "a: \u00e9\n"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "77u/e30="
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "WzEsIDJd"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "a: 1\nb: 2\n"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "a: 1\nb: 2"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "YTogMQ0KYjogMg0K"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "YTogMQ1iOiAyDQ=="
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "bytes": "YTogMQpiOiAy"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "  {\"a\": 1}"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "\n[1]"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "# note\nkey: value"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "---\na: 1"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "- one\n- two"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "parent:\n  child: 1"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "http://example.com"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "type: x"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "{\"a\": 1, // note\n}"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "key: value"
+ },
+ {
+  "from": "tests/core/test_load.py",
+  "text": "[1,]"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "Located errors for malformed JSON and YAML.\n\nTruncated documents, bad escapes, invalid UTF-8, BOMs, mixed line endings,\nand tab indentation must not crash. Syntax errors name a 1-based line and\ncolumn. Invalid UTF-8 names the line and column of the first bad byte.\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\r\n  \"a\": 1,\n  \"b\": 2\r}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: 1\r\nb:\r\n  - 2\r\n  - 3\r\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: 1\r\nb:\n  - 2\r\n  - 3\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "77u/eyJhIjogMX0="
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\":\"\\t\"}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "note: \"has\\ttab\"\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\": [1, 2"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\":"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "\"unterminated"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\": \"\\\"}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "[\n1,\n2,\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\": \"\\q\"}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\": \"\\u12\"}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\"a\":\"\t\"}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "\ufeff{\"a\": 1}"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\r\n  \"a\": 1,\n  \"b\": \r\n}\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "{\r\n  \"a\": 1,\n  \"b\": \"\\q\"\r\n}\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: [1, 2"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: \"\\q\"\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: 1\r\nb:\r\n\tc: 2\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "text": "a: 1\r\nb: [\n"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "77u/YTogMQo="
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "YTogIv8iCg=="
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "ewogICJhIjogIv8ifQ=="
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "eyJhIjogIsOp/yJ9"
+ },
+ {
+  "from": "tests/core/test_malformed.py",
+  "bytes": "YTogIsOp/yIK"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "{\n  \"id\": 4021,\n  \"name\": \"Pat Example\",\n  \"email\": \"pat.example@example.com\",\n  \"phone_number\": \"+1 (555) 010-0199\",\n  \"Social-Security-Number\": \"000-12-3456\",\n  \"address\": {\n    \"street\": \"100 Example Street\",\n    \"unit\": 7,\n    \"geo\": [12.75, -3.5],\n    \"verified\": true,\n    \"note\": null\n  },\n  \"contacts\": [\n    {\"label\": \"work\", \"Email Address\": \"work.desk@example.com\"},\n    {\"label\": \"cell\", \"mobile\": \"555-0142\"}\n  ],\n  \"emailer\": \"newsletter-bot\",\n  \"tags\": [\"alpha\", \"beta\"],\n  \"phone\": [],\n  \"rows\": [\n    [\"Ada Example\", \"ada@example.com\", \"555-0123\"],\n    [\"A-1042\", \"2026-10-20\", \"1.2.3\"]\n  ],\n  \"notes\": \"write to desk@example.com or call 555-0124\"\n}\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "id: 4021\nname: Pat Example\nemail: pat.example@example.com\nphone_number: +1 (555) 010-0199\nSocial-Security-Number: 000-12-3456\naddress:\n  street: 100 Example Street\n  unit: 7\n  geo: [12.75, -3.5]\n  verified: true\n  note: null\ncontacts:\n  - label: work\n    Email Address: work.desk@example.com\n  - label: cell\n    mobile: 555-0142\nemailer: newsletter-bot\ntags: [alpha, beta]\nphone: []\nrows:\n  - [Ada Example, ada@example.com, 555-0123]\n  - [A-1042, '2026-10-20', 1.2.3]\nnotes: write to desk@example.com or call 555-0124\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "profile: &who\n  name: Pat Example\n  email: pat.example@example.com\nowner: *who\nemail: &primary primary.inbox@example.com\nfallback: *primary\nshared: &shared\n  city: Exampleville\n  zip: '00000'\naddress: *shared\nagain: *shared\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "address: 4821 Example Boulevard Apartment 1234 Northfield Township Example County Testville 00000\nname: Pat Example\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "- [Ada Example, ada@example.com, 555-0123]\n- - Bo Example\n  - bo@example.com\n  - '+1 555 555 0124'\n- just text\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "ssn: &id example-ssn-value\nlabel: *id\nother: example-ssn-value\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "address: &loop\n  - city: Exampleville\n  - *loop\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "mailto:pat@example.com"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "git@example.com:org/repo.git"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "2026-10-20T12:30:00Z"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "2026-10-20 12:30:00"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "12:30:00"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "list: !!pairs [email: a@example.com]\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "email: !!set {a@example.com}\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "tags: !!set {alpha, beta}\nemail: a@example.com\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "\\+\\d \\(\\d{3}\\) \\d{3}-\\d{4}"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "note: "
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "\nquoted: 'a: "
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "'\n"
+ },
+ {
+  "from": "tests/core/test_mask.py",
+  "text": "a: "
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"a\": 1\n\n  \"b\": 2\n}\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"a\": 1,\n  \"b\": 'x'\n}\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"a\": {\n    \"b\": 1\n  }\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"note\": \"[{ \\\" ]\",\n  \"a\": [1\n}\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"name\": \"Galley\",\n  version: 2,\n  'kind': \"app\",\n  \"tags\": [\"json\", \"yaml\"\n}\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"a\": 1\n  \"b\": 2\n  \"c\": 3\n}\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "a: 1\n\tb: [\n\tc: 2\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "\"version\""
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "\"kind\""
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\"price\": 4.5 \"qty\": 3}"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "[\n  1,\n]\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{]"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "[}"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "['a', 'b']"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "[1, 2"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "[{\"a\": 1} {\"b\": 2}]"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "[\n  {\"a\": 1},\n]\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "{\n  \"a\": [\"hi\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "note: \"has\ttab\"\n"
+ },
+ {
+  "from": "tests/core/test_problems.py",
+  "text": "a:\n  b: 1\n"
+ },
+ {
+  "from": "tests/core/test_worker.py",
+  "text": "\nimport multiprocessing\n\nfrom galley.core.format import format_json\nfrom galley.core.worker import FailureEvent, FormatJob, SuccessEvent, run_worker\n\ndef main() -> None:\n    # Spawn re-imports this file as __mp_main__. Only the original process\n    # checks the start method, and it does so before the child is created.\n    assert multiprocessing.get_start_method(allow_none=True) is None\n    ctx = multiprocessing.get_context(\"spawn\")\n    jobs = ctx.Queue()\n    events = ctx.Queue()\n    process = ctx.Process(target=run_worker, args=(jobs, events))\n    assert process._start_method == \"spawn\"\n    process.start()\n    text = '{\"a\": 1}'\n    try:\n        jobs.put(FormatJob(job_id=1, text=text, source=\"json\", target=\"json\"))\n        event = None\n        for _ in range(10):\n            event = events.get(timeout=30)\n            if isinstance(event, (SuccessEvent, FailureEvent)):\n                break\n        jobs.put(None)\n        process.join(timeout=10)\n        assert process.exitcode == 0, process.exitcode\n        assert isinstance(event, SuccessEvent)\n        assert event.text == format_json(text)\n        print(\"ok\")\n    finally:\n        if process.exitcode is None and process.pid is not None:\n            process.kill()\n            process.join(timeout=5)\n        jobs.cancel_join_thread()\n        events.cancel_join_thread()\n        jobs.close()\n        events.close()\n\nif __name__ == \"__main__\":\n    main()\n"
+ },
+ {
+  "from": "tests/core/test_worker_compare.py",
+  "text": "{\"name\": \"Ada\", \"orders\": [{\"total\": 40}], \"old\": true}"
+ },
+ {
+  "from": "tests/core/test_worker_compare.py",
+  "text": "name: Ada\norders:\n  - total: 45\nnew: 1\n"
+ },
+ {
+  "from": "tests/core/test_worker_compare.py",
+  "text": "{\n  \"a\": 1,\n  \"b\" 2\n}"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "b: 1\na: 2\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "- id: 1\n  name: \"widget\"\n  tags:\n  - \"sale\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "yes\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "no\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "012\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: yes\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 012\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: .inf\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1:2:3\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 2020-01-01\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "true\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "null\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "~\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: null\nb: ~\nc:\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: &a 1\nb: *a\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: &a {x: 1}\nb:\n  <<: *a\n  y: 2\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "# only\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "---\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1 # keep\nb: 2\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1\r\nb: 2\r\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "caf\u00e9: 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "\u8ba2\u5355: 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \ud83d\ude00\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a:\t1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: b\tc\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "key:\tvalue\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "plain\tvalue\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1\t\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "---\t\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: |\n \n  hello\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": ": foo\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"\\uD800\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"\\uD800\\uDC00\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "%FOO bar\n---\na: 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: &id1 1\nb: &id1 2\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: {b:1}\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"\\n\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: |\n  hello\n  world\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: >\n  hello\n  world\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "%YAML 1.1\n--- yes\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "%YAML 1.1\n--- 012\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: !\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "!!binary aGVsbG8=\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \u2028x\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \u2029x\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "*missing\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: *missing\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1\n  b: 2\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "foo: bar: baz\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"'\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: ''''\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: ''''''\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: '''it'''\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"''\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: |\r\n \r\n  hello\r\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "YTogfA0KIA0KICBoZWxsbw0K"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "%TAG !e! tag:example.com,2000:app/\n---\na: 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: 1 # \there\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "note: 'a\tb'\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "note: \"has\n\ttab\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "note: 'has\n\ttab'\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "- !\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "[! ]\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "--- !\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "!<!> \n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: !<!>\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! 123\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! true\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! null\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! 1.5\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! 2026-10-18\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! ~\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! \"x\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: ! |\n  hello\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! [1, 2]\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! {a: 1}\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: !\n  - 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "!\n- 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "note: \"a\tb\"\nitem: ! 3\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "w6nDqToJImFiIgo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "77u/w6nDqToJImFiIgo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: |\n  hello\n    world\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: it's\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "notes: \"packed.\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "from-c\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "YToJMQo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "bm90ZTogImEJYiIK"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "bm90ZTogJ2EJYicK"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "w6nDqTogImEJYiIK"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "bm90ZTogImhhcwoJdGFiIgo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "bm90ZTogJ2hhcwoJdGFiJwo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "1.5\n...\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "2026-10-18\n...\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "null\n...\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "x\n...\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: \"hello\\n\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! \"\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! ''\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: ! \"\"\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "- !\n  - 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "!foo 1\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: !foo bar\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: >\n \n  hello\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "item: ! "
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "value: !"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "hello\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "bytes": "YTogMQo="
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": ":\t"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "a: ! |\n  "
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! ["
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "! {"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "}\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "extra:\t"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "- "
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "item: ! ["
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "item: !"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "\\\""
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": ":\n"
+ },
+ {
+  "from": "tests/core/test_yaml_clib.py",
+  "text": "-\n"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "\u00a9 2026 [copyright holder TBD]"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "galley.app.about.COPYRIGHT_NOTICE still contains TBD.\n"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "Copyright notice: ok\n"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "galley.app.about.COPYRIGHT_NOTICE is empty.\n"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "galley.app.about.COPYRIGHT_NOTICE is missing.\n"
+ },
+ {
+  "from": "tests/test_check_copyright_notice.py",
+  "text": "- name: Check tag matches version"
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "- name: Install Galley"
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "- name: Check the app bundle"
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "--package \"${package}\""
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "--tag \"${GITHUB_REF_NAME#v}\""
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "[[ \"${GITHUB_REF}\" == refs/tags/v* ]]"
+ },
+ {
+  "from": "tests/test_check_release_version.py",
+  "text": "\"${GITHUB_REF_NAME#v}\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "Settings for the unsigned macOS disk image.\n\nThe spec is parsed with ast. PyInstaller defines names such as BUNDLE when it\nruns the spec, so this test must not execute that file.\n"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "bytes": "iVBORw0KGgo="
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "4. Note: on macOS 14 and earlier, right-click > Open still works."
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "- name: Check that the built app loads ruamel.yaml.clib"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "- name: Verify bundle metadata"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "- name: Smoke-launch Galley headless"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "\"LICENSES/**\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "pull_request:"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "- \"v*\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "group: ${{ github.workflow }}-${{ github.ref }}"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "actions: write"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "contents: read"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "contents: write"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "staging=\"build/dmg-staging\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "-srcfolder \"${staging}\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "[[ ! -d \"${mount}/Galley.app\" ]]"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "[[ ! -L \"${mount}/Applications\" ]]"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "[[ \"${target}\" != \"/Applications\" ]]"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "\"${bin}\" --self-check"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "LICENSES self-check: ok"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "Check: ruamel.yaml.clib self-check"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "What broke:"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "Reproduce locally: ${bin} --self-check"
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "width=\"1024\""
+ },
+ {
+  "from": "tests/test_macos_packaging.py",
+  "text": "height=\"1024\""
+ },
+ {
+  "from": "tests/test_no_exec.py",
+  "text": "(?<![\\w.])exec\\s*\\(|(?<!\\w)(?:builtins|__builtins__)\\s*\\.\\s*exec\\s*\\("
+ },
+ {
+  "from": "tests/test_no_exec.py",
+  "text": "(?<![\\w.])eval\\s*\\(|(?<!\\w)(?:builtins|__builtins__)\\s*\\.\\s*eval\\s*\\("
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "catalog: bench\nversion: 1\nitems:\n- id: 1\n  name: widget\n"
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": ": ! "
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "channel: ! stable"
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "\"name\tregion\""
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "%YAML 1.2\n---\n"
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "import galley.core.format as format_module\nraise SystemExit(0 if format_module._clib_available() else 1)\n"
+ },
+ {
+  "from": "tests/test_size_bench_corpus.py",
+  "text": "items:"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Galley (architecture arm64):\nLoad command 10\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform MACOS\n    minos 14.0.0\n      sdk 14.0\n   ntools 1\n     tool LD\n  version 26.0\nLoad command 11\n      cmd LC_SOURCE_VERSION\n  cmdsize 16\n  version 26.0\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Galley (architecture x86_64):\nLoad command 8\n      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 10.13\n      sdk 10.15\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Galley (architecture arm64):\nLoad command 10\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform MACOS\n    minos 26.0\n      sdk 26.0\n   ntools 1\n     tool LD\n  version 1115.7.3\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "liblegacy.dylib (architecture arm64):\nLoad command 9\n      cmd LC_SOURCE_VERSION\n  cmdsize 16\n  version 26.0\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "liblegacy.dylib (architecture arm64):\nLoad command 8\n      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 15.1\n      sdk 15.1\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Verify bundle metadata failed:\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "usage: verify_bundle_metadata.py Galley.app"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "https://download.qt.io/archive/qt/6.9/6.9.3/single/qt-everywhere-src-6.9.3.tar.xz"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.9.3-src/pyside-setup-everywhere-src-6.9.3.tar.xz"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "minos 26.0\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Galley:-show-build:x86_64"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Galley:-show-build:arm64"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "liblegacy.dylib:-show-version-min:arm64"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "Verify bundle metadata failed:\n2 Mach-O files record a minimum macOS higher than "
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": ":\nContents/Frameworks/liblegacy.dylib arm64 minos 15.1 floor "
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "\nContents/MacOS/Galley arm64 minos 26.0 floor "
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "\npin dependencies lower or raise MINIMUM_MACOS in galley.spec\n"
+ },
+ {
+  "from": "tests/test_verify_bundle_metadata.py",
+  "text": "licenses\n"
+ }
+]

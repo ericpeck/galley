@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
 
 from galley.app import parse_session as parse_session_module
@@ -20,6 +21,9 @@ from galley.core.worker import FAULT_AFTER_TEMP
 _SPAWN_TIMEOUT_MS = 20000
 _SLOW_CHUNK = 4096
 _SLOW_PAUSE_S = 0.2
+# A poll runs on the UI thread on every timer tick. It must never wait on a
+# killed child, inside or past the reap deadline.
+_POLL_BUDGET_S = 0.100
 
 
 def test_cancel_mid_write_leaves_the_original_file(qtbot, tmp_path: Path) -> None:
@@ -195,7 +199,9 @@ def test_cancel_updates_the_window_before_the_worker_is_killed(
     assert output.toPlainText() == previous
 
 
-def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) -> None:
+def test_reap_poll_never_joins_and_replaces_a_stuck_child(
+    qtbot, tmp_path: Path
+) -> None:
     session = ParseSession()
     path = tmp_path / ".galley-slow.tmp"
     path.write_text("pending", encoding="utf-8")
@@ -227,13 +233,13 @@ def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) 
             )
         )
         for _ in range(5):
-            assert _tick_ms(session) < 100
+            session._poll()
             assert session.process is None
             assert path.exists()
         assert joins == []
         assert failures == []
         _expire_reap(session)
-        assert _tick_ms(session) < 100
+        session._poll()
         assert session.process is not None
         assert session.process.pid != 424242
         replacement = session.process
@@ -268,6 +274,59 @@ def test_reap_poll_stays_fast_and_replaces_a_stuck_child(qtbot, tmp_path: Path) 
         session.shutdown()
 
 
+@pytest.mark.perf
+def test_reap_poll_stays_under_100_ms(qtbot, perf_budget) -> None:
+    """Poll with a stuck child inside its reap deadline, then past it."""
+
+    class _Stuck:
+        pid = 525252
+        exitcode: int | None = None
+
+        def join(self, timeout: float | None = None) -> None:
+            time.sleep(0.3)
+
+        def kill(self) -> None:
+            return
+
+    def _with_stuck_child(started_s: float) -> ParseSession:
+        session = ParseSession()
+        session._retired.append(
+            _Retired(
+                process=_Stuck(),  # type: ignore[arg-type]
+                resource=None,
+                queues=[],
+                started_s=started_s,
+                temps=[],
+            )
+        )
+        sessions.append(session)
+        return session
+
+    def _past_deadline() -> None:
+        sessions[-1].shutdown()
+        _with_stuck_child(time.monotonic() - (REAP_DEADLINE_MS + 1000) / 1000)
+
+    sessions: list[ParseSession] = []
+    try:
+        inside = _with_stuck_child(time.monotonic())
+        perf_budget.within(
+            _POLL_BUDGET_S,
+            inside._poll,
+            fixture="stuck child inside the reap deadline",
+        )
+        assert inside.process is None
+        perf_budget.within(
+            _POLL_BUDGET_S,
+            lambda: sessions[-1]._poll(),
+            setup=_past_deadline,
+            fixture="stuck child past the reap deadline; the poll starts a replacement",
+        )
+        assert sessions[-1].process is not None
+    finally:
+        for session in sessions:
+            session.shutdown()
+
+
 def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
     qtbot, tmp_path: Path
 ) -> None:
@@ -275,13 +334,13 @@ def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
     session = rig.window._session
     try:
         for _ in range(5):
-            rig.ticks.append(_tick_ms(session))
+            session._poll()
             assert session.process is None
             assert rig.status.text() == CANCELLED_MESSAGE
         _expire_reap(session)
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         for _ in range(3):
-            rig.ticks.append(_tick_ms(session))
+            session._poll()
         assert rig.status.text() == CANCELLED_MESSAGE
         assert FORMATTER_STOPPED not in rig.status.text()
         assert rig.output.toPlainText() == "previous output\n"
@@ -295,8 +354,6 @@ def test_reap_deadline_keeps_cancelled_when_format_was_not_pressed(
         assert rig.stuck.exitcode is None
         assert not session.has_pending_job
         assert rig.joins == []
-        assert rig.ticks
-        assert all(tick < 100 for tick in rig.ticks)
     finally:
         rig.window.shutdown_parse_worker()
 
@@ -313,12 +370,12 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
         assert rig.window._formatting
         assert session.has_pending_job
         for _ in range(5):
-            rig.ticks.append(_tick_ms(session))
+            session._poll()
             assert session.process is None
             assert rig.status.text() == CANCELLED_MESSAGE
             assert Path(rig.temp_path).exists()
         _expire_reap(session)
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         assert rig.status.text() == FORMATTER_STOPPED
         lowered = rig.status.text().casefold()
         assert "line" not in lowered
@@ -330,7 +387,7 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
         assert not session.has_pending_job
 
         def _formatted() -> bool:
-            rig.ticks.append(_tick_ms(session))
+            session._poll()
             return rig.output.toPlainText() == '{\n  "a": 1\n}\n'
 
         qtbot.waitUntil(_formatted, timeout=_SPAWN_TIMEOUT_MS)
@@ -340,8 +397,6 @@ def test_format_during_reap_shows_the_crash_banner_and_runs(
         assert session.process is replacement
         assert rig.stuck.exitcode is None
         assert rig.joins == []
-        assert rig.ticks
-        assert all(tick < 100 for tick in rig.ticks)
     finally:
         rig.window.shutdown_parse_worker()
 
@@ -380,7 +435,7 @@ def test_second_cancel_inside_reap_deadline_queues_once(
         assert _within_reap_deadline(session)
         assert session.process is None
         assert session._retired[0].process is rig.stuck
-        _poll_within_deadline(rig, session, 3)
+        _poll_within_deadline(session, 3)
 
         rig.button.click()
         session._timer.stop()
@@ -388,7 +443,7 @@ def test_second_cancel_inside_reap_deadline_queues_once(
         assert rig.window._formatting
         assert session.has_pending_job
         assert _within_reap_deadline(session)
-        _poll_within_deadline(rig, session, 3)
+        _poll_within_deadline(session, 3)
         assert session.process is None
         assert rig.status.text() == CANCELLED_MESSAGE
 
@@ -398,7 +453,7 @@ def test_second_cancel_inside_reap_deadline_queues_once(
         assert not rig.window._formatting
         assert not session.has_pending_job
         assert _within_reap_deadline(session)
-        _poll_within_deadline(rig, session, 3)
+        _poll_within_deadline(session, 3)
 
         assert len(spawned) <= 1
         assert session.process is None
@@ -411,8 +466,6 @@ def test_second_cancel_inside_reap_deadline_queues_once(
         assert rig.output.toPlainText() == "previous output\n"
         assert rig.destination.read_bytes() == rig.original
         assert rig.joins == []
-        assert rig.ticks
-        assert all(tick < 100 for tick in rig.ticks)
 
         rig.window.shutdown_parse_worker()
         assert unlinked.count(rig.temp_path) == 1
@@ -491,7 +544,7 @@ def test_second_cancel_after_deadline_keeps_each_child_temp(
         assert session.has_pending_job
         assert session._retired[0].process is rig.stuck
         _expire_reap(session)
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         child2 = session.process
         assert child2 is not None
         assert child2 is not rig.stuck
@@ -523,7 +576,7 @@ def test_second_cancel_after_deadline_keeps_each_child_temp(
         assert rig.joins == []
 
         child2.exitcode = -9  # type: ignore[attr-defined]
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         assert not Path(temp2).exists()
         assert Path(rig.temp_path).exists()
         assert unlinked.count(temp2) == 1
@@ -534,8 +587,6 @@ def test_second_cancel_after_deadline_keeps_each_child_temp(
         assert any(entry.process is rig.stuck for entry in session._retired)
         assert rig.status.text() == CANCELLED_MESSAGE
         assert rig.joins == []
-        assert rig.ticks
-        assert all(tick < 100 for tick in rig.ticks)
 
         rig.window.shutdown_parse_worker()
         assert unlinked.count(rig.temp_path) == 1
@@ -593,7 +644,7 @@ def test_format_after_second_cancel_past_deadline_stays_quiet(
     session._spawn = _spawn_stuck  # type: ignore[method-assign]
     try:
         _expire_reap(session)
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         child2 = session.process
         assert child2 is not None
         assert child2 is not rig.stuck
@@ -629,7 +680,7 @@ def test_format_after_second_cancel_past_deadline_stays_quiet(
         rig.window._reveal_timer.stop()
         assert rig.window._formatting
         assert session.has_pending_job
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
 
         assert FORMATTER_STOPPED not in failures
         assert FORMATTER_STOPPED not in rig.status.text()
@@ -643,7 +694,7 @@ def test_format_after_second_cancel_past_deadline_stays_quiet(
         expected = format_json('{"c": 3}')
 
         def _formatted() -> bool:
-            rig.ticks.append(_tick_ms(session))
+            session._poll()
             return rig.output.toPlainText() == expected
 
         qtbot.waitUntil(_formatted, timeout=_SPAWN_TIMEOUT_MS)
@@ -653,8 +704,6 @@ def test_format_after_second_cancel_past_deadline_stays_quiet(
         assert FORMATTER_STOPPED not in rig.status.text()
         assert rig.output.toPlainText() == expected
         assert rig.joins == []
-        assert rig.ticks
-        assert all(tick < 100 for tick in rig.ticks)
     finally:
         rig.window.shutdown_parse_worker()
 
@@ -738,7 +787,6 @@ class _StuckCancel:
         output: CodeEditor,
         button: QPushButton,
         joins: list[str],
-        ticks: list[float],
         stuck: object,
         temp_path: str,
     ) -> None:
@@ -749,7 +797,6 @@ class _StuckCancel:
         self.output = output
         self.button = button
         self.joins = joins
-        self.ticks = ticks
         self.stuck = stuck
         self.temp_path = temp_path
 
@@ -815,7 +862,6 @@ def _stuck_cancel(qtbot, tmp_path: Path) -> _StuckCancel:
         output,
         button,
         joins,
-        [],
         stuck,
         temp_path,
     )
@@ -844,11 +890,11 @@ def _within_reap_deadline(session: ParseSession) -> bool:
     return elapsed < REAP_DEADLINE_MS
 
 
-def _poll_within_deadline(rig: _StuckCancel, session: ParseSession, times: int) -> None:
+def _poll_within_deadline(session: ParseSession, times: int) -> None:
     """Poll inside the deadline. A replacement must not be running yet."""
     for _ in range(times):
         assert _within_reap_deadline(session)
-        rig.ticks.append(_tick_ms(session))
+        session._poll()
         assert session.process is None
 
 
@@ -862,12 +908,6 @@ def _assert_stuck_worker_queued_once(
     assert queued.count(path) == 1
     assert len(queued) == len(set(queued))
     assert Path(path).exists()
-
-
-def _tick_ms(session: ParseSession) -> float:
-    started = time.perf_counter()
-    session._poll()
-    return (time.perf_counter() - started) * 1000
 
 
 def _show(qtbot):

@@ -17,9 +17,13 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QFont,
     QFontMetrics,
     QHelpEvent,
+    QKeyEvent,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -44,6 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.file_drop import dropped_paths
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.limits import JSON_BUSY_BYTES
@@ -71,6 +76,11 @@ _FOLD_RESCAN_MS = 300
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
 FOLD_MARKERS = "fold"
+
+# Spaces per indent level. The Tab key types spaces up to the next multiple
+# of this (#91 item 6). 2 matches the fixed "2 spaces" indent while the
+# indent picker is Coming soon.
+INDENT_WIDTH = 2
 
 # Display gates for very long lines, in characters of one block (#91).
 #
@@ -449,6 +459,26 @@ class CodeEditor(QPlainTextEdit):
         self.follow_application_palette()
         self._highlighter.follow_base(self.palette().color(QPalette.ColorRole.Base))
 
+    # A dragged file or folder is left for the window (#86), so its path is
+    # never typed in as text. Other drags, such as text, drop as usual.
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if dropped_paths(event.mimeData()):
+            event.ignore()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if dropped_paths(event.mimeData()):
+            event.ignore()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if dropped_paths(event.mimeData()):
+            event.ignore()
+            return
+        super().dropEvent(event)
+
     def line_number_area_width(self) -> int:
         digits = max(3, len(str(max(1, self.blockCount()))))
         measured = _GUTTER_PAD + self.fontMetrics().horizontalAdvance("9") * digits
@@ -649,20 +679,29 @@ class CodeEditor(QPlainTextEdit):
             self._colors_wanted and not self._colors_limited()
         )
 
-    def reveal_line(self, lineno: int) -> None:
+    def reveal_line(self, lineno: int, colno: int = 0) -> None:
         """Move the cursor to ``lineno``, scroll it into view, and focus.
 
+        ``colno`` is a 1-based column in characters; 0 is the line start.
         Folded blocks that hide the line open first.
         """
         self.ensure_line_visible(lineno)
         block = self.document().findBlockByNumber(max(lineno, 1) - 1)
         if not block.isValid():
             block = self.document().lastBlock()
+        offset = _utf16_length(block.text()[: max(colno - 1, 0)])
         cursor = self.textCursor()
-        cursor.setPosition(block.position())
+        cursor.setPosition(block.position() + min(offset, block.length() - 1))
         self.setTextCursor(cursor)
         self.centerCursor()
         self.setFocus()
+
+    def cursor_place(self) -> tuple[int, int]:
+        """The cursor's 1-based line and column, in characters."""
+        cursor = self.textCursor()
+        before = cursor.block().text().encode("utf-16-le")
+        before = before[: 2 * cursor.positionInBlock()]
+        return cursor.blockNumber() + 1, len(before.decode("utf-16-le")) + 1
 
     def folding_enabled(self) -> bool:
         return self._folding
@@ -894,6 +933,51 @@ class CodeEditor(QPlainTextEdit):
                     event.accept()
                     return
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Tab types spaces. Ctrl+Tab moves focus out, as Tab does elsewhere."""
+        key = event.key()
+        if self.isReadOnly() or key not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            super().keyPressEvent(event)
+            return
+        modifiers = event.modifiers()
+        # Qt reports the Control key as Meta on macOS, where Ctrl is ⌘.
+        focus_keys = (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        )
+        if modifiers & focus_keys:
+            forward = key == Qt.Key.Key_Tab and not (
+                modifiers & Qt.KeyboardModifier.ShiftModifier
+            )
+            # QPlainTextEdit's own override keeps focus in an editable editor.
+            QWidget.focusNextPrevChild(self, forward)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
+            # A selection over several lines is left alone until Indent
+            # ships, rather than replaced by spaces.
+            if not self._selection_spans_lines():
+                self._insert_indent()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _selection_spans_lines(self) -> bool:
+        cursor = self.textCursor()
+        document = self.document()
+        first = document.findBlock(cursor.selectionStart())
+        return first != document.findBlock(cursor.selectionEnd())
+
+    def _insert_indent(self) -> None:
+        """Replace the selection with spaces up to the next INDENT_WIDTH stop."""
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        column = start - self.document().findBlock(start).position()
+        cursor.beginEditBlock()
+        cursor.insertText(" " * (INDENT_WIDTH - column % INDENT_WIDTH))
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -1597,3 +1681,8 @@ def _known_kind(kind: str) -> str:
     if kind not in MARKER_KINDS:
         raise ValueError(f"unknown marker kind {kind!r}; add it to GUTTER_LANES")
     return kind
+
+
+def _utf16_length(text: str) -> int:
+    """Qt counts positions in UTF-16 units, so astral characters count twice."""
+    return len(text) + sum(1 for char in text if ord(char) > 0xFFFF)

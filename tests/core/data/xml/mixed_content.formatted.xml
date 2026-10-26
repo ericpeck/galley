@@ -1,0 +1,11 @@
+<doc>
+  <p>Some <b>bold</b> and <i>italic</i> text.</p>
+  <note>
+  Keep   this
+     spacing.
+</note>
+  <list>
+    <li>one</li>
+    <li>two <em>2</em></li>
+  </list>
+</doc>
