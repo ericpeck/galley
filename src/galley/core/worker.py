@@ -3,12 +3,13 @@
 ``run_worker`` is a module-level function so a spawn child can import it by
 name. This module does not import Qt. The child writes a temp file beside
 the destination and never replaces that destination; the UI process commits.
-A ``CompareJob`` loads two documents and diffs them. It has no output file,
-so it writes no temp. A ``FormatJob`` with ``mask`` set formats through
-``mask_document``. If masking fails, the job fails and sends no text, so
-unmasked output never reaches the parent while masking is on. Any other
-failure of a masked job is rebuilt from its kind, key name and place, so
-no value or quoted source line reaches the parent either.
+A ``CompareJob`` loads two documents, diffs them, and builds the Compare
+report. It has no output file, so it writes no temp. A ``FormatJob`` with
+``mask`` set formats through ``mask_document``. If masking fails, the job
+fails and sends no text, so unmasked output never reaches the parent while
+masking is on. Any other failure of a masked job is rebuilt from its kind,
+key name and place, so no value or quoted source line reaches the parent
+either.
 """
 
 import json
@@ -23,7 +24,14 @@ from typing import BinaryIO, Literal
 from ruamel.yaml.constructor import DuplicateKeyError
 from ruamel.yaml.error import MarkedYAMLError
 
-from galley.core.diff import DiffResult, diff, load_document
+from galley.core.compare_report import CompareReport, build_report
+from galley.core.diff import (
+    DiffResult,
+    Doc,
+    _json_spans,
+    diff_with_pairs,
+    load_document,
+)
 from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
@@ -135,6 +143,11 @@ class FailureEvent:
 class CompareJob:
     """Two documents to compare. The bodies are copies; the worker does not share them.
 
+    ``reformat`` formats each side in its own format first and compares the
+    formatted text, in this one job, so one Cancel stops both and the spans
+    match what each pane then shows. It never sorts keys: Compare ignores
+    the Sort keys setting (#59).
+
     ``hold_s`` pauses after both sides load and before ``diff`` runs, so a
     test can cancel mid-compare. The app leaves it at 0.
     """
@@ -145,6 +158,7 @@ class CompareJob:
     right_text: str
     right_format: str
     hold_s: float = 0.0
+    reformat: bool = False
 
 
 CompareSide = Literal["left", "right"]
@@ -152,10 +166,18 @@ CompareSide = Literal["left", "right"]
 
 @dataclass(frozen=True)
 class CompareEvent:
-    """Comparing finished. ``result`` is the engine's ``DiffResult``."""
+    """Comparing finished.
+
+    ``result`` is the engine's ``DiffResult`` and ``report`` its rows, marks
+    and anchors. ``left_text`` and ``right_text`` are the formatted texts
+    when the job had ``reformat``, and ``None`` otherwise.
+    """
 
     job_id: int
     result: DiffResult
+    report: CompareReport
+    left_text: str | None = None
+    right_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -528,10 +550,11 @@ def _failure_place(exc: Exception, problems: tuple[Problem, ...]) -> str:
 
 
 def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
-    """Load both sides, then diff them. Left is checked before right.
+    """Load both sides, then diff them and build the report.
 
-    This is the whole compare job without the queue, so it also runs
-    in-process. A side that fails stops the job before ``diff`` runs. A
+    Left is checked before right. This is the whole compare job without the
+    queue, so it also runs in-process. A side that fails stops the job
+    before ``diff`` runs; its problems are located in the text as sent. A
     side whose format does not load to a value, such as XML, fails before
     it is read, whatever the app offered.
     """
@@ -544,22 +567,52 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
         if refused is not None:
             return CompareFailureEvent(job.job_id, side, refused)
     docs = []
+    texts: list[str] = []
     for side, text, source in sides:
         early = collect_problems(text, source)
         if early:
             return CompareFailureEvent(job.job_id, side, "", None, early)
         try:
-            docs.append(load_document(text, source))
+            if job.reformat:
+                shown, doc = _reformatted(text, source)
+            else:
+                shown, doc = text, load_document(text, source)
         except Exception as exc:
             return _compare_failure(job.job_id, side, text, source, exc)
+        docs.append(doc)
+        texts.append(shown)
     if job.hold_s > 0:
         time.sleep(job.hold_s)
     try:
-        result = diff(docs[0], docs[1])
+        result, pairs = diff_with_pairs(docs[0], docs[1])
+        report = build_report(result, docs[0], docs[1], pairs)
     except Exception as exc:
         error = exc if isinstance(exc, InputError) else None
         return CompareFailureEvent(job.job_id, None, _failure_message(exc), error)
-    return CompareEvent(job.job_id, result)
+    if not job.reformat:
+        return CompareEvent(job.job_id, result, report)
+    return CompareEvent(job.job_id, result, report, texts[0], texts[1])
+
+
+def _reformatted(text: str, source: str) -> tuple[str, Doc]:
+    """Format ``text`` in its own format, then locate the formatted values.
+
+    JSON keeps the value the formatter loaded and only scans the formatted
+    text for spans, so it is not parsed a second time; the result equals
+    ``load_document`` of the formatted text. YAML spans come from the full
+    parse, so YAML loads the formatted text. Keys are never sorted.
+    """
+    if format_named(source).name != "json":
+        shown = format_document(text, source, source)
+        return shown, load_document(shown, source)
+    loaded: list[object] = []
+
+    def _keep(value: object) -> object:
+        loaded.append(value)
+        return value
+
+    shown = format_document(text, source, source, prepare=_keep)
+    return shown, Doc(loaded[0], "json", _json_spans(shown))
 
 
 def _not_comparable(source: str) -> str | None:
