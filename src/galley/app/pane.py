@@ -28,6 +28,7 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
+from galley.core.formats import FORMAT_LABELS
 
 
 class PaneKind(Enum):
@@ -283,7 +284,7 @@ class PaneWidget(QWidget):
         self.format_combo = FormatComboBox()
         self.format_combo.setObjectName(f"{self.spec.name}Format")
         self.format_combo.setAccessibleName(accessible_name)
-        self.format_combo.addItems(["JSON", "YAML"])
+        self.format_combo.addItems(FORMAT_LABELS)
         self.format_combo.currentTextChanged.connect(self.format_changed.emit)
         return self.format_combo
 
