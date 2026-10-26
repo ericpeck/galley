@@ -3,7 +3,6 @@
 import json
 import random
 import sys
-import time
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
@@ -534,11 +533,12 @@ def test_large_documents_wait_before_searching(qtbot, monkeypatch) -> None:
     window, _editor_, bar = _input_with(qtbot, "abc " * 10)
     _action(window, "Find…").trigger()
     assert bar.is_large()
-    started = time.perf_counter()
     qtbot.keyClicks(bar.field, "abc")
+    # Typing only restarts the wait; nothing is searched yet.
     assert bar.match_count() == 0
+    assert bar._timer.isActive()
+    assert bar._timer.interval() == FIND_DELAY_MS
     qtbot.waitUntil(lambda: bar.match_count() == 10, timeout=2000)
-    assert time.perf_counter() - started >= FIND_DELAY_MS / 1000 * 0.9
     assert bar.count_label_text() == "1 of 10"
 
 
@@ -727,11 +727,11 @@ def test_find_field_uses_the_code_font() -> None:
 
 # Performance ----------------------------------------------------------------
 
-# Best of three. Local runs (Apple silicon, offscreen): typing "e" in 2 MB of
-# pretty JSON (79,504 matches) is about 28 ms; on one 1.6 MB line about 46 ms;
-# Find next on that line about 40 ms. CI runners measured 3-4x slower on
-# other editor timings (#84, #94). A selection for every match took seconds,
-# so the budget still catches that.
+# Per operation, under ``-m perf`` (one warmup, median of five, failing at
+# 3x in the PR gate). Local medians on Apple silicon, offscreen: typing "e"
+# in 2 MB of pretty JSON (about 79,000 matches) is about 30 ms, and on one
+# 1.6 MB line about 20 ms; Find next on that line about 40 ms. A selection
+# for every match took seconds, so the budget still catches that.
 _BUDGET_S = 0.5
 
 
@@ -770,51 +770,69 @@ def _one_line_document(target: int) -> str:
     return json.dumps({"items": [item(i) for i in range(target // each)]})
 
 
-def _best(operation, runs: int = 3) -> float:
-    best = float("inf")
-    for _ in range(runs):
-        started = time.perf_counter()
-        operation()
-        QApplication.processEvents()
-        best = min(best, time.perf_counter() - started)
-    return best
+_LARGE = [
+    pytest.param(_pretty_document, 2_000_000, id="2 MB"),
+    pytest.param(_one_line_document, 1_600_000, id="1.6 MB line"),
+]
 
 
-@pytest.mark.parametrize(
-    "build", [_pretty_document, _one_line_document], ids=["2 MB", "1.6 MB line"]
-)
-def test_find_stays_responsive_on_large_documents(qtbot, build) -> None:
-    target = 2_000_000 if build is _pretty_document else 1_600_000
+def _large_output(qtbot, build, target: int):
     text = build(target)
     assert abs(len(text) - target) < target // 20
     window, output, bar = _output_with(qtbot, text)
     _action(window, "Find…").trigger()
+    return output, bar
 
-    def type_query() -> None:
-        bar.field.clear()
-        bar.field.setText("e")
 
-    typed = _best(type_query)
-    assert bar.match_count() > 10_000
-    stepped = _best(bar.find_next)
-    keys = _best(lambda: (bar.keys_only.setChecked(False), bar.keys_only.click()))
-    assert bar.match_count() > 0
-    scrolled = _best(
-        lambda: output.verticalScrollBar().setValue(
-            output.verticalScrollBar().value() + 200
-        )
-    )
+def _type_query(bar: FindBar, query: str = "e") -> None:
+    bar.field.clear()
+    bar.field.setText(query)
+    QApplication.processEvents()
+
+
+def _toggle_keys_only(bar: FindBar) -> None:
+    bar.keys_only.setChecked(False)
+    bar.keys_only.click()
+    QApplication.processEvents()
+
+
+def _scroll(output: CodeEditor) -> None:
+    scroll = output.verticalScrollBar()
+    scroll.setValue(scroll.value() + 200)
+    QApplication.processEvents()
+
+
+@pytest.mark.parametrize(("build", "target"), _LARGE)
+def test_large_documents_draw_only_the_matches_on_screen(qtbot, build, target) -> None:
+    output, bar = _large_output(qtbot, build, target)
+    _type_query(bar)
+    everywhere = bar.match_count()
+    assert everywhere > 10_000
+    bar.find_next()
+    assert bar.current_index() == 1
+    _toggle_keys_only(bar)
+    assert 0 < bar.match_count() < everywhere
+    _scroll(output)
     # Only what is on screen becomes an extra selection.
     assert len(output.extraSelections()) < 2_000
-    print(
-        f"\nfind timings ({len(text):,} chars): type {typed * 1000:.0f} ms, "
-        f"next {stepped * 1000:.0f} ms, keys only {keys * 1000:.0f} ms, "
-        f"scroll {scrolled * 1000:.0f} ms"
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize(("build", "target"), _LARGE)
+def test_find_stays_responsive_on_large_documents(
+    qtbot, perf_budget, build, target
+) -> None:
+    output, bar = _large_output(qtbot, build, target)
+    label = f"{len(output.toPlainText()):,}-character JSON"
+    if "\n" not in output.toPlainText():
+        label += " on one line"
+    perf_budget.within(
+        _BUDGET_S, lambda: _type_query(bar), fixture=f"{label}: type 'e'"
     )
-    for label, elapsed in (
-        ("type", typed),
-        ("next", stepped),
-        ("keys only", keys),
-        ("scroll", scrolled),
-    ):
-        assert elapsed < _BUDGET_S, (label, elapsed)
+    perf_budget.within(_BUDGET_S, bar.find_next, fixture=f"{label}: Find next")
+    perf_budget.within(
+        _BUDGET_S, lambda: _toggle_keys_only(bar), fixture=f"{label}: Keys only on"
+    )
+    perf_budget.within(
+        _BUDGET_S, lambda: _scroll(output), fixture=f"{label}: scroll 200 px"
+    )
