@@ -65,14 +65,17 @@ class Problem:
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
     For XML it is the element, attribute, entity, or prefix named.
-    ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
-    when the problem was found after the JSON scan guessed at a repair,
-    so an earlier problem may have caused it.
+    ``found`` is what stood where ``token`` was expected: for
+    ``xml_mismatched_tag`` the name in the end tag, while ``token`` is the
+    element still open. ``colno`` is 0 when the parser gives no column.
+    ``uncertain`` is True when the problem was found after the JSON scan
+    guessed at a repair, so an earlier problem may have caused it.
 
     ``json_stopped`` is not a problem: it ends the list when the scan
     stopped at ``MAX_FINDINGS``, on the line where it stopped.
 
-    Problems compare by code, line, and token, the parts a sentence says.
+    Problems compare by code, line, token, and found, the parts a sentence
+    says.
     """
 
     code: ProblemCode
@@ -80,6 +83,7 @@ class Problem:
     token: str = ""
     colno: int = field(default=0, compare=False)
     uncertain: bool = field(default=False, compare=False)
+    found: str = ""
 
 
 def collect_problems(
@@ -188,7 +192,7 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
     if isinstance(exc, YAMLError):
         return _classify_yaml(exc, text)
     if isinstance(exc, XMLSyntaxError):
-        return Problem(exc.code, exc.lineno, exc.token, exc.colno)
+        return Problem(exc.code, exc.lineno, exc.token, exc.colno, found=exc.found)
     return None
 
 

@@ -22,8 +22,6 @@ document that has an alias loads with the pure-Python parser, because the
 C parser gives each alias of a scalar its own string object.
 
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
-It reaches ``format_document`` once the format table has an XML row, which
-#63 slice 3 adds with the picker item.
 """
 
 import functools

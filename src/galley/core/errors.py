@@ -98,29 +98,34 @@ class XMLSyntaxError(ValueError):
     ``code`` is one of the ``xml_*`` names in ``problems.ProblemCode``.
     ``lineno`` and ``colno`` are 1-based, with the column in code points.
     ``token`` is the element, attribute, entity, or prefix the problem
-    names, or "" when it names none. The sentence is chosen in the app.
+    names, or "" when it names none. ``found`` is the end tag's name for
+    ``xml_mismatched_tag``, and "" otherwise. The sentence is chosen in the
+    app.
     """
 
-    def __init__(self, code: str, *, lineno: int, colno: int, token: str = "") -> None:
+    def __init__(
+        self, code: str, *, lineno: int, colno: int, token: str = "", found: str = ""
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.lineno = lineno
         self.colno = colno
         self.token = token
+        self.found = found
 
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         """Pickle the keyword fields too, as ``InputError`` does."""
         return (
             _restore_xml_syntax_error,
-            (self.code, self.lineno, self.colno, self.token),
+            (self.code, self.lineno, self.colno, self.token, self.found),
         )
 
 
 def _restore_xml_syntax_error(
-    code: str, lineno: int, colno: int, token: str
+    code: str, lineno: int, colno: int, token: str, found: str
 ) -> XMLSyntaxError:
     """Rebuild an ``XMLSyntaxError`` after it crosses a process boundary."""
-    return XMLSyntaxError(code, lineno=lineno, colno=colno, token=token)
+    return XMLSyntaxError(code, lineno=lineno, colno=colno, token=token, found=found)
 
 
 class NotJSONValueError(ValueError):

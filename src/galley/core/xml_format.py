@@ -243,8 +243,10 @@ def _expat_error(
     if index < 0:
         return XMLSyntaxError(kind, lineno=exc.lineno, colno=exc.offset + 1)
     token = ""
+    found = ""
     if kind == "xml_mismatched_tag":
         # Expat points at the name. The end tag starts two bytes earlier.
+        found = _name_at(data, index)
         if data[index - 2 : index] == b"</":
             index -= 2
         if opened:
@@ -255,7 +257,7 @@ def _expat_error(
         token = _name_at(data, index + 1)
     elif kind == "xml_unbound_prefix":
         token = _unbound_prefix(data, index, opened)
-    return _located(kind, data, index, token)
+    return _located(kind, data, index, token, found)
 
 
 def _unbound_prefix(data: bytes, index: int, opened: list[int]) -> str:
@@ -288,9 +290,11 @@ def _tag_names(tag: bytes) -> list[bytes]:
     return names
 
 
-def _located(code: str, data: bytes, index: int, token: str = "") -> XMLSyntaxError:
+def _located(
+    code: str, data: bytes, index: int, token: str = "", found: str = ""
+) -> XMLSyntaxError:
     line, column = _line_column(data, index)
-    return XMLSyntaxError(code, lineno=line, colno=column, token=token)
+    return XMLSyntaxError(code, lineno=line, colno=column, token=token, found=found)
 
 
 def _name_at(data: bytes, index: int) -> str:

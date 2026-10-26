@@ -2,8 +2,7 @@
 
 Output is built from source slices, so the golden files pin every byte.
 Hostile DTDs live in ``test_hostile.py``. Worker jobs live in
-``test_worker.py``. XML has no row in the format table until slice 3, so
-tests that route it by name add the row from ``xml_row`` first.
+``test_worker.py``.
 """
 
 import os
@@ -15,7 +14,6 @@ from xml.parsers import expat
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from tests.core.xml_row import XML_ROW, add_xml_row
 
 from galley.core import xml_format
 from galley.core.diff import load_document as diff_load_document
@@ -24,6 +22,7 @@ from galley.core.escape import escape_document, unescape_document
 from galley.core.format import dump_value, format_document, load_document
 from galley.core.formats import (
     FORMATS,
+    XML,
     format_for_extension,
     format_named,
     sniff_format,
@@ -196,8 +195,9 @@ def test_error_codes_with_their_lines(
         token,
     )
     problems = collect_problems(text, "xml", error)
-    assert problems == (Problem(code, line, token, column),)
+    assert problems == (Problem(code, line, token, column, found=error.found),)
     assert problems[0].colno == column
+    assert error.found == ("b" if code == "xml_mismatched_tag" else "")
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["LF", "CRLF", "CR"])
@@ -245,16 +245,19 @@ def test_an_astral_name_is_a_bad_token() -> None:
 
 
 def test_the_error_pickles_with_its_fields() -> None:
-    error = XMLSyntaxError("xml_unclosed", lineno=4, colno=2, token="b")
+    error = XMLSyntaxError(
+        "xml_mismatched_tag", lineno=4, colno=2, token="b", found="c"
+    )
     copy = pickle.loads(pickle.dumps(error))
     assert isinstance(copy, XMLSyntaxError)
-    assert (copy.code, copy.lineno, copy.colno, copy.token) == (
-        "xml_unclosed",
+    assert (copy.code, copy.lineno, copy.colno, copy.token, copy.found) == (
+        "xml_mismatched_tag",
         4,
         2,
         "b",
+        "c",
     )
-    assert str(copy) == "xml_unclosed"
+    assert str(copy) == "xml_mismatched_tag"
 
 
 # --- Depth ----------------------------------------------------------------
@@ -291,22 +294,22 @@ def test_a_hundred_thousand_levels_raise_too_deep_not_recursion_error() -> None:
 # --- The format table -------------------------------------------------------
 
 
-def test_xml_stays_out_of_the_table_until_slice_3() -> None:
-    # The pickers, the status reserve, and Open all read FORMATS.
-    assert [fmt.name for fmt in FORMATS] == ["json", "yaml"]
-    assert format_for_extension(".xml") is None
-    assert sniff_format('<?xml version="1.0"?>\n<a/>') is None
-    assert detect_format(Path("a.xml"), "<a/>") is None
-    with pytest.raises(ValueError, match="Unsupported format: xml"):
-        format_document("<a/>", "xml", "xml")
+@pytest.mark.parametrize("suffix", [".xml", ".XSD", ".xsl", ".xslt", ".svg", ".xhtml"])
+def test_open_maps_xml_extensions(suffix: str) -> None:
+    assert format_for_extension(suffix) is XML
+    assert detect_format(Path(f"feed{suffix}"), "{}") == "XML"
 
 
-def test_with_the_slice_3_row_format_document_formats_xml(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    add_xml_row(monkeypatch)
-    assert format_named("XML") is XML_ROW
-    assert targets_for("xml") == (XML_ROW,)
+def test_xml_is_the_third_row_and_targets_only_itself() -> None:
+    assert [fmt.label for fmt in FORMATS] == ["JSON", "YAML", "XML"]
+    assert format_named("XML") is XML
+    assert not XML.loads_to_value
+    assert targets_for("xml") == (XML,)
+    assert sniff_format('\n<?xml version="1.0"?>\n<a/>') is XML
+    assert detect_format(Path("notes.txt"), "<a/>") == "XML"
+
+
+def test_format_document_formats_xml() -> None:
     text = _read("element_only.xml")
     assert format_document(text, "xml", "XML") == format_xml(text)
     assert _scan_folds(format_xml(text), "xml") == b""
@@ -319,10 +322,9 @@ _UNSORTED_XML = (
 )
 
 
-def test_sort_keys_leaves_xml_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sort_keys_leaves_xml_unchanged() -> None:
     # Sort keys orders JSON and YAML keys only. XML keeps attribute and
     # element order exactly as written, whatever the toggle says.
-    add_xml_row(monkeypatch)
     plain = format_document(_UNSORTED_XML, "xml", "xml")
     assert plain == format_xml(_UNSORTED_XML)
     assert format_document(_UNSORTED_XML, "xml", "xml", sort_keys=True) == plain
@@ -332,16 +334,12 @@ def test_sort_keys_leaves_xml_unchanged(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.parametrize(("source", "target"), [("xml", "json"), ("json", "xml")])
-def test_xml_does_not_convert(
-    monkeypatch: pytest.MonkeyPatch, source: str, target: str
-) -> None:
-    add_xml_row(monkeypatch)
+def test_xml_does_not_convert(source: str, target: str) -> None:
     with pytest.raises(ValueError, match="Can't write"):
         format_document("<a/>", source, target)
 
 
-def test_xml_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    add_xml_row(monkeypatch)
+def test_xml_does_not_load_to_a_value() -> None:
     for call in (
         lambda: load_document("<a/>", "xml"),
         lambda: diff_load_document("<a/>", "xml"),
@@ -357,10 +355,7 @@ def test_xml_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
     ("left", "right", "side"),
     [("xml", "json", "left"), ("json", "XML", "right"), ("xml", "xml", "left")],
 )
-def test_run_compare_rejects_xml(
-    monkeypatch: pytest.MonkeyPatch, left: str, right: str, side: str
-) -> None:
-    add_xml_row(monkeypatch)
+def test_run_compare_rejects_xml(left: str, right: str, side: str) -> None:
     job = CompareJob(7, "<a/>", left, "{}", right)
     event = run_compare(job)
     assert isinstance(event, CompareFailureEvent)
