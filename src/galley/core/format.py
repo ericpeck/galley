@@ -494,15 +494,22 @@ def _dump_yaml(value: object) -> str:
     never edited after either emitter writes it.
     """
     if _clib_available():
-        yaml = _block_dumper(_safe_yaml(pure=False), _CBlockRepresenter)
-        buffer = StringIO()
         try:
-            yaml.dump(value, buffer)
+            return _c_emitter_dump(value)
         except _NeedsPureEmitter:
             pass
-        else:
-            return buffer.getvalue()
     return _dump_parsed(value, pure=True)
+
+
+def _c_emitter_dump(value: object) -> str:
+    """Dump ``value`` with the C emitter, or raise ``_NeedsPureEmitter``.
+
+    It raises before anything is written. Needs ``ruamel.yaml.clib``.
+    """
+    yaml = _block_dumper(_safe_yaml(pure=False), _CBlockRepresenter)
+    buffer = StringIO()
+    yaml.dump(value, buffer)
+    return buffer.getvalue()
 
 
 def _has_tab(text: str | bytes) -> bool:

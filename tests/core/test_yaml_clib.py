@@ -4,7 +4,6 @@ import os
 import random
 import warnings
 from datetime import date, datetime
-from io import StringIO
 
 import pytest
 import ruamel.yaml.main as ruamel_main
@@ -968,20 +967,11 @@ def _compare_emitters(count: int) -> int:
         expected = format_module._dump_parsed(value, pure=True)
         assert format_module._dump_yaml(value) == expected, value
         try:
-            _c_emitter_text(value)
+            format_module._c_emitter_dump(value)
         except format_module._NeedsPureEmitter:
             continue
         written_by_c += 1
     return written_by_c
-
-
-def _c_emitter_text(value: object) -> str:
-    yaml = format_module._block_dumper(
-        format_module._safe_yaml(pure=False), format_module._CBlockRepresenter
-    )
-    buffer = StringIO()
-    yaml.dump(value, buffer)
-    return buffer.getvalue()
 
 
 def test_c_emitter_writes_the_pure_emitter_bytes() -> None:

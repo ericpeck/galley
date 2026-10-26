@@ -10,11 +10,13 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 
 import pytest
 import ruamel.yaml.main as ruamel_main
 from ruamel.yaml import YAML
 from tests.core.mask_rows import pretty_json, text_of_size
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
 from galley.core.errors import InputError, NotJSONValueError
@@ -302,8 +304,8 @@ def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
         pytest.skip("the 1.5 s budget is for macOS arm64")
     if not format_module._clib_available():
         pytest.skip("the 1.5 s budget is for the C emitter")
-    text, _rows = text_of_size(_JSON_TO_YAML_BYTES, pretty_json)
-    assert _JSON_TO_YAML_BYTES <= len(text.encode("utf-8")) < 2_500_000
+    text = _json_to_yaml_fixture()
+    assert_c_emitter_writes(json.loads(text))
     expected = format_module._dump_parsed(json.loads(text), pure=True)
     assert format_document(text, "json", "yaml") == expected
     perf_budget.within(
@@ -311,3 +313,75 @@ def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
         lambda: format_document(text, "json", "yaml"),
         fixture="2.4 MB pretty JSON, fake customer rows, to YAML",
     )
+
+
+def _json_to_yaml_fixture() -> str:
+    text, _rows = text_of_size(_JSON_TO_YAML_BYTES, pretty_json)
+    assert _JSON_TO_YAML_BYTES <= len(text.encode("utf-8")) < 2_500_000
+    return text
+
+
+def test_the_2_4_mb_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    assert_c_emitter_writes(json.loads(_json_to_yaml_fixture()))
+
+
+# A value the C emitter can't match is written by the pure emitter, byte for
+# byte what ``main`` wrote before #115. These texts are main's output at
+# c13cd80, written by its pure emitter.
+_LONG_KEY = "k" * 123
+_PURE_PATH_DOCUMENTS = (
+    (
+        {"emoji": "Order shipped 📦", "note": "it's done"},
+        "emoji: Order shipped 📦\nnote: it's done\n",
+    ),
+    (
+        {"data": b"fake attachment bytes", "name": "Ann"},
+        "data: !!binary |\n  ZmFrZSBhdHRhY2htZW50IGJ5dGVz\nname: Ann\n",
+    ),
+    ({_LONG_KEY: 1, "name": "Ann"}, f"? {_LONG_KEY}\n: 1\nname: Ann\n"),
+    (
+        {
+            "emoji": "Order shipped 📦 👍🏽",
+            "data": b"fake attachment bytes",
+            _LONG_KEY: "a key the two emitters count differently",
+            "nested": {
+                "note": "it's done",
+                "lines": "first\nsecond",
+                "day": date(2026, 10, 26),
+            },
+            "items": [1, 2.5, None, True, "plain"],
+        },
+        "emoji: Order shipped 📦 👍🏽\n"
+        "data: !!binary |\n"
+        "  ZmFrZSBhdHRhY2htZW50IGJ5dGVz\n"
+        f"? {_LONG_KEY}\n"
+        ": a key the two emitters count differently\n"
+        "nested:\n"
+        "  note: it's done\n"
+        '  lines: "first\\nsecond"\n'
+        "  day: 2026-10-26\n"
+        "items:\n"
+        "- 1\n"
+        "- 2.5\n"
+        "- null\n"
+        "- true\n"
+        "- plain\n",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    _PURE_PATH_DOCUMENTS,
+    ids=["astral", "binary", "long-key", "all-three"],
+)
+def test_pure_path_documents_keep_mains_bytes(
+    engine: str, value: object, expected: str
+) -> None:
+    if engine == "c":
+        with pytest.raises(format_module._NeedsPureEmitter):
+            format_module._c_emitter_dump(value)
+    assert format_module._dump_yaml(value) == expected
+    assert format_module.dump_value(value, "yaml") == expected

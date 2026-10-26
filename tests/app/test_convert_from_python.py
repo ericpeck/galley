@@ -6,8 +6,11 @@ import pytest
 from benchmarks.size_bench import render_python_literal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QPushButton, QToolButton
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.app.main_window as main_window_module
+import galley.core.convert_python as convert_python_module
+import galley.core.format as format_module
 from galley.app.editor import CodeEditor
 from galley.app.escape_string import convert_python_too_large_message
 from galley.app.limits import PYTHON_TO_JSON_BYTES, PYTHON_TO_YAML_BYTES
@@ -275,10 +278,36 @@ def test_convert_at_the_limit_is_within_budget(perf_budget, target, limit) -> No
     # Showing the result in Output costs the same as after a Format.
     text = render_python_literal(limit)
     assert isinstance(convert_python(text, target), ConvertResult)
+    if target == "YAML":
+        assert_c_emitter_writes(_converted_value(text))
     perf_budget.within(
         _CONVERT_BUDGET_S,
         lambda: convert_python(text, target),
         fixture=f"{si_size(limit)} plain-catalog Python literal to {target}",
+    )
+
+
+def _converted_value(text: str) -> object:
+    """The value Convert from Python hands to the YAML writer for ``text``."""
+    seen: list[object] = []
+    real = convert_python_module._dump_yaml_value
+
+    def capture(value: object) -> str:
+        seen.append(value)
+        return real(value)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(convert_python_module, "_dump_yaml_value", capture)
+        assert isinstance(convert_python(text, "YAML"), ConvertResult)
+    assert len(seen) == 1
+    return seen[0]
+
+
+def test_the_python_to_yaml_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    assert_c_emitter_writes(
+        _converted_value(render_python_literal(PYTHON_TO_YAML_BYTES))
     )
 
 

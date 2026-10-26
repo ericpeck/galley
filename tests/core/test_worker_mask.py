@@ -26,6 +26,7 @@ from tests.core.mask_rows import (
     text_of_size,
     yaml_text,
 )
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
 import galley.core.worker as worker_module
@@ -852,8 +853,9 @@ _JOB_JSON_BUDGET_S = 0.7
 # 0.2 s per MB), rounded up.
 _JOB_YAML_BUDGET_S = 0.6
 # Windows only, for the same job: the Windows runner is slower. Isaac's
-# number, set from that runner's measurement.
-_JOB_YAML_WINDOWS_BUDGET_S = 1.6
+# rule from #108, the worst Windows CI median plus 25%: 567 ms x 1.25,
+# rounded up.
+_JOB_YAML_WINDOWS_BUDGET_S = 0.8
 _JOB_YAML_BUDGET_HERE_S = (
     _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S
 )
@@ -886,6 +888,8 @@ def test_a_masked_format_job_is_within_budget(
     assert size <= len(text.encode("utf-8")) < size * 11 // 10
     if render is one_line:
         assert "\n" not in text
+    if source == "yaml":
+        assert_c_emitter_writes(_masked_value(text))
     job = _job(text, source)
     with _WarmWorker() as worker:
         success = worker.run(job)
@@ -907,6 +911,18 @@ def test_masking_1_mb_with_the_default_keys_is_within_budget(perf_budget) -> Non
         lambda: mask_tree(value),
         fixture="1 MB JSON, default keys, mask_tree only",
     )
+
+
+def _masked_value(text: str) -> object:
+    """The value the masked YAML job writes for ``text``."""
+    return mask_tree(format_module.load_document(text, "yaml")).value
+
+
+def test_the_masked_yaml_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    text, _rows = text_of_size(YAML_BUSY_BYTES, yaml_text)
+    assert_c_emitter_writes(_masked_value(text))
 
 
 # Helpers
