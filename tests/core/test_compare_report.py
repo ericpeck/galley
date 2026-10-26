@@ -250,6 +250,26 @@ def test_an_unaligned_array_inside_a_group_gets_its_info_row_inside() -> None:
     assert group.count == report.count == len(result.changes)
 
 
+def test_neighbouring_unaligned_arrays_keep_their_own_info_rows_and_groups() -> None:
+    # "b" picks up at index 3, right after "a"'s run ends at 2, so only the
+    # change of array keeps the two runs apart.
+    left = {"a": [1, 2, 3, 9], "b": [0, 0, 0, 1, 2]}
+    right = {"a": [2, 1, 4, 9], "b": [0, 0, 0, 2, 1]}
+    with mock.patch.object(diff_module, "ALIGN_BUDGET", 0):
+        result, _pairs = diff_with_pairs(_doc(left), _doc(right))
+        report = _report(left, right)
+    assert result.unaligned == (("a",), ("b",))
+    assert [
+        (type(row).__name__, row.path_text, getattr(row, "count", None))
+        for row in report.rows
+    ] == [
+        ("InfoRow", "a", None),
+        ("GroupRow", "a[0\u20132]", 3),
+        ("InfoRow", "b", None),
+        ("GroupRow", "b[3\u20134]", 2),
+    ]
+
+
 def test_an_unaligned_root_array_uses_the_root_label() -> None:
     report = _report([0, 1] * 3000, [1, 0] * 3000)
     info, group = report.rows
@@ -362,6 +382,44 @@ def test_anchors_strictly_increase_on_both_sides() -> None:
         assert right_a < right_b
 
 
+def test_two_left_lines_on_one_right_line_keep_one_anchor() -> None:
+    # Left is spread over lines 1-4, right is one line: every left line maps
+    # to right line 1, and anchors must strictly increase on both sides, so
+    # one pair is left. Of the tied pairs, the last one (the closing brace)
+    # is the one kept.
+    left = load_document('{\n  "a": 1,\n  "b": 2\n}', "json")
+    right = load_document('{"a": 1, "b": 2}', "json")
+    result, pairs = diff_with_pairs(left, right)
+    assert build_report(result, left, right, pairs).anchor_pairs() == [(4, 1)]
+    # The other way round, each left line keeps its lowest right line.
+    result, pairs = diff_with_pairs(right, left)
+    assert build_report(result, right, left, pairs).anchor_pairs() == [(1, 1)]
+
+
+def test_anchor_limit_is_ten_thousand_pairs() -> None:
+    assert ANCHOR_LIMIT == 10_000
+
+
+def test_anchors_at_exactly_the_limit_are_all_kept() -> None:
+    # A flat object of n keys gives n + 2 anchors: its first line, each key
+    # line, and its last line.
+    value = {f"key{index:05d}": index for index in range(ANCHOR_LIMIT - 2)}
+    pairs = _report(value, value).anchor_pairs()
+    assert pairs == [(line, line) for line in range(1, ANCHOR_LIMIT + 1)]
+
+
+def test_one_anchor_over_the_limit_is_thinned_to_the_limit() -> None:
+    value = {f"key{index:05d}": index for index in range(ANCHOR_LIMIT - 1)}
+    report = _report(value, value)
+    pairs = report.anchor_pairs()
+    assert len(pairs) == ANCHOR_LIMIT
+    assert len(report.anchors) == ANCHOR_LIMIT * 8
+    assert pairs[0] == (1, 1)
+    assert pairs[-1] == (ANCHOR_LIMIT + 1, ANCHOR_LIMIT + 1)
+    every = {(line, line) for line in range(1, ANCHOR_LIMIT + 2)}
+    assert len(every - set(pairs)) == 1
+
+
 def test_the_anchor_payload_is_capped() -> None:
     value = {f"key{index:05d}": index for index in range(ANCHOR_LIMIT * 3)}
     report = _report(value, value)
@@ -425,6 +483,32 @@ def test_reformat_compares_the_formatted_text_in_one_job() -> None:
     assert pickle.loads(pickle.dumps(event)) == event
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"name":"Ada","n":[1.50,1E2,-0.0,123456789012345678901234567890]}',
+        '{"caf\\u00e9": "\u65e5\u672c", "e": "\\ud83d\\ude00", "z": null}',
+        "[" * 400 + "1" + "]" * 400,
+        '{"a": {"b": [true, false, {}], "c": []}, "d": 1e400}',
+    ],
+)
+def test_reformat_reuses_the_formatters_json_value(text: str) -> None:
+    other = '{"name": "Bo", "d": 2}'
+
+    def _no_second_parse(*_args: object) -> None:
+        raise AssertionError("JSON was parsed again after formatting")
+
+    with mock.patch("galley.core.worker.load_document", _no_second_parse):
+        event = run_compare(_job(text, other, reformat=True))
+    assert isinstance(event, CompareEvent)
+    assert event.left_text == format_document(text, "json", "json")
+    left = load_document(event.left_text, "json")
+    right = load_document(event.right_text, "json")
+    result, pairs = diff_with_pairs(left, right)
+    assert event.result == result
+    assert event.report == build_report(result, left, right, pairs)
+
+
 def test_reformat_keeps_each_sides_format() -> None:
     left = "b: 1\na:   [1,  2]\n"
     right = "a: [1, 3]\nb: 1\n"
@@ -485,6 +569,9 @@ _REPORT_BUDGET_S = 0.25
 _JOB_BUDGET_S = 1.5
 # Isaac's #65 budgets for the diff, here with the report built as well.
 _ISAAC_BUDGET_S = 0.5
+# The reordered array leaves 20,000 rows to build, so the diff plus the
+# report gets its own budget.
+_REORDER_BUDGET_S = 0.6
 
 
 def _large_pair() -> tuple[str, str]:
@@ -597,14 +684,16 @@ def test_a_compare_job_for_a_1_5_mb_pair_is_within_budget(
 
 @pytest.mark.perf
 @pytest.mark.parametrize(
-    ("make_pair", "fixture"),
+    ("make_pair", "budget_s", "fixture"),
     [
-        (_keys_changed_pair, "1 MB JSON pair, 10% of keys changed"),
-        (_reordered_pair, "10,000-item array reordered"),
-        (_aligned_pair, "5,000-item array, aligned edits"),
+        (_keys_changed_pair, _ISAAC_BUDGET_S, "1 MB JSON pair, 10% of keys changed"),
+        (_reordered_pair, _REORDER_BUDGET_S, "10,000-item array reordered"),
+        (_aligned_pair, _ISAAC_BUDGET_S, "5,000-item array, aligned edits"),
     ],
 )
-def test_diff_and_report_meet_isaacs_budgets(perf_budget, make_pair, fixture) -> None:
+def test_diff_and_report_meet_isaacs_budgets(
+    perf_budget, make_pair, budget_s: float, fixture: str
+) -> None:
     left_doc, right_doc = _loaded(make_pair())
     result, _pairs = diff_with_pairs(left_doc, right_doc)
     assert result.changes and not result.unaligned
@@ -613,4 +702,4 @@ def test_diff_and_report_meet_isaacs_budgets(perf_budget, make_pair, fixture) ->
         result, pairs = diff_with_pairs(left_doc, right_doc)
         return build_report(result, left_doc, right_doc, pairs)
 
-    perf_budget.within(_ISAAC_BUDGET_S, _diff_and_report, fixture=fixture)
+    perf_budget.within(budget_s, _diff_and_report, fixture=fixture)

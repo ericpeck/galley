@@ -25,7 +25,13 @@ from ruamel.yaml.constructor import DuplicateKeyError
 from ruamel.yaml.error import MarkedYAMLError
 
 from galley.core.compare_report import CompareReport, build_report
-from galley.core.diff import DiffResult, diff_with_pairs, load_document
+from galley.core.diff import (
+    DiffResult,
+    Doc,
+    _json_spans,
+    diff_with_pairs,
+    load_document,
+)
 from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
@@ -554,10 +560,13 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
         if early:
             return CompareFailureEvent(job.job_id, side, "", None, early)
         try:
-            shown = format_document(text, source, source) if job.reformat else text
-            docs.append(load_document(shown, source))
+            if job.reformat:
+                shown, doc = _reformatted(text, source)
+            else:
+                shown, doc = text, load_document(text, source)
         except Exception as exc:
             return _compare_failure(job.job_id, side, text, source, exc)
+        docs.append(doc)
         texts.append(shown)
     if job.hold_s > 0:
         time.sleep(job.hold_s)
@@ -570,6 +579,27 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
     if not job.reformat:
         return CompareEvent(job.job_id, result, report)
     return CompareEvent(job.job_id, result, report, texts[0], texts[1])
+
+
+def _reformatted(text: str, source: str) -> tuple[str, Doc]:
+    """Format ``text`` in its own format, then locate the formatted values.
+
+    JSON keeps the value the formatter loaded and only scans the formatted
+    text for spans, so it is not parsed a second time; the result equals
+    ``load_document`` of the formatted text. YAML spans come from the full
+    parse, so YAML loads the formatted text. Keys are never sorted.
+    """
+    if format_named(source).name != "json":
+        shown = format_document(text, source, source)
+        return shown, load_document(shown, source)
+    loaded: list[object] = []
+
+    def _keep(value: object) -> object:
+        loaded.append(value)
+        return value
+
+    shown = format_document(text, source, source, prepare=_keep)
+    return shown, Doc(loaded[0], "json", _json_spans(shown))
 
 
 def _not_comparable(source: str) -> str | None:
