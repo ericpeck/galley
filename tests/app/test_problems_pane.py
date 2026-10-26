@@ -179,6 +179,20 @@ def test_missing_comma_pane_jumps_and_status_is_only_a_count(qtbot) -> None:
     assert close.toolTip() == "Close"
 
 
+def test_a_yaml_row_names_its_column_and_the_jump_goes_there(qtbot) -> None:
+    window = _show(qtbot)
+    status = _format(qtbot, window, "name: Pat Example\nnote: a: b\n", source="YAML")
+    _wait_status(qtbot, status, "1 problem")
+    pane = _pane(window)
+    qtbot.waitUntil(lambda: pane.isVisible() and pane.lines() == [2], timeout=15000)
+    row = pane.list_widget().itemWidget(pane.list_widget().item(0))
+    assert row is not None
+    labels = [label.text() for label in row.findChildren(QLabel)]
+    assert "Error · Line 2, Col 8" in labels
+    qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
+    assert _editor(window).cursor_place() == (2, 8)
+
+
 def test_yaml_tabs_list_every_line_and_the_repair_stays_hidden(qtbot) -> None:
     window = _show(qtbot)
     status = _format(qtbot, window, _TWO_TABS, source="YAML")
