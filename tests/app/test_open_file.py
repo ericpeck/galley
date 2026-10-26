@@ -459,7 +459,7 @@ def test_empty_input_heading_names_the_open_shortcut(qtbot) -> None:
         QKeySequence.SequenceFormat.NativeText
     )
     assert heading.text() == (
-        f"Paste JSON or YAML, or drop a file here. {shortcut} to open."
+        f"Paste JSON, YAML, XML, or HTML, or drop a file here. {shortcut} to open."
     )
 
 

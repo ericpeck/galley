@@ -39,6 +39,9 @@ from galley.app.shortcuts import (
 from galley.core.mask import CopyAsMode
 
 COMING_SOON = "Coming soon"
+# A command that doesn't apply to the Input format is greyed out with this
+# tooltip and status tip (B2 on #63), for example "Not available for XML".
+NOT_AVAILABLE = "Not available for {label}"
 
 # Menu order: menu bar, then the toolbar, then the tab menu.
 # Delete a name here to ship that command. Do not keep a second list.
@@ -186,6 +189,37 @@ def coming_soon_wrapper(control: QWidget, action: QAction) -> QWidget:
     row.setSpacing(0)
     row.addWidget(control)
     return host
+
+
+def not_available_text(label: str) -> str:
+    """The tooltip of a command that doesn't apply to format ``label``."""
+    return NOT_AVAILABLE.format(label=label)
+
+
+def set_not_available(action: QAction, reason: str) -> None:
+    """Show why ``action`` is greyed out, or "" for its usual tips.
+
+    The reason is the tooltip and the status tip, which the macOS menu bar
+    shows instead of a tooltip. The action's own tips come back with "".
+    The caller enables and disables the action.
+    """
+    if action.property("readyToolTip") is None:
+        tip = action.toolTip()
+        action.setProperty("readyToolTip", "" if tip == action.text() else tip)
+        action.setProperty("readyStatusTip", action.statusTip())
+    action.setProperty("notAvailable", reason)
+    if reason:
+        action.setToolTip(reason)
+        action.setStatusTip(reason)
+        return
+    action.setToolTip(action.property("readyToolTip"))
+    action.setStatusTip(action.property("readyStatusTip"))
+
+
+def not_available_reason(action: QAction) -> str:
+    """Why ``action`` is greyed out for this document, or ""."""
+    reason = action.property("notAvailable")
+    return reason if isinstance(reason, str) else ""
 
 
 def _mark_coming_soon(action: QAction, name: str) -> None:

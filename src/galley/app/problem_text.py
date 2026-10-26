@@ -56,7 +56,48 @@ def message_for(problem: Problem) -> str:
         return f"Missing colon after the key on line {line}."
     if code == "yaml_other":
         return f"Couldn't read this YAML on line {line}."
+    if code.startswith("xml_"):
+        return _xml_text(problem)
     assert_never(code)
+
+
+def _xml_text(problem: Problem) -> str:
+    """The sentence for an ``xml_*`` problem (#63, Bill's B4 wording)."""
+    line = problem.lineno
+    name = _xml_name(problem.token)
+    code = problem.code
+    if code == "xml_mismatched_tag":
+        closing = _xml_name(problem.found)
+        return f"Line {line} closes </{closing}>, but <{name}> is still open."
+    if code == "xml_unclosed":
+        return f"<{name}> opened on line {line} is never closed."
+    if code == "xml_entity_declared":
+        return f"Galley doesn't load DTD entities. Remove the <!ENTITY> on line {line}."
+    if code == "xml_undefined_entity":
+        return f"Unknown entity &{name}; on line {line}."
+    if code == "xml_duplicate_attribute":
+        return f"Attribute {name} appears twice in this tag."
+    if code == "xml_unbound_prefix":
+        return f"Prefix {name} isn't declared. Add an xmlns:{name} attribute."
+    if code == "xml_after_root":
+        return (
+            f"Text after the root element on line {line}. XML allows one root element."
+        )
+    if code == "xml_no_root":
+        return "There's no root element."
+    if code == "xml_bad_token":
+        return (
+            f"Unexpected character on line {line}. "
+            "Write < as &lt; and & as &amp; in text."
+        )
+    return f"Couldn't read this XML on line {line}."
+
+
+def _xml_name(name: str) -> str:
+    """An element, attribute, entity, or prefix name, cut like a long key."""
+    if len(name) > KEY_DISPLAY_LIMIT:
+        return name[:KEY_DISPLAY_LIMIT] + "…"
+    return name
 
 
 def _duplicate_key_text(key: str, line: int) -> str:

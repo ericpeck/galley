@@ -281,5 +281,6 @@ def test_format_pickers_keep_their_items(qtbot) -> None:
     assert [picker.itemText(index) for index in range(picker.count())] == [
         "JSON",
         "YAML",
+        "XML",
     ]
     assert pop.accessibleName() == "Pop out into window"
