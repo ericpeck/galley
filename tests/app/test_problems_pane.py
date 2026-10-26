@@ -1,5 +1,7 @@
 """Problems pane, gutter markers, and plain errors in the window."""
 
+import re
+
 import pytest
 from PySide6.QtCore import QPoint, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import (
@@ -29,7 +31,9 @@ from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style
 from galley.app.tab_repair import replace_leading_tabs
 from galley.app.theme import ERROR, error_color, selected_problem_palette
+from galley.core.mask import MaskRules
 from galley.core.problems import Problem
+from galley.core.worker import FailureEvent, FormatJob, _execute
 
 _MISSING = '{\n  "price": 4.5\n  "qty": 3\n}\n'
 _TWO_TABS = "a:\n\tb: 1\n\tc: 2\n"
@@ -177,6 +181,82 @@ def test_missing_comma_pane_jumps_and_status_is_only_a_count(qtbot) -> None:
     assert minimize.toolTip() == "Minimize"
     assert close.accessibleName() == "Close"
     assert close.toolTip() == "Close"
+
+
+def test_a_yaml_row_names_its_column_and_the_jump_goes_there(qtbot) -> None:
+    window = _show(qtbot)
+    status = _format(qtbot, window, "name: Pat Example\nnote: a: b\n", source="YAML")
+    _wait_status(qtbot, status, "1 problem")
+    pane = _pane(window)
+    qtbot.waitUntil(lambda: pane.isVisible() and pane.lines() == [2], timeout=15000)
+    row = pane.list_widget().itemWidget(pane.list_widget().item(0))
+    assert row is not None
+    labels = [label.text() for label in row.findChildren(QLabel)]
+    assert "Error · Line 2, Col 8" in labels
+    qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
+    assert _editor(window).cursor_place() == (2, 8)
+
+
+def test_a_moved_yaml_row_names_only_its_line_and_jumps_to_its_start(qtbot) -> None:
+    # "expected ',' or ']'" stops on line 4; the row moves back to line 2,
+    # where the parser's column means nothing, so it names the line alone.
+    window = _show(qtbot)
+    text = "name: Pat Example\nlist: [a, b\n\n"
+    status = _format(qtbot, window, text, source="YAML")
+    _wait_status(qtbot, status, "1 problem")
+    pane = _pane(window)
+    qtbot.waitUntil(lambda: pane.isVisible() and pane.lines() == [2], timeout=15000)
+    row = pane.list_widget().itemWidget(pane.list_widget().item(0))
+    assert row is not None
+    labels = [label.text() for label in row.findChildren(QLabel)]
+    assert "Error · Line 2" in labels
+    assert not any("Col" in label for label in labels)
+    qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
+    assert _editor(window).cursor_place() == (2, 1)
+
+
+class _Events(list):
+    def put(self, event: object) -> None:
+        self.append(event)
+
+
+_BANNER_PLACE = re.compile(r" at line (\d+)(?:, column (\d+))?$")
+_ROW_PLACE = re.compile(r"^Error · Line (\d+)(?:, Col (\d+))?$")
+
+
+@pytest.mark.parametrize(
+    ("text", "place"),
+    [
+        ("name: Pat Example\n  pin: 1234\n", ("2", "6")),
+        ("name: [Pat Example, }\n", ("1", "21")),
+        ("name: Pat Example\nname: Sam Example\n", ("2", "1")),
+        ("name: Pat Example\nlist: [a, b\n\n", ("2", None)),
+    ],
+    ids=["scanner", "parser", "duplicate-key", "moved-line"],
+)
+def test_a_masked_yaml_banner_names_the_first_rows_place(
+    qtbot, text: str, place: tuple[str, str | None]
+) -> None:
+    events = _Events()
+    _execute(FormatJob(1, text, "yaml", "yaml", mask=MaskRules()), events)
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.set_problems(tuple(display_problem(p) for p in failure.problems))
+    row = pane.list_widget().itemWidget(pane.list_widget().item(0))
+    assert row is not None
+    places = [
+        found.groups()
+        for label in row.findChildren(QLabel)
+        if (found := _ROW_PLACE.match(label.text()))
+    ]
+    assert len(places) == 1
+    banner = _BANNER_PLACE.search(failure.message)
+    assert banner is not None, failure.message
+    assert banner.groups() == places[0] == place
+    for value in ("Pat Example", "Sam Example", "1234"):
+        assert value not in failure.message
 
 
 def test_yaml_tabs_list_every_line_and_the_repair_stays_hidden(qtbot) -> None:
