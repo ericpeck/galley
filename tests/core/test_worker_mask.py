@@ -851,9 +851,8 @@ _JOB_JSON_BUDGET_S = 0.7
 # The 0.5 s Convert budget at 192 KB plus about 0.05 s of masking (192 KB at
 # 0.2 s per MB), rounded up.
 _JOB_YAML_BUDGET_S = 0.6
-# Windows only, for the same job: Windows has no ruamel.yaml.clib, so the
-# pure-Python emitter writes the YAML. Isaac's number, set from the Windows
-# runner's measurement.
+# Windows only, for the same job: the Windows runner is slower. Isaac's
+# number, set from that runner's measurement.
 _JOB_YAML_WINDOWS_BUDGET_S = 1.6
 _JOB_YAML_BUDGET_HERE_S = (
     _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S

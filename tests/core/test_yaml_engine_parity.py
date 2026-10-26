@@ -297,7 +297,9 @@ _JSON_TO_YAML_BUDGET_S = 1.5
 
 @pytest.mark.perf
 def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
-    """macOS arm64, which has ruamel.yaml.clib. Windows writes with pure Python."""
+    """#115's budget is for macOS arm64 with ruamel.yaml.clib, as Galley ships."""
+    if sys.platform != "darwin":
+        pytest.skip("the 1.5 s budget is for macOS arm64")
     if not format_module._clib_available():
         pytest.skip("the 1.5 s budget is for the C emitter")
     text, _rows = text_of_size(_JSON_TO_YAML_BYTES, pretty_json)
