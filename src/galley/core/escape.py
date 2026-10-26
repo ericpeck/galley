@@ -17,19 +17,23 @@ Nothing here runs the text. Both directions use ``json`` and the formatter.
 import json
 from typing import Literal
 
-from galley.core.errors import DuplicateKey, InputError, JSONDuplicateKeyError
+from galley.core.errors import (
+    DuplicateKey,
+    InputError,
+    JSONDuplicateKeyError,
+    NotJSONValueError,
+)
 from galley.core.format import (
-    _load_rendered_yaml,
-    _normalize_format,
+    _value_format,
     format_document,
-    format_yaml,
     load_document,
+    yaml_json_value,
 )
 
 UnescapeKind = Literal["not_string", "not_json", "duplicate_key"]
 
 
-class EscapeError(Exception):
+class EscapeError(NotJSONValueError):
     """The document parsed, but JSON can't hold one of its values.
 
     YAML can load a date, binary data, a set, a non-scalar key, or an alias
@@ -60,13 +64,14 @@ def escape_document(text: str | bytes, source: str) -> str:
     """Return ``text`` as one JSON string literal holding its compact JSON.
 
     ``source`` is ``json`` or ``yaml``. The text passes the same checks as
-    Format and raises the same errors. YAML is loaded from the rendered
-    text, as Format to JSON does, so the C parser does the reload.
+    Format and raises the same errors. YAML is loaded the way Format to JSON
+    loads it, so a surrogate escape raises the same ``bad_escape`` error.
+    Any other format, such as XML, raises ``ValueError``.
     """
-    if _normalize_format(source) == "json":
+    if _value_format(source) == "json":
         value = load_document(text, "json")
     else:
-        value = _load_rendered_yaml(text, format_yaml(text))
+        value = yaml_json_value(text)
     return escape_value(value)
 
 
@@ -88,8 +93,10 @@ def unescape_document(text: str, target: str) -> str:
     Whitespace around the literal is allowed. The string's contents pass
     the same checks Format applies to JSON, nesting depth and lone
     surrogates included, and are written the way Format writes ``target``.
+    A ``target`` that does not load to a value, such as XML, raises
+    ``ValueError``.
     """
-    _normalize_format(target)
+    _value_format(target)
     try:
         inner = json.loads(text)
     except (json.JSONDecodeError, RecursionError):

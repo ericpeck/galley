@@ -1,5 +1,8 @@
 """Time large JSON documents and check the format size gates.
 
+Large and deeply nested XML (#63) is timed by ``perf_budget`` behind the
+``perf`` marker. XML is core-only until slice 3, so it has no editor rows.
+
 The 1 MB and 2 MB fixtures are built in memory from ``random.Random`` with a
 fixed seed: nested objects and arrays, long strings, and non-ASCII text.
 Nothing large is written into the tree. Timings are printed as one table.
@@ -33,6 +36,7 @@ import json
 import random
 import time
 
+import pytest
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QPainter, QPalette
 from PySide6.QtWidgets import (
@@ -54,7 +58,9 @@ from galley.app.main_window import (
     si_size,
 )
 from galley.app.parse_session import ParseSession
+from galley.core.errors import MAX_DEPTH
 from galley.core.format import format_json
+from galley.core.xml_format import format_xml, validate_xml
 
 # SI megabytes, matching the size warning (1 MB is 1_000_000 bytes).
 _BYTES = {"1 MB": 1_000_000, "2 MB": 2_000_000}
@@ -332,6 +338,70 @@ def test_indicators_follow_the_json_size_thresholds(qtbot, monkeypatch) -> None:
     finally:
         editor.toPlainText = original  # type: ignore[method-assign]
         window.shutdown_parse_worker()
+
+
+def _xml_items(target: int, seed: int = FIXTURE_SEED) -> str:
+    """At least ``target`` UTF-8 bytes of XML from the seeded items.
+
+    Notes and titles are text-only elements, ``child`` nests one level, and
+    every item carries an attribute and a comment.
+    """
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>\n<stress kind="galley">\n']
+    size = _utf8_len(parts[0])
+    count = 0
+    while size < target:
+        count = max(count * 2, 256)
+        parts = parts[:1]
+        size = _utf8_len(parts[0])
+        for item in _items(count, seed):
+            child = item["child"]
+            tags = "".join(f"<tag>{tag}</tag>" for tag in item["tags"])
+            rendered = (
+                f'<item id="{item["id"]}" ok="{item["ok"]}">'
+                f"<!-- n {item['n']} --><title>{item['title']} {_EMOJI}</title>"
+                f"<tags>{tags}</tags>"
+                f'<child depth="1"><label>{child["label"]}</label></child>'
+                f"<note>{item['note']}</note></item>\n"
+            )
+            parts.append(rendered)
+            size += _utf8_len(rendered)
+            if size >= target:
+                break
+    parts.append("</stress>\n")
+    return "".join(parts)
+
+
+def _xml_nested(target: int) -> str:
+    """``target`` bytes of item XML with a chain ``MAX_DEPTH`` deep in the middle.
+
+    One chain is enough to reach the limit. A file made only of such chains
+    formats to about 150 times its size, since every line is indented.
+    """
+    chain = "<n>" * (MAX_DEPTH - 1) + "x" + "</n>" * (MAX_DEPTH - 1) + "\n"
+    items = _xml_items(target - _utf8_len(chain))
+    middle = items.index("<item ", len(items) // 2)
+    return items[:middle] + chain + items[middle:]
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("shape", ["large", "deeply nested"])
+def test_large_and_deeply_nested_xml_format_within_budget(
+    perf_budget, shape: str
+) -> None:
+    """Format and validate 1 MB of XML in 0.5 s (Isaac's #63 budget).
+
+    The deeply nested fixture reaches ``MAX_DEPTH`` over and over, so the
+    explicit stacks in ``xml_format`` are what is timed.
+    """
+    size = _BYTES["1 MB"]
+    text = _xml_items(size) if shape == "large" else _xml_nested(size)
+    assert size <= _utf8_len(text) < size * 11 // 10
+
+    def format_and_validate() -> None:
+        validate_xml(text)
+        format_xml(text)
+
+    perf_budget.within(0.5, format_and_validate, fixture=f"1 MB {shape} XML")
 
 
 def _record(

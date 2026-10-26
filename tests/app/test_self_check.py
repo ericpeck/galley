@@ -1,5 +1,6 @@
-"""``--self-check`` verifies ruamel.yaml.clib and does not open a window."""
+"""``--self-check`` verifies ruamel.yaml.clib and expat, and opens no window."""
 
+import pyexpat
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from ruamel.yaml.main import CParser
 import galley.app.about as about
 import galley.app.main as main_module
 from galley.app.main import clib_self_check, main
+from galley.core import xml_format
 
 
 def _block_window(monkeypatch) -> None:
@@ -18,14 +20,18 @@ def _block_window(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "create_main_window", reject)
 
 
+_EXPAT_OK = f"expat self-check: ok {pyexpat.EXPAT_VERSION}\n"
+
+
 def _assert_real_result(code: int, output: str) -> None:
-    assert output.count("\n") == 1
+    assert output.count("\n") == 2
+    assert output.endswith(_EXPAT_OK)
     if CParser is None:
         assert code == 1
         assert output.startswith("ruamel.yaml.clib self-check: failed:")
         return
     assert code == 0
-    assert output == "ruamel.yaml.clib self-check: ok\n"
+    assert output == "ruamel.yaml.clib self-check: ok\n" + _EXPAT_OK
 
 
 def test_self_check_flag_skips_the_window(capsys, monkeypatch) -> None:
@@ -48,7 +54,19 @@ def test_self_check_failure_is_one_line(capsys, monkeypatch) -> None:
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == (
-        "ruamel.yaml.clib self-check: failed: C parser did not load\n"
+        "ruamel.yaml.clib self-check: failed: C parser did not load\n" + _EXPAT_OK
+    )
+
+
+def test_self_check_fails_on_an_expat_older_than_2_6_0(capsys, monkeypatch) -> None:
+    _block_window(monkeypatch)
+    monkeypatch.setattr(main_module, "clib_self_check", lambda: None)
+    monkeypatch.setattr(xml_format.expat, "version_info", (2, 5, 0))
+    assert main(["galley", "--self-check"]) == 1
+    assert capsys.readouterr().out == (
+        "ruamel.yaml.clib self-check: ok\n"
+        "expat self-check: failed: XML needs expat 2.6.0 or newer, "
+        "and this Python has expat 2.5.0.\n"
     )
 
 

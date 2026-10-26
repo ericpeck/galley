@@ -8,10 +8,14 @@ from galley.core.format import format_json, format_yaml
 from galley.core.problems import Problem, collect_problems, leading_tab_lines
 
 
-def _json_problem(text: str) -> Problem:
+def _json_problems(text: str) -> tuple[Problem, ...]:
     with pytest.raises(json.JSONDecodeError) as caught:
         format_json(text)
-    found = collect_problems(text, "JSON", caught.value)
+    return collect_problems(text, "JSON", caught.value)
+
+
+def _json_problem(text: str) -> Problem:
+    found = _json_problems(text)
     assert len(found) == 1
     return found[0]
 
@@ -57,7 +61,10 @@ def test_unquoted_key_points_at_the_key_line() -> None:
 
 def test_single_quotes_point_at_the_quote_line() -> None:
     assert _json_problem("{'a': 1}") == Problem("single_quotes", 1)
-    assert _json_problem("['a', 'b']") == Problem("single_quotes", 1)
+    assert _json_problems("['a', 'b']") == (
+        Problem("single_quotes", 1, colno=2),
+        Problem("single_quotes", 1, colno=7),
+    )
     text = '{\n  "a": 1,\n  "b": \'x\'\n}\n'
     assert _json_problem(text) == Problem("single_quotes", 3)
 
@@ -111,9 +118,16 @@ def test_the_most_specific_problem_wins_with_its_own_line() -> None:
         '  "tags": ["json", "yaml"\n'
         "}\n"
     )
-    assert _json_problem(text) == Problem("unquoted_key", 3)
+    assert _json_problems(text) == (
+        Problem("unquoted_key", 3),
+        Problem("single_quotes", 4),
+        Problem("missing_close", 5, "["),
+    )
     text = text.replace("version", '"version"')
-    assert _json_problem(text) == Problem("single_quotes", 4)
+    assert _json_problems(text) == (
+        Problem("single_quotes", 4),
+        Problem("missing_close", 5, "["),
+    )
     text = text.replace("'kind'", '"kind"')
     assert _json_problem(text) == Problem("missing_close", 5, "[")
 
@@ -123,10 +137,10 @@ def test_end_of_text_message_stays_when_no_bracket_is_open() -> None:
     assert _json_problem("   ") == Problem("incomplete", 1)
 
 
-def test_a_second_json_error_is_not_reported_yet() -> None:
+def test_a_second_json_error_is_reported_too() -> None:
     text = '{\n  "a": 1\n  "b": 2\n  "c": 3\n}\n'
     found = collect_problems(text, "json", _decode(text))
-    assert found == (Problem("missing_comma", 2),)
+    assert found == (Problem("missing_comma", 2), Problem("missing_comma", 3))
 
 
 def test_yaml_tab_scan_lists_every_leading_tab_and_stops() -> None:
