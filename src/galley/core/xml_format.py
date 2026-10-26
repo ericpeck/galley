@@ -303,13 +303,19 @@ def _name_at(data: bytes, index: int) -> str:
 def _line_column(data: bytes, index: int) -> tuple[int, int]:
     """1-based line and code-point column of byte ``index``.
 
-    UTF-8 continuation bytes are not counted, so each code point is one
-    column, a character past U+FFFF included.
+    LF, CRLF, and a bare CR each end one line, as expat and the editor
+    count them (#123). UTF-8 continuation bytes are not counted, so each
+    code point is one column, a character past U+FFFF included.
     """
-    line_start = data.rfind(b"\n", 0, index) + 1
+    breaks = (
+        data.count(b"\n", 0, index)
+        + data.count(b"\r", 0, index)
+        - data.count(b"\r\n", 0, index)
+    )
+    line_start = max(data.rfind(b"\n", 0, index), data.rfind(b"\r", 0, index)) + 1
     prefix = data[line_start:index]
     column = len(prefix) - len(_CONTINUATION.findall(prefix)) + 1
-    return data.count(b"\n", 0, index) + 1, column
+    return breaks + 1, column
 
 
 def _render(data: bytes, events: list[tuple[int, int]]) -> bytes:
