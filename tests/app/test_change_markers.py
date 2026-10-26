@@ -479,6 +479,13 @@ _IDENTITY_TEXT = (
 )
 
 
+# Windows CI's code font is wider than macOS's, so the long line wraps over
+# more rows there. The wide variant scales the code font up so macOS lays
+# the text out the way Windows does.
+_WIDE_CODE_POINTS = 18
+
+
+@pytest.mark.parametrize("font", ["platform font", "wide font"])
 @pytest.mark.parametrize(
     ("caret_line", "select_lines", "scroll_to"),
     [(2, 0, 0), (5, 3, 0), (601, 0, 600), (590, 4, 585)],
@@ -490,10 +497,13 @@ def test_problem_tints_are_pixel_identical_to_main(
     caret_line: int,
     select_lines: int,
     scroll_to: int,
+    font: str,
 ) -> None:
     lines = {3, 4, 6, *range(580, 610)}
 
     def place(editor: CodeEditor) -> None:
+        if font == "wide font":
+            editor.setFont(code_font(_WIDE_CODE_POINTS))
         editor.setFocus()
         cursor = QTextCursor(editor.document().findBlockByNumber(caret_line - 1))
         if select_lines:
@@ -516,7 +526,14 @@ def test_problem_tints_are_pixel_identical_to_main(
     # Neither editor blinks a caret into one grab and not the other.
     for editor in (painted, reference):
         editor.setCursorWidth(0)
-    assert painted.verticalScrollBar().value() == reference.verticalScrollBar().value()
+    # The same lines on screen at the same offset. The scroll bar's value
+    # can differ: it counts the wrapped rows of the blocks Qt has laid out,
+    # and main's bands lay out every problem line, on screen or not.
+    assert (
+        painted.firstVisibleBlock().blockNumber()
+        == reference.firstVisibleBlock().blockNumber()
+    )
+    assert painted.contentOffset() == reference.contentOffset()
     assert len(painted.extraSelections()) < len(reference.extraSelections())
 
     shot = painted.viewport().grab().toImage()
@@ -542,7 +559,7 @@ def test_select_span_uses_the_native_selection(qtbot, scheme: QPalette) -> None:
     # "b" through the closing brace; columns are characters, end exclusive.
     editor.select_span(Span(line=3, column=3, end_line=5, end_column=4))
 
-    assert editor.textCursor().selectedText() == '"b": {     "c": "😀 x"   }'
+    assert editor.textCursor().selectedText() == '"b": {\u2029    "c": "😀 x"\u2029  }'
     assert editor.cursor_place() == (3, 3)
     assert other.hasFocus()
     after = editor.viewport().grab().toImage()
