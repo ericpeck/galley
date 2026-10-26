@@ -409,6 +409,9 @@ class CodeEditor(QPlainTextEdit):
         # kept until either changes or the palette does.
         self._change_spans: tuple[tuple[int, int, ChangeKind], ...] = ()
         self._tints: dict[int, QColor] | None = None
+        # The glyph each spanned line shows when it has no marker of its own,
+        # built with the bands.
+        self._span_glyphs: dict[int, ChangeMarker] = {}
         self._overlay: QWidget | None = None
         # Folding state. Lines here are 0-based, as in FoldRange.
         self._folding = False
@@ -647,6 +650,7 @@ class CodeEditor(QPlainTextEdit):
         )
         self._tints = None
         self._highlight_current_line()
+        self._line_numbers.update()
 
     def select_span(self, span: Span) -> None:
         """Select ``span`` with the native selection and scroll to its start.
@@ -683,10 +687,23 @@ class CodeEditor(QPlainTextEdit):
                     continue
                 for kind in lane.kinds:
                     marker = self._markers.get(kind, {}).get(lineno)
+                    if marker is None and kind == CHANGE_MARKERS:
+                        marker = self._span_glyph_markers().get(lineno)
                     if marker is not None:
                         rect = QRect(left, top, width, line_height)
                         return MarkerHit(kind, lineno, marker, rect)
         return None
+
+    def _lane_markers(self, lane: GutterLane) -> list[Mapping[int, LineMarker]]:
+        """The markers ``lane`` draws, in priority order. A change span's
+        glyphs come right after the change markers."""
+        ranked: list[Mapping[int, LineMarker]] = []
+        for kind in lane.kinds:
+            if kind in self._markers:
+                ranked.append(self._markers[kind])
+            if kind == CHANGE_MARKERS and self._change_spans:
+                ranked.append(self._span_glyph_markers())
+        return ranked
 
     def syntax_mode(self) -> SyntaxMode:
         """``"JSON"`` or ``"YAML"``, the colors the editor applies."""
@@ -1117,10 +1134,7 @@ class CodeEditor(QPlainTextEdit):
         line_height = self.fontMetrics().height()
         # Kinds in priority order, so the first marker found on a line wins.
         lanes = [
-            (
-                layout.lanes[lane.name],
-                [self._markers[kind] for kind in lane.kinds if kind in self._markers],
-            )
+            (layout.lanes[lane.name], self._lane_markers(lane))
             for lane in GUTTER_LANES
             if lane.kinds and layout.lanes[lane.name][1]
         ]
@@ -1605,7 +1619,7 @@ class CodeEditor(QPlainTextEdit):
                 tint = tints.get(lineno)
                 if tint is not None:
                     block = document.findBlockByNumber(lineno - 1)
-                    selections.append(self._line_band(QTextCursor(block), tint))
+                    selections.append(self._block_band(block, tint))
         selections.extend(self._find_selections())
         self._setting_selections = True
         try:
@@ -1714,13 +1728,32 @@ class CodeEditor(QPlainTextEdit):
             self._tints = self._build_line_tints()
         return self._tints
 
+    def _span_glyph_markers(self) -> dict[int, ChangeMarker]:
+        """The change glyph for every line a change span covers.
+
+        A tint alone would tell a change's kind by color on every line
+        but the first, where its ``ChangeMarker`` is. Each spanned line
+        repeats the kind's glyph, named as the span's own marker, so the
+        kind reads by shape on every line. A line's own marker still wins.
+        """
+        self._line_tints()
+        return self._span_glyphs
+
     def _build_line_tints(self) -> dict[int, QColor]:
         palette = self.palette()
+        named = self._markers.get(CHANGE_MARKERS, {})
         spans: dict[int, QColor] = {}
+        glyphs: dict[int, ChangeMarker] = {}
         for first, last, kind in self._change_spans:
             color = change_tint(kind, palette)
+            own = named.get(first)
+            glyph = ChangeMarker(
+                kind, own.name if isinstance(own, ChangeMarker) else ""
+            )
             for lineno in range(max(first, 1), last + 1):
                 spans[lineno] = color
+                glyphs[lineno] = glyph
+        self._span_glyphs = glyphs
         tints: dict[int, QColor] = {}
         for kind in MARKER_KINDS:
             if kind == FOLD_MARKERS:
@@ -1753,6 +1786,25 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = cursor
         selection.cursor.clearSelection()
+        return selection
+
+    def _block_band(self, block: QTextBlock, color: QColor) -> QTextEdit.ExtraSelection:
+        """A band over every row of ``block``, wrapped or not.
+
+        A full-width selection with no extent bands only the row its cursor
+        is on, so a soft-wrapped line would be tinted on its first row only.
+        Selecting the whole block, line break included, bands each row it
+        spans out to the right edge. Qt skips the next block, where the
+        selection ends at position 0.
+        """
+        selection = self._line_band(QTextCursor(block), color)
+        cursor = selection.cursor
+        cursor.setPosition(
+            block.position() + block.length() - 1, QTextCursor.MoveMode.KeepAnchor
+        )
+        cursor.movePosition(
+            QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor
+        )
         return selection
 
 
@@ -1862,7 +1914,7 @@ def _gate_level(chars: int) -> int:
 
 
 def _first_marker(
-    ranked: list[dict[int, LineMarker]], lineno: int
+    ranked: Sequence[Mapping[int, LineMarker]], lineno: int
 ) -> LineMarker | None:
     for markers in ranked:
         marker = markers.get(lineno)

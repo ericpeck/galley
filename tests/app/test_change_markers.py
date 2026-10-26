@@ -80,11 +80,18 @@ def scheme(request, qapp, install_scheme) -> Iterator[QPalette]:
     return palette
 
 
+def _band_line(editor: CodeEditor, selection: QTextEdit.ExtraSelection) -> int:
+    """The 1-based line a band covers. A tint band runs on to the start of
+    the next line, so its line is where the selection starts."""
+    start = selection.cursor.selectionStart()
+    return editor.document().findBlock(start).blockNumber() + 1
+
+
 def _bands(editor: CodeEditor) -> dict[int, int]:
     """Line bands other than the current-line band, by 1-based line."""
     midlight = editor.palette().color(QPalette.ColorRole.Midlight)
     return {
-        selection.cursor.blockNumber() + 1: selection.format.background().color().rgb()
+        _band_line(editor, selection): selection.format.background().color().rgb()
         for selection in editor.extraSelections()
         if selection.format.background().color() != midlight
     }
@@ -258,6 +265,63 @@ def test_a_change_marker_draws_in_the_markers_lane(qtbot, scheme: QPalette) -> N
     assert hit.marker.description() == name
     # The marker never recolors the line number.
     assert ChangeMarker("added").number_color(scheme) is None
+
+
+def _ink_mask(editor: CodeEditor, lineno: int) -> set[tuple[int, int]]:
+    """Where the markers lane on ``lineno`` is not the gutter: the shape."""
+    lane = _lane(editor, lineno)
+    background = editor.gutter_color().rgb()
+    return {
+        (x, y)
+        for x in range(lane.width())
+        for y in range(lane.height())
+        if lane.pixelColor(x, y).rgb() != background
+    }
+
+
+def test_every_line_of_a_change_shows_its_glyph(qtbot, scheme: QPalette) -> None:
+    editor = _editor(qtbot)
+    editor.set_change_tints("left", [(2, 4, "removed"), (5, 6, "changed")])
+    removed = ChangeMarker("removed", "Removed, key2 to key4")
+    changed = ChangeMarker("changed", "Changed, key5 and key6")
+    editor.set_line_markers(CHANGE_MARKERS, {2: removed, 5: changed})
+
+    # The kind's own glyph on every line of its span, not only the first.
+    assert _lane(editor, 3) == _lane(editor, 2)
+    assert _lane(editor, 4) == _lane(editor, 2)
+    assert _lane(editor, 6) == _lane(editor, 5)
+    assert _ink_mask(editor, 4)
+    # Removed and Changed differ by shape, not only by color.
+    assert _ink_mask(editor, 4) != _ink_mask(editor, 6)
+    assert _ink_mask(editor, 7) == set()
+    # Each line names its change for the tooltip and screen readers.
+    hit = editor.marker_at(_marker_point(editor, 3))
+    assert hit is not None and hit.kind == CHANGE_MARKERS
+    assert hit.marker.description() == removed.name
+    assert editor.marker_at(_marker_point(editor, 7)) is None
+
+
+def test_a_line_inside_a_change_keeps_its_problem_marker(
+    qtbot, scheme: QPalette
+) -> None:
+    problem_only = _editor(qtbot)
+    problem_only.set_problem_messages({3: "Missing comma."})
+    editor = _editor(qtbot)
+    editor.set_change_tints("right", [(2, 4, "added")])
+    editor.set_problem_messages({3: "Missing comma."})
+
+    assert _lane(editor, 3) == _lane(problem_only, 3)
+    assert _lane(editor, 4) == _lane(editor, 2)
+    assert _ink_mask(editor, 4)
+    hit = editor.marker_at(_marker_point(editor, 3))
+    assert hit is not None and hit.kind == PROBLEM_MARKERS
+
+
+def test_a_kind_off_this_side_shows_no_glyph(qtbot) -> None:
+    editor = _editor(qtbot)
+    editor.set_change_tints("right", [(2, 4, "removed")])
+
+    assert all(_ink_mask(editor, lineno) == set() for lineno in (2, 3, 4))
 
 
 def test_a_problem_outranks_a_change_on_the_same_line(qtbot, scheme: QPalette) -> None:
@@ -682,6 +746,35 @@ def test_the_bands_follow_a_scroll_a_resize_and_a_jump(qtbot) -> None:
     assert bands[1_500] == problem_line_tint(editor.palette()).rgb()
 
 
+@pytest.mark.parametrize("under", ["changed", "problem"])
+def test_every_row_of_a_wrapped_line_is_tinted(
+    qtbot, scheme: QPalette, under: str
+) -> None:
+    text = "x\n" + " ".join(f"word{i}" for i in range(60)) + "\nx\n"
+    editor = _editor(qtbot, text, size=(420, 300))
+    assert editor.lineWrapMode() == editor.LineWrapMode.WidgetWidth
+    if under == "problem":
+        editor.set_problem_lines({2})
+        tint = problem_line_tint(editor.palette())
+    else:
+        editor.set_change_tints("left", [(2, 2, "changed")])
+        tint = change_tint("changed", editor.palette())
+    editor.setCursorWidth(0)
+    QApplication.processEvents()
+
+    block = editor.document().findBlockByNumber(1)
+    layout = block.layout()
+    assert layout.lineCount() > 2
+    top = editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
+    image = editor.viewport().grab().toImage()
+    for index in range(layout.lineCount()):
+        line = layout.lineAt(index)
+        y = int(top + layout.position().y() + line.y()) + 1
+        assert tint.rgb() in {
+            image.pixelColor(x, y).rgb() for x in range(image.width())
+        }, f"row {index + 1} of {layout.lineCount()} is not tinted"
+
+
 def test_the_bands_follow_a_fold(qtbot) -> None:
     text = (
         "{\n"
@@ -724,7 +817,11 @@ def test_the_bands_follow_an_edit_that_brings_lines_on_screen(qtbot) -> None:
 
 
 def _main_bands(editor: CodeEditor, lines: set[int]) -> None:
-    """The bands as main drew them: one extra selection per problem line."""
+    """The bands as main drew them: one extra selection per problem line.
+
+    The one deliberate change from main: a soft-wrapped problem line is
+    banded on every row, not only its first (Bill's 3b re-review).
+    """
     tint = problem_line_tint(editor.palette())
     selections: list[QTextEdit.ExtraSelection] = []
     current = editor.textCursor().blockNumber() + 1
@@ -733,7 +830,11 @@ def _main_bands(editor: CodeEditor, lines: set[int]) -> None:
         selections.append(editor._line_band(editor.textCursor(), band))
     for lineno in sorted(lines):
         block = editor.document().findBlockByNumber(lineno - 1)
-        if block.isValid():
+        if not block.isValid():
+            continue
+        if block.layout().lineCount() > 1:
+            selections.append(editor._block_band(block, tint))
+        else:
             selections.append(editor._line_band(QTextCursor(block), tint))
     editor.setExtraSelections(selections)
 
