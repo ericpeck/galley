@@ -39,8 +39,14 @@ KIND_GLYPHS: dict[ChangeKind, str] = {
 }
 # The root path's label (B3).
 ROOT_LABEL = "Whole document"
-UNALIGNED_TEXT = "{path} items: compared by position (too complex to align)."
+# Info and group rows (B4 and Bill's #108 review). Rows end without a
+# period, like the masked failure messages. Counts and ranges use
+# thousands separators.
+UNALIGNED_TEXT = "{path}: items compared by position (too complex to align)"
 GROUP_TEXT = "{path}: {count} items differ"
+# The same rows read aloud. A range says "to", not an en dash.
+UNALIGNED_SPOKEN = "{path}, items compared by position, too complex to align"
+GROUP_SPOKEN = "{path}, {first} to {last}, {count} items differ"
 
 # Most (left line, right line) pairs one report carries. Each pair packs to
 # two unsigned ints, so the payload stays under ``ANCHOR_LIMIT * 8`` bytes
@@ -88,26 +94,26 @@ class InfoRow:
 
     path_text: str
     text: str
-
-    @property
-    def accessible_name(self) -> str:
-        return self.text
+    accessible_name: str
 
 
 @dataclass(frozen=True)
 class GroupRow:
     """A run of consecutive differing indexes in an array compared by position.
 
-    ``path_text`` reads like ``users[40–212]`` and ``text`` like
-    ``users[40–212]: 173 items differ``. ``children`` holds the run's change
-    rows in engine order, plus the info row of any array inside the run that
-    was also compared by position.
+    ``path_text`` reads like ``users[40–212]``, or ``Whole document
+    [0–5,999]`` for the root, and ``text`` like ``users[40–212]: 173 items
+    differ``. ``accessible_name`` says ``users, 40 to 212, 173 items
+    differ``. ``children`` holds the run's change rows in engine order, plus
+    the info row of any array inside the run that was also compared by
+    position.
     """
 
     path_text: str
     first: int
     last: int
     text: str
+    accessible_name: str
     children: tuple["ChangeRow | InfoRow", ...]
 
     @property
@@ -118,10 +124,6 @@ class GroupRow:
     def count(self) -> int:
         """Changes in this group, for the difference count."""
         return sum(1 for child in self.children if isinstance(child, ChangeRow))
-
-    @property
-    def accessible_name(self) -> str:
-        return self.text
 
     @property
     def left_line(self) -> int | None:
@@ -252,10 +254,14 @@ def change_row(change: Change) -> ChangeRow:
 
 
 def _spoken_path(path: Path) -> str:
-    """``orders[2].total`` read aloud: ``orders 2 total``."""
+    """``orders[2].total`` read aloud: ``orders, 2, total``.
+
+    Each key stays whole, so the key ``"first name"`` and the path
+    ``first.name`` (``first, name``) sound different.
+    """
     if not path:
         return ROOT_LABEL
-    return " ".join(str(segment) for segment in path)
+    return ", ".join(str(segment) for segment in path)
 
 
 def _spoken_value(summary: Summary | None) -> str:
@@ -347,14 +353,22 @@ def _close(run: _Run | None, rows: list[ReportRow]) -> None:
     if run.first == run.last:
         rows.extend(run.items)
         return
-    path_text = f"{render_path(list(run.path))}[{run.first}–{run.last}]"
-    count = run.last - run.first + 1
+    array_text = render_path(list(run.path)) or f"{ROOT_LABEL} "
+    path_text = f"{array_text}[{run.first:,}–{run.last:,}]"
+    count = f"{run.last - run.first + 1:,}"
+    spoken = GROUP_SPOKEN.format(
+        path=_spoken_path(run.path),
+        first=f"{run.first:,}",
+        last=f"{run.last:,}",
+        count=count,
+    )
     rows.append(
         GroupRow(
             path_text=path_text,
             first=run.first,
             last=run.last,
             text=GROUP_TEXT.format(path=path_text, count=count),
+            accessible_name=spoken,
             children=tuple(run.items),
         )
     )
@@ -362,7 +376,11 @@ def _close(run: _Run | None, rows: list[ReportRow]) -> None:
 
 def _info_row(path: Path) -> InfoRow:
     path_text = render_path(list(path)) or ROOT_LABEL
-    return InfoRow(path_text, UNALIGNED_TEXT.format(path=path_text))
+    return InfoRow(
+        path_text,
+        UNALIGNED_TEXT.format(path=path_text),
+        UNALIGNED_SPOKEN.format(path=_spoken_path(path)),
+    )
 
 
 # --- Marks --------------------------------------------------------------

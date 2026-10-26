@@ -39,7 +39,7 @@ def test_a_compare_round_trip_delivers_the_diff_result(qtbot) -> None:
             ("added", "vip"),
         ]
         assert [row.accessible_name for row in event.report.rows] == [
-            "Changed, orders 0 total, 40 to 45",
+            "Changed, orders, 0, total, 40 to 45",
             "Added, vip, true",
         ]
         assert event.report.count == 2
