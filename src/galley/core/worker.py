@@ -33,7 +33,10 @@ WRITE_PROGRESS_EVERY_CHUNKS = 1
 
 @dataclass(frozen=True)
 class FormatJob:
-    """One document to format. The body is a copy; the worker does not share it."""
+    """One document to format. The body is a copy; the worker does not share it.
+
+    ``sort_keys`` orders the output's keys; the text in ``text`` is unchanged.
+    """
 
     job_id: int
     text: str
@@ -44,6 +47,7 @@ class FormatJob:
     chunk_size: int = WRITE_CHUNK_SIZE
     chunk_pause_s: float = 0.0
     fault: str | None = None
+    sort_keys: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,7 +190,9 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
         event_queue.put(FailureEvent(job.job_id, "", None, None, early))
         return
     try:
-        text = format_document(job.text, job.source, job.target)
+        text = format_document(
+            job.text, job.source, job.target, sort_keys=job.sort_keys
+        )
     except Exception as exc:
         event_queue.put(_failure_event(job, exc, None))
         return
