@@ -382,7 +382,9 @@ _LONG = "".join(f'"key{i}": {i},\n' for i in range(_LINES))
 
 
 def _shown_lines(editor: CodeEditor) -> set[int]:
-    return {lineno for lineno, _top in editor._visible_line_tops(editor.rect())}
+    return {
+        lineno for lineno, _top in editor._visible_line_tops(editor.viewport().rect())
+    }
 
 
 def test_only_the_lines_on_screen_get_a_band(qtbot) -> None:
@@ -499,8 +501,6 @@ def test_problem_tints_are_pixel_identical_to_main(
     scroll_to: int,
     font: str,
 ) -> None:
-    lines = {3, 4, 6, *range(580, 610)}
-
     def place(editor: CodeEditor) -> None:
         if font == "wide font":
             editor.setFont(code_font(_WIDE_CODE_POINTS))
@@ -519,7 +519,12 @@ def test_problem_tints_are_pixel_identical_to_main(
 
     painted = _editor(qtbot, _IDENTITY_TEXT, size=(420, 300))
     place(painted)
+    # Where a scroll value lands depends on how the font wraps, so every
+    # other line on screen is a problem too, wherever the view ends up.
+    shown = sorted(_shown_lines(painted))
+    lines = {3, 4, 6, *range(580, 610), *shown[::2]}
     painted.set_problem_lines(lines)
+    assert set(_bands(painted)) == lines & set(shown)
     reference = _editor(qtbot, _IDENTITY_TEXT, size=(420, 300))
     place(reference)
     _main_bands(reference, lines)
