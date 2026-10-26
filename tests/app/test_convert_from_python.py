@@ -22,6 +22,8 @@ from galley.core.convert_python import ConvertResult, convert_python
 # D6: Convert from Python runs on the UI thread, so at its limit the convert
 # itself must stay under about 0.5 s.
 _CONVERT_BUDGET_S = 0.5
+# Erik's on #132: YAML holds to 0.4 s now that the C emitter writes it.
+_CONVERT_YAML_BUDGET_S = 0.4
 
 _LIMITS = pytest.mark.parametrize(
     ("target", "limit"),
@@ -281,7 +283,7 @@ def test_convert_at_the_limit_is_within_budget(perf_budget, target, limit) -> No
     if target == "YAML":
         assert_c_emitter_writes(_converted_value(text))
     perf_budget.within(
-        _CONVERT_BUDGET_S,
+        _CONVERT_YAML_BUDGET_S if target == "YAML" else _CONVERT_BUDGET_S,
         lambda: convert_python(text, target),
         fixture=f"{si_size(limit)} plain-catalog Python literal to {target}",
     )

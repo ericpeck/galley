@@ -293,23 +293,46 @@ def test_values_the_c_emitter_cannot_match_use_the_pure_emitter(
     assert len(calls) == 1
 
 
+def test_dump_value_writes_with_the_c_emitter_when_clib_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    value = {"name": "Ann", "note": "it's", "orders": [1, 2.5, None, True]}
+    expected = format_module._dump_parsed(value, pure=True)
+
+    def refuse(value: object, *, pure: bool) -> str:
+        raise AssertionError("dump_value took the pure-Python emitter")
+
+    monkeypatch.setattr(format_module, "_dump_parsed", refuse)
+    assert format_module.dump_value(value, "yaml") == expected
+
+
 _JSON_TO_YAML_BYTES = 2_400_000
-_JSON_TO_YAML_BUDGET_S = 1.5
+# macOS arm64.
+_JSON_TO_YAML_BUDGET_S = 1.4
+# Windows only, for the same conversion: the Windows runner is slower. Isaac's
+# rule from #108, the worst Windows CI median plus 25%: 1,597 ms x 1.25,
+# rounded up.
+_JSON_TO_YAML_WINDOWS_BUDGET_S = 2.0
+_JSON_TO_YAML_BUDGET_HERE_S = (
+    _JSON_TO_YAML_WINDOWS_BUDGET_S
+    if sys.platform == "win32"
+    else _JSON_TO_YAML_BUDGET_S
+)
 
 
 @pytest.mark.perf
 def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
-    """#115's budget is for macOS arm64 with ruamel.yaml.clib, as Galley ships."""
-    if sys.platform != "darwin":
-        pytest.skip("the 1.5 s budget is for macOS arm64")
+    """#115's budget is for ruamel.yaml.clib, as Galley ships."""
     if not format_module._clib_available():
-        pytest.skip("the 1.5 s budget is for the C emitter")
+        pytest.skip("the 2.4 MB budget is for the C emitter")
     text = _json_to_yaml_fixture()
     assert_c_emitter_writes(json.loads(text))
     expected = format_module._dump_parsed(json.loads(text), pure=True)
     assert format_document(text, "json", "yaml") == expected
     perf_budget.within(
-        _JSON_TO_YAML_BUDGET_S,
+        _JSON_TO_YAML_BUDGET_HERE_S,
         lambda: format_document(text, "json", "yaml"),
         fixture="2.4 MB pretty JSON, fake customer rows, to YAML",
     )
