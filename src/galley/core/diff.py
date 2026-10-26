@@ -229,10 +229,22 @@ def diff(left: Doc, right: Doc) -> DiffResult:
     Raises ``InputError`` (``too_deep``) for a value nested past
     ``MAX_DEPTH``, which ``load_document`` already rejects.
     """
+    return diff_with_pairs(left, right)[0]
+
+
+def diff_with_pairs(left: Doc, right: Doc) -> tuple[DiffResult, dict[Path, Path]]:
+    """Return ``diff(left, right)`` and the containers the walk compared.
+
+    The dict maps the left path of every object and array that was compared
+    with a right container of the same kind to that container's right path,
+    the root included. Below a pair of objects, common keys pair by key.
+    Array items pair as the alignment matched them, so an index can differ
+    between the sides; only items that are containers are listed.
+    """
     state = _DiffState(left, right)
     found = _pair_moves(_walk(state), state)
     changes = [_change(entry, left.spans, right.spans) for entry in found]
-    return DiffResult(changes, tuple(state.unaligned))
+    return DiffResult(changes, tuple(state.unaligned)), dict(state.matched)
 
 
 # --- JSON ---------------------------------------------------------------

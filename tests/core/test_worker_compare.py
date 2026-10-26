@@ -4,6 +4,7 @@ import multiprocessing
 import pickle
 import queue
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -115,6 +116,16 @@ def test_a_spawned_worker_returns_the_diff_result() -> None:
     events = _run_in_child(job)
     assert events[0] == ProgressEvent(7, "read", 0, 0, None)
     assert events[-1] == run_compare(job)
+
+
+def test_a_spawned_worker_returns_the_report_and_formatted_texts() -> None:
+    job = replace(_job(), reformat=True)
+    events = _run_in_child(job)
+    event = events[-1]
+    assert isinstance(event, CompareEvent)
+    assert event == run_compare(job)
+    assert event.left_text is not None and event.right_text is not None
+    assert event.report.count == len(event.result.changes) == 3
 
 
 def _run_in_child(job: CompareJob, timeout: float = 30.0) -> list[object]:

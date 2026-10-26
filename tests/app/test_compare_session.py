@@ -8,6 +8,7 @@ from galley.app.main_window import (
     compare_needs_size_warning,
 )
 from galley.app.parse_session import CompareFailure, ParseSession
+from galley.core.compare_report import CompareReport, SideMarks
 from galley.core.diff import DiffResult, diff, load_document
 from galley.core.format import format_json
 from galley.core.worker import CompareEvent, ProgressEvent
@@ -22,20 +23,70 @@ _RIGHT = '{"name": "Ada", "orders": [{"total": 45}], "vip": true}'
 
 def test_a_compare_round_trip_delivers_the_diff_result(qtbot) -> None:
     session = _started(qtbot)
-    finished: list[tuple[int, DiffResult]] = []
-    session.compare_finished.connect(lambda job, result: finished.append((job, result)))
+    finished: list[tuple[int, CompareEvent]] = []
+    session.compare_finished.connect(lambda job, event: finished.append((job, event)))
     try:
         job_id = session.submit_compare(_LEFT, "json", _RIGHT, "json")
         assert job_id is not None
         assert session.active_job_id == job_id
         qtbot.waitUntil(lambda: bool(finished), timeout=_SPAWN_TIMEOUT_MS)
-        assert finished == [(job_id, _expected(_LEFT, _RIGHT))]
-        changes = finished[0][1].changes
+        [(got_id, event)] = finished
+        assert got_id == job_id
+        assert event.result == _expected(_LEFT, _RIGHT)
+        changes = event.result.changes
         assert [(c.kind, c.path_text) for c in changes] == [
             ("changed", "orders[0].total"),
             ("added", "vip"),
         ]
+        assert [row.accessible_name for row in event.report.rows] == [
+            "Changed, orders 0 total, 40 to 45",
+            "Added, vip, true",
+        ]
+        assert event.report.count == 2
+        assert (event.left_text, event.right_text) == (None, None)
         assert session.active_job_id is None
+    finally:
+        session.shutdown()
+
+
+def test_a_reformat_compare_returns_both_formatted_texts(qtbot) -> None:
+    session = _started(qtbot)
+    finished: list[CompareEvent] = []
+    session.compare_finished.connect(lambda _job, event: finished.append(event))
+    try:
+        session.submit_compare(_LEFT, "json", _RIGHT, "json", reformat=True)
+        qtbot.waitUntil(lambda: bool(finished), timeout=_SPAWN_TIMEOUT_MS)
+        [event] = finished
+        assert event.left_text == format_json(_LEFT)
+        assert event.right_text == format_json(_RIGHT)
+        assert [row.right_line for row in event.report.rows] == [5, 8]
+    finally:
+        session.shutdown()
+
+
+def test_cancel_mid_reformat_compare_drops_the_result(qtbot) -> None:
+    session = _started(qtbot)
+    finished: list[int] = []
+    cancelled: list[int] = []
+    session.compare_finished.connect(lambda job, _event: finished.append(job))
+    session.compare_cancelled.connect(cancelled.append)
+    reads = _spy_reads(session)
+    try:
+        old_jobs = session.job_queue
+        job_id = session.submit_compare(
+            _LEFT, "json", _RIGHT, "json", reformat=True, hold_s=_HOLD_S
+        )
+        qtbot.waitUntil(lambda: job_id in reads, timeout=_SPAWN_TIMEOUT_MS)
+        session.cancel()
+        assert cancelled == [job_id]
+        assert session.active_job_id is None
+        qtbot.waitUntil(
+            lambda: session.job_queue is not None and session.job_queue is not old_jobs,
+            timeout=_SPAWN_TIMEOUT_MS,
+        )
+        next_id = session.submit_compare(_LEFT, "json", _RIGHT, "json", reformat=True)
+        qtbot.waitUntil(lambda: bool(finished), timeout=_SPAWN_TIMEOUT_MS)
+        assert finished == [next_id]
     finally:
         session.shutdown()
 
@@ -88,7 +139,10 @@ def test_cancel_mid_compare_drops_the_result_and_uses_a_fresh_worker(qtbot) -> N
 
 
 @pytest.mark.perf
-def test_cancel_mid_compare_reports_within_100_ms(qtbot, perf_budget) -> None:
+@pytest.mark.parametrize("reformat", [False, True])
+def test_cancel_mid_compare_reports_within_100_ms(
+    qtbot, perf_budget, reformat: bool
+) -> None:
     """Cancel kills a held compare and reports it without waiting on the child."""
     session = _started(qtbot)
     cancelled: list[int] = []
@@ -101,7 +155,9 @@ def test_cancel_mid_compare_reports_within_100_ms(qtbot, perf_budget) -> None:
             lambda: session.process is not None and session.job_queue is not None,
             timeout=_SPAWN_TIMEOUT_MS,
         )
-        job_id = session.submit_compare(_LEFT, "json", _RIGHT, "json", hold_s=_HOLD_S)
+        job_id = session.submit_compare(
+            _LEFT, "json", _RIGHT, "json", reformat=reformat, hold_s=_HOLD_S
+        )
         assert job_id is not None
         held.append(job_id)
         qtbot.waitUntil(lambda: job_id in reads, timeout=_SPAWN_TIMEOUT_MS)
@@ -111,7 +167,7 @@ def test_cancel_mid_compare_reports_within_100_ms(qtbot, perf_budget) -> None:
             _CANCEL_BUDGET_S,
             session.cancel,
             setup=_hold_a_compare,
-            fixture="compare held in the spawn worker",
+            fixture=f"compare held in the spawn worker, reformat={reformat}",
         )
         assert cancelled == held
     finally:
@@ -149,8 +205,8 @@ def test_cancel_a_compare_waiting_on_a_reap_drops_only_that_job(qtbot) -> None:
 
 def test_a_stale_result_is_ignored(qtbot) -> None:
     session = _started(qtbot)
-    finished: list[tuple[int, DiffResult]] = []
-    session.compare_finished.connect(lambda job, result: finished.append((job, result)))
+    finished: list[tuple[int, CompareEvent]] = []
+    session.compare_finished.connect(lambda job, event: finished.append((job, event)))
     reads = _spy_reads(session)
     try:
         first = session.submit_compare(_LEFT, "json", _LEFT, "json")
@@ -160,11 +216,12 @@ def test_a_stale_result_is_ignored(qtbot) -> None:
         qtbot.waitUntil(lambda: second in reads, timeout=_SPAWN_TIMEOUT_MS)
         events = session.event_queue
         assert events is not None
-        events.put(CompareEvent(first, DiffResult([])))
+        empty = CompareReport((), 0, SideMarks(), SideMarks())
+        events.put(CompareEvent(first, DiffResult([]), empty))
         qtbot.waitUntil(lambda: len(finished) == 2, timeout=_SPAWN_TIMEOUT_MS)
         qtbot.wait(200)
         assert [job for job, _result in finished] == [first, second]
-        assert finished[1][1] == _expected(_LEFT, _RIGHT)
+        assert finished[1][1].result == _expected(_LEFT, _RIGHT)
     finally:
         session.shutdown()
 
