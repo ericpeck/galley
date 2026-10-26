@@ -354,6 +354,52 @@ def _walk(image: QImage, start: QPoint, step: QPoint, fill: QColor) -> QPoint:
     return point
 
 
+def _runs(image: QImage, y: int) -> str:
+    """Row ``y`` as color runs, for a failure message."""
+    runs: list[list] = []
+    for x in range(image.width()):
+        name = image.pixelColor(x, y).name()
+        if runs and runs[-1][0] == name:
+            runs[-1][1] += 1
+        else:
+            runs.append([name, 1])
+    return " ".join(f"{name}×{count}" for name, count in runs)
+
+
+def _probe(editor: CodeEditor, position: int) -> QPoint:
+    """A point in the match at ``position``, 2 px below the line's top.
+
+    The middle row can hold ink inside a match, such as a whitespace dot,
+    and the current match's underline is at the bottom. Near the top there
+    is only the fill.
+    """
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition(position)
+    rect = editor.cursorRect(cursor)
+    return QPoint(rect.center().x() + 2, rect.top() + 2)
+
+
+def _assert_outlined(
+    image: QImage, inside: QPoint, fill: QColor, edge: QColor, beside: QColor
+) -> None:
+    """One ``edge`` pixel each side of the fill with ``beside`` past it, and
+    ``edge`` on the rows above and below the fill."""
+    row = _runs(image, inside.y())
+    assert image.pixelColor(inside).rgb() == fill.rgb(), row
+    for step in (QPoint(-1, 0), QPoint(1, 0)):
+        point = _walk(image, inside, step, fill)
+        assert image.pixelColor(point).rgb() == edge.rgb(), (step, row)
+        assert image.pixelColor(point + step).rgb() == beside.rgb(), (step, row)
+    top = _walk(image, inside, QPoint(0, -1), fill)
+    assert image.pixelColor(top).rgb() == edge.rgb(), _runs(image, top.y())
+    # Downward, the middle row and the underline can hold ink.
+    bottom = QPoint(inside)
+    while image.pixelColor(bottom).rgb() != edge.rgb():
+        bottom += QPoint(0, 1)
+        assert bottom.y() < image.height(), "no outline below the match"
+    assert image.pixelColor(bottom + QPoint(0, 1)).rgb() != fill.rgb()
+
+
 @pytest.mark.parametrize("current", [True, False], ids=["current", "other"])
 @pytest.mark.parametrize("under", _UNDER_FIND)
 def test_a_find_match_stands_out_3_to_1_from_every_tint(
@@ -375,42 +421,40 @@ def test_a_find_match_stands_out_3_to_1_from_every_tint(
     assert ratio >= EDGE_CONTRAST, f"Find outline on {under}: {ratio:.2f}:1"
 
     image = editor.viewport().grab().toImage()
-    cursor = QTextCursor(editor.document())
-    cursor.setPosition((_FIND_START + _FIND_END) // 2)
-    inside = editor.cursorRect(cursor).center() + QPoint(2, 0)
-    assert image.pixelColor(inside).rgb() == fill.rgb()
-    # Out from the fill to each side: one outline pixel, then the tint.
-    for step in (QPoint(-1, 0), QPoint(1, 0)):
-        edge = _walk(image, inside, step, fill)
-        assert image.pixelColor(edge).rgb() == colors.edge.rgb(), step
-        assert image.pixelColor(edge + step).rgb() == tint.rgb(), step
-    # The fill is the line's full height, so above and below the outline
-    # are the lines next to it. The current match's underline is inside.
-    for step in (QPoint(0, -1), QPoint(0, 1)):
-        edge = _walk(image, inside, step, fill)
-        if edge.y() > inside.y() and current:
-            edge = _walk(image, edge, step, colors.ink)
-        assert image.pixelColor(edge).rgb() == colors.edge.rgb(), step
-        assert image.pixelColor(edge + step).rgb() not in (fill.rgb(), tint.rgb())
+    inside = _probe(editor, (_FIND_START + _FIND_END) // 2)
+    _assert_outlined(image, inside, fill, colors.edge, tint)
+
+
+def test_the_find_outline_does_not_depend_on_the_middle_row(qtbot) -> None:
+    editor = _find_over(qtbot, "changed", current=False)
+    editor.set_whitespace_wanted(True)
+    palette = editor.palette()
+    colors = find_match_colors(palette)
+
+    image = editor.viewport().grab().toImage()
+    inside = _probe(editor, (_FIND_START + _FIND_END) // 2)
+    _assert_outlined(
+        image, inside, colors.other, colors.edge, change_tint("changed", palette)
+    )
 
 
 def test_the_find_outline_draws_with_a_fold_closed(qtbot, scheme: QPalette) -> None:
-    text = '{\n  "a": [\n    1\n  ],\n  "b": "x        "\n}\n'
+    # The match is line 5's trailing spaces, so the tint is past both ends.
+    text = '{\n  "a": [\n    1\n  ],\n  "b": "x"        \n}\n'
     editor = _editor(qtbot, text)
     editor.set_folding_enabled(True)
     editor.set_change_tints("left", [(5, 5, "changed")])
-    start = text.index("x ") + 1
+    start = text.index('x" ') + 2
     editor.set_find_matches([start], [start + 8], 0)
     assert editor.fold_line(2)
-    colors = find_match_colors(editor.palette())
+    palette = editor.palette()
+    colors = find_match_colors(palette)
 
     image = editor.viewport().grab().toImage()
-    cursor = QTextCursor(editor.document())
-    cursor.setPosition(start + 4)
-    inside = editor.cursorRect(cursor).center()
-    assert image.pixelColor(inside).rgb() == colors.current.rgb()
-    edge = _walk(image, inside, QPoint(-1, 0), colors.current)
-    assert image.pixelColor(edge).rgb() == colors.edge.rgb()
+    inside = _probe(editor, start + 4)
+    _assert_outlined(
+        image, inside, colors.current, colors.edge, change_tint("changed", palette)
+    )
 
 
 def test_the_find_outline_follows_a_scheme_switch(qtbot, install_scheme) -> None:
