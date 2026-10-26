@@ -124,6 +124,10 @@ _LONE_SURROGATE_RE = re.compile(
     "|"
     "[\ud800-\udfff]"
 )
+# Every escape that regex matches starts with "\ud" or "\uD". Text with
+# neither and no raw surrogate has no hit, and those checks run in C far
+# faster than the regex's lookarounds (#129).
+_RAW_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 _CHARACTER_WALK = object()
 
 # Rewrites a loaded value before it is written. See the module docstring.
@@ -691,6 +695,12 @@ def _json_fast_value(source: str) -> object:
 
 def _has_lone_surrogate(text: str) -> bool:
     """Return True if ``text`` has a surrogate the character walk rejects."""
+    if (
+        "\\ud" not in text
+        and "\\uD" not in text
+        and _RAW_SURROGATE_RE.search(text) is None
+    ):
+        return False
     start = 0
     while True:
         match = _LONE_SURROGATE_RE.search(text, start)
