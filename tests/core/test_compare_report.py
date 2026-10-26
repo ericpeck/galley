@@ -637,12 +637,13 @@ def test_reformat_ignores_the_sort_keys_setting() -> None:
 _REPORT_BUDGET_S = 0.25
 # The whole job in-process, pickling the event as the queue does: both
 # loads, the diff, the report, and Format first when ``reformat`` is set.
-_JOB_BUDGET_S = 2.4
+# 1.8 s after the #129 speed-up (team ruling on #133).
+_JOB_BUDGET_S = 1.8
 # Isaac's #65 budgets for the diff, here with the report built as well.
 _ISAAC_BUDGET_S = 0.5
 # The reordered array leaves 20,000 rows to build, so the diff plus the
-# report gets its own budget.
-_REORDER_BUDGET_S = 0.8
+# report gets its own budget: 0.7 s after the #129 speed-up (#133).
+_REORDER_BUDGET_S = 0.7
 
 
 def _large_pair() -> tuple[str, str]:
