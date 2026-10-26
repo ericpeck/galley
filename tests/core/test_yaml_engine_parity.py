@@ -309,11 +309,11 @@ def test_dump_value_writes_with_the_c_emitter_when_clib_is_installed(
 
 
 _JSON_TO_YAML_BYTES = 2_400_000
-# macOS arm64.
-_JSON_TO_YAML_BUDGET_S = 1.4
-# Windows only, for the same conversion: the Windows runner is slower. Isaac's
-# rule from #108, the worst Windows CI median plus 25%: 1,597 ms x 1.25,
-# rounded up.
+# macOS arm64. Isaac's rule from #108, the worst CI median plus 25%:
+# 1,365.8 ms x 1.25, rounded up.
+_JSON_TO_YAML_BUDGET_S = 1.8
+# Windows only, for the same conversion: the Windows runner is slower. The
+# same rule: 1,597 ms x 1.25, rounded up.
 _JSON_TO_YAML_WINDOWS_BUDGET_S = 2.0
 _JSON_TO_YAML_BUDGET_HERE_S = (
     _JSON_TO_YAML_WINDOWS_BUDGET_S
