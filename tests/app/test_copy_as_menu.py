@@ -346,7 +346,8 @@ def _status_texts(window) -> list[str]:
 def test_the_yaml_error_is_never_shown(qtbot) -> None:
     with pytest.raises(CopyAsError) as caught:
         copy_as_text(_BROKEN_YAML, "yaml", "masked")
-    assert _SECRET in str(caught.value)
+    assert _SECRET not in str(caught.value)
+    assert _SECRET in str(caught.value.__cause__)
     window, output = _with_output(qtbot, "YAML", _BROKEN_YAML)
     for label in ("Masked", "Random fake"):
         assert _copy(window, label) == _UNTOUCHED
@@ -434,10 +435,10 @@ def test_a_worker_that_stops_mid_copy_copies_nothing(qtbot) -> None:
     window._copy_as_job = 41
     window._sync_format_button()
     assert not _action(window, "Masked").isEnabled()
-    stale = CopyAsFailureEvent(40, False)
+    stale = CopyAsFailureEvent(40, "masked", False)
     window._session.copy_as_failed.emit(40, stale)
     assert window._copy_as_job == 41
-    stopped = CopyAsFailureEvent(41, False)
+    stopped = CopyAsFailureEvent(41, "masked", False)
     window._session.copy_as_failed.emit(41, stopped)
     assert window._copy_as_job is None
     assert QApplication.clipboard().text() == _UNTOUCHED
@@ -622,3 +623,28 @@ def test_esc_with_no_copy_running_changes_nothing(qtbot) -> None:
     qtbot.keyClick(output, Qt.Key.Key_Escape)
     assert window._status.state_text() == status
     assert output.toPlainText() == shown
+
+
+def test_a_worker_that_exits_mid_copy_reports_the_mode(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(
+        parse_session_module, "CopyAsJob", functools.partial(CopyAsJob, hold_s=30.0)
+    )
+    session = ParseSession()
+    failed: list[tuple[int, object]] = []
+    session.copy_as_failed.connect(lambda job, event: failed.append((job, event)))
+    session.start()
+    try:
+        job_id = session.submit_copy_as('{"email": "pat@example.com"}', "JSON", "fake")
+        assert job_id is not None
+        qtbot.waitUntil(
+            lambda: session.process is not None and not session.has_pending_job,
+            timeout=_SPAWN_TIMEOUT_MS,
+        )
+        process = session.process
+        assert process is not None
+        process.kill()
+        qtbot.waitUntil(lambda: bool(failed), timeout=_SPAWN_TIMEOUT_MS)
+        assert failed == [(job_id, CopyAsFailureEvent(job_id, "fake", False))]
+        assert session.active_job_id is None
+    finally:
+        session.shutdown()

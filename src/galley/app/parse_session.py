@@ -182,8 +182,9 @@ class _CompareActive(_Active):
 class _CopyAsActive(_Active):
     """Bookkeeping for a Copy As job. It has no destination and no temp."""
 
-    def __init__(self, job_id: int) -> None:
+    def __init__(self, job_id: int, mode: CopyAsMode) -> None:
         super().__init__(job_id, None)
+        self.mode: CopyAsMode = mode
 
 
 @dataclass(frozen=True)
@@ -395,7 +396,7 @@ class ParseSession(QObject):
             self._replace_dead_worker()
         self._job_ids += 1
         job = CopyAsJob(job_id=self._job_ids, text=text, fmt=fmt, mode=mode)
-        self._active = _CopyAsActive(job.job_id)
+        self._active = _CopyAsActive(job.job_id, mode)
         self._pending = job
         self._report_abandoned_reap = False
         if self._process is None and not self._retired:
@@ -612,7 +613,7 @@ class ParseSession(QObject):
         if isinstance(active, _CompareActive) and not self._closing:
             self.compare_stopped.emit(active.job_id)
         elif isinstance(active, _CopyAsActive) and not self._closing:
-            stopped = CopyAsFailureEvent(active.job_id, False)
+            stopped = CopyAsFailureEvent(active.job_id, active.mode, False)
             self.copy_as_failed.emit(active.job_id, stopped)
         elif had_job and not self._closing:
             self.failed.emit(FORMATTER_STOPPED)

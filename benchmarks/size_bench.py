@@ -102,6 +102,14 @@ realistic safe+C, and ``format_yaml_plain_clib`` are 0.05, 0.1, 0.25, 0.5,
 ``--sizes`` replaces those ladders for every selected row, including sizes
 above the caps.
 
+``copy_as_masked_json``, ``copy_as_fake_json``, ``copy_as_masked_yaml`` and
+``copy_as_fake_yaml`` time Copy As › Masked and › Random fake (#66) as
+shipped, on the plain corpus with the JSON and YAML ladders above. Load is
+``format.load_document``. Dump is ``mask.copy_as_result`` plus
+``format.dump_value``, which is everything ``mask.copy_as_text`` does after
+the load. These rows are in their own ``copy_as`` group, so the Format UI
+cutoffs do not use them.
+
     uv run python benchmarks/size_bench.py
     uv run python benchmarks/size_bench.py --corpus realistic
     uv run python benchmarks/size_bench.py --corpus all
@@ -139,6 +147,7 @@ from ruamel.yaml.main import CEmitter, CParser
 
 import galley.core
 from galley.core import format as core_format
+from galley.core.mask import CopyAsMode, copy_as_result
 
 BYTES_PER_MB = 1024 * 1024
 # Default ladders. `--sizes` replaces them for every operation.
@@ -474,7 +483,42 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             ),
         )
     )
+    scheduled.extend(
+        _copy_as_operation(source_format, mode)
+        for source_format in ("json", "yaml")
+        for mode in COPY_AS_MODES
+    )
     return scheduled, skipped
+
+
+# Copy As modes the bench times. Original copies the text as it is.
+COPY_AS_MODES: tuple[CopyAsMode, ...] = ("masked", "fake")
+
+
+def _copy_as_operation(source_format: str, mode: CopyAsMode) -> Operation:
+    phases = _copy_as_phases(source_format, mode)
+    return Operation(
+        operation_id=f"copy_as_{mode}_{source_format}",
+        group="copy_as",
+        source_format=source_format,
+        fn=lambda text: phases(text)[0],
+        phases=phases,
+    )
+
+
+def _copy_as_phases(source_format: str, mode: CopyAsMode) -> PhaseFn:
+    """Time Copy As: the load, then the rewrite and the write."""
+
+    def phases(text: str) -> PhaseResult:
+        started = time.perf_counter()
+        value = core_format.load_document(text, source_format)
+        loaded = time.perf_counter()
+        result = copy_as_result(value, mode)
+        copied = core_format.dump_value(result.value, source_format)
+        ended = time.perf_counter()
+        return copied, ended - started, loaded - started, ended - loaded
+
+    return phases
 
 
 def _shipped_pure_operation(operation_id: str, *, corpus: str) -> Operation:

@@ -443,12 +443,20 @@ class CopyAsResult:
 class CopyAsError(Exception):
     """Copy As built no text, so nothing may be copied.
 
-    ``invalid`` is True when the text did not load as its format, and False
-    when it loaded but masking or writing it failed.
+    ``mode`` is the copy that failed. ``invalid`` is True when the text did
+    not load as its format, and False when it loaded but masking or writing
+    it failed. The message names only the mode, the format and the error
+    type, never document text: a parse error quotes the line it failed on,
+    which can hold a value Masked or Random fake must hide. The original
+    error is ``__cause__``, for debugging only.
     """
 
-    def __init__(self, message: str, *, invalid: bool) -> None:
-        super().__init__(message)
+    def __init__(self, mode: CopyAsMode, fmt: str, exc: Exception, *, invalid: bool):
+        step = "did not load" if invalid else "could not be masked or written"
+        super().__init__(
+            f"Copy As {mode}: the {fmt} text {step} ({type(exc).__name__})"
+        )
+        self.mode: CopyAsMode = mode
         self.invalid = invalid
 
 
@@ -473,17 +481,13 @@ def copy_as_text(
     try:
         value = load_document(text, fmt)
     except Exception as exc:
-        raise CopyAsError(_reason(exc), invalid=True) from exc
+        raise CopyAsError(mode, fmt, exc, invalid=True) from exc
     try:
         result = copy_as_result(value, mode, rules, rng)
         copied = dump_value(result.value, fmt)
     except Exception as exc:
-        raise CopyAsError(_reason(exc), invalid=False) from exc
+        raise CopyAsError(mode, fmt, exc, invalid=False) from exc
     return CopyAsResult(mode, copied, result.masked_count)
-
-
-def _reason(exc: Exception) -> str:
-    return str(exc) or type(exc).__name__
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:

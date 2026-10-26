@@ -174,6 +174,8 @@ def test_text_that_does_not_load_is_invalid(text: str, fmt: str, mode) -> None:
     with pytest.raises(CopyAsError) as caught:
         copy_as_text(text, fmt, mode)
     assert caught.value.invalid
+    assert caught.value.mode == mode
+    assert "pat@example.com" not in str(caught.value)
 
 
 @pytest.mark.parametrize("mode", ["masked", "fake"])
@@ -182,6 +184,7 @@ def test_a_masking_failure_copies_nothing(mode) -> None:
     with pytest.raises(CopyAsError) as caught:
         copy_as_text(text, "yaml", mode)
     assert not caught.value.invalid
+    assert caught.value.mode == mode
     assert "pat@example.com" not in str(caught.value)
 
 
@@ -193,8 +196,7 @@ def test_run_copy_as_reports_the_result_or_the_failure() -> None:
     assert event.result.count == HIDDEN_COUNT
     failed = run_copy_as(CopyAsJob(5, "{", "json", "fake"))
     assert isinstance(failed, CopyAsFailureEvent)
-    assert failed.job_id == 5
-    assert failed.invalid
+    assert failed == CopyAsFailureEvent(5, "fake", True)
 
 
 def test_a_held_copy_as_job_still_builds_the_copy() -> None:
@@ -203,14 +205,25 @@ def test_a_held_copy_as_job_still_builds_the_copy() -> None:
     assert held.result == copy_as_text(_output("json"), "json", "masked")
 
 
-def test_a_failure_event_carries_no_error_text() -> None:
+@pytest.mark.parametrize("mode", ["masked", "fake"])
+def test_the_error_names_the_mode_and_quotes_no_text(mode) -> None:
     text = "api_key: [fake-not-a-real-token\nemail: pat@example.com\n"
     with pytest.raises(CopyAsError) as caught:
-        copy_as_text(text, "yaml", "masked")
-    assert "fake-not-a-real-token" in str(caught.value)
-    assert "pat@example.com" in str(caught.value)
+        copy_as_text(text, "yaml", mode)
+    error = caught.value
+    assert error.mode == mode
+    assert error.invalid
+    assert str(error) == f"Copy As {mode}: the yaml text did not load (ParserError)"
+    # The parser's own message quotes the line, so it stays only the cause.
+    assert "fake-not-a-real-token" in str(error.__cause__)
+    assert "pat@example.com" in str(error.__cause__)
+    assert error.args == (str(error),)
+
+
+def test_a_failure_event_carries_no_error_text() -> None:
+    text = "api_key: [fake-not-a-real-token\nemail: pat@example.com\n"
     failed = run_copy_as(CopyAsJob(8, text, "yaml", "masked"))
-    assert failed == CopyAsFailureEvent(8, True)
+    assert failed == CopyAsFailureEvent(8, "masked", True)
     sent = pickle.dumps(failed)
     assert b"fake-not-a-real-token" not in sent
     assert b"example.com" not in sent
@@ -223,7 +236,7 @@ def test_copy_as_jobs_and_events_pickle() -> None:
     assert pickle.loads(pickle.dumps(job)) == job
     event = run_copy_as(CopyAsJob(1, job.text, "yaml", "fake", job.rules))
     assert pickle.loads(pickle.dumps(event)) == event
-    failure = CopyAsFailureEvent(2, True)
+    failure = CopyAsFailureEvent(2, "masked", True)
     assert pickle.loads(pickle.dumps(failure)) == failure
 
 
