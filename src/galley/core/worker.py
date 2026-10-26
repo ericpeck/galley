@@ -236,7 +236,9 @@ def _format_text(job: FormatJob) -> tuple[str, int | None]:
             job.text, job.source, job.target, sort_keys=job.sort_keys
         )
         return text, None
-    masked = mask_document(job.text, job.source, job.target, job.mask)
+    masked = mask_document(
+        job.text, job.source, job.target, job.mask, sort_keys=job.sort_keys
+    )
     return masked.text, masked.masked_count
 
 
