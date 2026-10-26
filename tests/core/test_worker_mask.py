@@ -848,18 +848,12 @@ def test_a_format_that_does_not_load_to_a_value_is_never_shown(monkeypatch) -> N
 # the job going in to its result coming out of a warm worker. macOS and
 # Windows use the same numbers, except the YAML job on Windows below.
 _JOB_JSON_BUDGET_S = 0.7
-# #112 writes YAML through ruamel's pure-Python emitter on every platform so
-# both engines give identical bytes. The team chose to accept the slowdown
-# (#115 tracks making the C emitter match), so YAML gets 1 s until #115
-# lands, as ``_CONVERT_YAML_BUDGET_S`` in ``test_convert_from_python.py``
-# does. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
-# (192 KB at 0.2 s per MB), rounded up. When #115 restores the 0.5 s YAML
-# budget, it drops ``_CONVERT_YAML_BUDGET_S`` and this one (to 0.6 s).
-_JOB_YAML_BUDGET_S = 1.1
-# Windows only, for the same job (#115): after #112 moved YAML to the
-# pure-Python emitter, the Windows runner measured 1084 ms against the 1.1 s
-# above, too close for the strict nightly. Isaac set 1.6 s, about 1.5x that
-# measurement. When #115 lands, Isaac resets it from that PR's measurement.
+# The 0.5 s Convert budget at 192 KB plus about 0.05 s of masking (192 KB at
+# 0.2 s per MB), rounded up.
+_JOB_YAML_BUDGET_S = 0.6
+# Windows only, for the same job: Windows has no ruamel.yaml.clib, so the
+# pure-Python emitter writes the YAML. Isaac's number, set from the Windows
+# runner's measurement.
 _JOB_YAML_WINDOWS_BUDGET_S = 1.6
 _JOB_YAML_BUDGET_HERE_S = (
     _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S

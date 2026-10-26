@@ -13,6 +13,8 @@ import sys
 
 import pytest
 import ruamel.yaml.main as ruamel_main
+from ruamel.yaml import YAML
+from tests.core.mask_rows import pretty_json, text_of_size
 
 import galley.core.format as format_module
 from galley.core.errors import InputError, NotJSONValueError
@@ -212,3 +214,98 @@ def test_set_order_is_the_same_under_any_hash_seed() -> None:
             input=_SET_TEXT,
         )
         assert completed.stdout == _SET_OUTPUT, seed
+
+
+# #115: with ruamel.yaml.clib the C emitter writes YAML, set up to give the
+# pure emitter's bytes. Values it can't match go to the pure emitter.
+def _fixture_values() -> list[object]:
+    values: list[object] = [json.loads(text) for text, _expected in _JSON_TO_YAML]
+    pure = YAML(typ="safe", pure=True)
+    for text in (_SET_TEXT, 'a: "\\uD800"\n', 'a: "\\\\uD800"\n', "a: 😀\n"):
+        values.append(pure.load(text))
+    for text, *_location in _SURROGATES:
+        values.append(pure.load(text))
+    return values
+
+
+def test_parity_fixtures_dump_the_same_bytes_with_either_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    for value in _fixture_values():
+        expected = format_module._dump_parsed(value, pure=True)
+        assert format_module._dump_yaml(value) == expected, value
+
+
+def _pure_emitter_calls(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    calls: list[object] = []
+    real = format_module._dump_parsed
+
+    def track(value: object, *, pure: bool) -> str:
+        calls.append(value)
+        return real(value, pure=pure)
+
+    monkeypatch.setattr(format_module, "_dump_parsed", track)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"name": "Ann", "note": "it's", "lines": "a\nb", "q": "'a': 1"},
+        {"é" * 60: 1, "k" * 122: 2, "k" * 129: 3},
+        ["plain", 1, 1.5, None, True, {"x": []}, "naïve 日本"],
+    ],
+)
+def test_the_c_emitter_writes_values_it_can_match(
+    value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    expected = format_module._dump_parsed(value, pure=True)
+    calls = _pure_emitter_calls(monkeypatch)
+    assert format_module._dump_yaml(value) == expected
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"emoji": "😀"},
+        {"astral key \U0010ffff": 1},
+        ["line\u2028separator"],
+        ["paragraph\u2029separator"],
+        ["next\x85line"],
+        {"lone": "\ud800"},
+        {"data": b"hello"},
+        {"key\rreturn": 1},
+        {"é" * 65: 1},
+        {"k" * 123: 1},
+    ],
+)
+def test_values_the_c_emitter_cannot_match_use_the_pure_emitter(
+    engine: str, value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = format_module._dump_parsed(value, pure=True)
+    calls = _pure_emitter_calls(monkeypatch)
+    assert format_module._dump_yaml(value) == expected
+    assert len(calls) == 1
+
+
+_JSON_TO_YAML_BYTES = 2_400_000
+_JSON_TO_YAML_BUDGET_S = 1.5
+
+
+@pytest.mark.perf
+def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
+    """macOS arm64, which has ruamel.yaml.clib. Windows writes with pure Python."""
+    if not format_module._clib_available():
+        pytest.skip("the 1.5 s budget is for the C emitter")
+    text, _rows = text_of_size(_JSON_TO_YAML_BYTES, pretty_json)
+    assert _JSON_TO_YAML_BYTES <= len(text.encode("utf-8")) < 2_500_000
+    expected = format_module._dump_parsed(json.loads(text), pure=True)
+    assert format_document(text, "json", "yaml") == expected
+    perf_budget.within(
+        _JSON_TO_YAML_BUDGET_S,
+        lambda: format_document(text, "json", "yaml"),
+        fixture="2.4 MB pretty JSON, fake customer rows, to YAML",
+    )
