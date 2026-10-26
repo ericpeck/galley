@@ -5,6 +5,7 @@ The codes here are stable ids. The sentences a person reads are chosen in
 JSON document reports every syntax error and repeated key: after
 ``json.loads`` fails, ``scan_json`` reads on past each error. Other YAML
 failures still stop at the first problem, so those stay a single code.
+Expat stops at the first XML error, so XML reports one ``xml_*`` code.
 """
 
 import json
@@ -18,7 +19,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.tokens import KeyToken, ScalarToken
 
-from galley.core.errors import JSONDuplicateKeyError
+from galley.core.errors import JSONDuplicateKeyError, XMLSyntaxError
 from galley.core.json_recover import Scan, Slip, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
@@ -44,6 +45,16 @@ ProblemCode = Literal[
     "yaml_duplicate",
     "yaml_colon",
     "yaml_other",
+    "xml_mismatched_tag",
+    "xml_unclosed",
+    "xml_bad_token",
+    "xml_duplicate_attribute",
+    "xml_undefined_entity",
+    "xml_entity_declared",
+    "xml_unbound_prefix",
+    "xml_after_root",
+    "xml_no_root",
+    "xml_other",
 ]
 
 
@@ -53,6 +64,7 @@ class Problem:
 
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
+    For XML it is the element, attribute, entity, or prefix named.
     ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
     when the problem was found after the JSON scan guessed at a repair,
     so an earlier problem may have caused it.
@@ -175,6 +187,8 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
         return _classify_json(exc, text)
     if isinstance(exc, YAMLError):
         return _classify_yaml(exc, text)
+    if isinstance(exc, XMLSyntaxError):
+        return Problem(exc.code, exc.lineno, exc.token, exc.colno)
     return None
 
 

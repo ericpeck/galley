@@ -1,4 +1,4 @@
-"""Benchmark galley.core against synthetic JSON and YAML files.
+"""Benchmark galley.core against synthetic JSON, YAML, and XML files.
 
 Generates nested documents in a temporary directory, times the format,
 validate, and convert callables that exist on this checkout, and writes a
@@ -102,6 +102,11 @@ realistic safe+C, and ``format_yaml_plain_clib`` are 0.05, 0.1, 0.25, 0.5,
 ``--sizes`` replaces those ladders for every selected row, including sizes
 above the caps.
 
+``format_xml`` (#63) times XML Format on the plain catalog written as XML:
+one ``<item>`` element per record, with attributes, nested elements, and
+text-only leaves. Its 0.5 s and 2 s points are where the XML busy and
+progress bands in ``galley.app.limits`` come from. It uses the JSON ladder.
+
     uv run python benchmarks/size_bench.py
     uv run python benchmarks/size_bench.py --corpus realistic
     uv run python benchmarks/size_bench.py --corpus all
@@ -141,6 +146,7 @@ from ruamel.yaml.main import CEmitter, CParser
 import galley.core
 from galley.core import format as core_format
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.xml_format import format_xml, validate_xml
 
 BYTES_PER_MB = 1024 * 1024
 # Default ladders. `--sizes` replaces them for every operation.
@@ -161,6 +167,9 @@ DEFAULT_TRIGGER_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1)
 # Convert from Python rows. The UI limits in ``galley.app.limits`` are about
 # 1 MB to JSON and 192 KB to YAML, so the ladder brackets both.
 DEFAULT_PYTHON_SIZES_MB = (0.1, 0.25, 0.5, 1, 2, 5)
+# XML Format is expat in C plus slicing, close to JSON, so it shares that
+# ladder. 1 MB is Isaac's 0.5 s budget point.
+DEFAULT_XML_SIZES_MB = DEFAULT_JSON_SIZES_MB
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 # Realistic documents replay this seed. Item ``i`` uses ``REALISTIC_SEED + i``.
@@ -230,6 +239,14 @@ YAML_HEADER = 'catalog: "galley-size-bench"\nversion: 1\nitems:\n'
 YAML_SEPARATOR = ""
 YAML_FOOTER_PREFIX = 'padding: "'
 YAML_FOOTER_SUFFIX = '"\n'
+
+XML_HEADER = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<catalog name="galley-size-bench" version="1">\n'
+)
+XML_SEPARATOR = ""
+XML_FOOTER_PREFIX = "  <padding>"
+XML_FOOTER_SUFFIX = "</padding>\n</catalog>\n"
 
 PYTHON_HEADER = "{'catalog': 'galley-size-bench', 'version': 1, 'items': [\n"
 PYTHON_SEPARATOR = ",\n"
@@ -496,6 +513,17 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
         )
         for target in ("json", "yaml")
     )
+    # XML Format (#63) runs in the worker, like JSON and YAML. It is a UI row
+    # on the plain catalog.
+    scheduled.append(
+        Operation(
+            operation_id="format_xml",
+            group="format",
+            source_format="xml",
+            fn=format_xml,
+            phases=_xml_phases,
+        )
+    )
     return scheduled, skipped
 
 
@@ -554,6 +582,20 @@ def _python_phases(target: str) -> PhaseFn:
         return result, total, total, 0.0
 
     return phases
+
+
+def _xml_phases(text: str) -> PhaseResult:
+    """Time ``format_xml``. Load is the parse alone, ``validate_xml``.
+
+    Format parses again, so dump is the whole call less one parse.
+    """
+    started = time.perf_counter()
+    validate_xml(text)
+    load_s = time.perf_counter() - started
+    started = time.perf_counter()
+    result = format_xml(text)
+    total = time.perf_counter() - started
+    return result, total, load_s, max(total - load_s, 0.0)
 
 
 def _whole_phases(fn: Callable[..., object]) -> PhaseFn:
@@ -934,6 +976,41 @@ def _record(index: int) -> dict[str, Any]:
 def _json_item(index: int) -> str:
     payload = json.dumps(_record(index), indent=2, ensure_ascii=True)
     return "\n".join(f"    {line}" for line in payload.split("\n"))
+
+
+def _xml_item(index: int) -> str:
+    record = _record(index)
+    location = record["location"]
+    active = "true" if record["active"] else "false"
+    tags = "".join(f"<tag>{tag}</tag>" for tag in record["tags"])
+    return (
+        f'  <item id="{record["id"]}" active="{active}">\n'
+        f"    <name>{record['name']}</name>\n"
+        f"    <sku>{record['sku']}</sku>\n"
+        f'    <price currency="USD">{record["price"]:.2f}</price>\n'
+        f"    <quantity>{record['quantity']}</quantity>\n"
+        f"    <tags>{tags}</tags>\n"
+        f'    <location warehouse="{location["warehouse"]}" '
+        f'aisle="{location["aisle"]}" bin="{location["bin"]}"/>\n'
+        f"    <notes>{record['notes']}</notes>\n"
+        "  </item>\n"
+    )
+
+
+def render_xml_catalog(target_bytes: int) -> str:
+    """Return one plain-catalog XML document of exactly ``target_bytes`` bytes."""
+    with tempfile.TemporaryDirectory(prefix="galley-xml-catalog-") as temporary:
+        path = Path(temporary) / "catalog.xml"
+        _write_document(
+            path,
+            target_bytes,
+            header=XML_HEADER,
+            separator=XML_SEPARATOR,
+            footer_prefix=XML_FOOTER_PREFIX,
+            footer_suffix=XML_FOOTER_SUFFIX,
+            render_item=_xml_item,
+        )
+        return path.read_text(encoding="ascii")
 
 
 def _python_item(index: int) -> str:
@@ -1351,6 +1428,8 @@ def _default_sizes(operation: Operation) -> tuple[float, ...]:
         return DEFAULT_REALISTIC_SIZES_MB
     if operation.source_format == "python":
         return DEFAULT_PYTHON_SIZES_MB
+    if operation.source_format == "xml":
+        return DEFAULT_XML_SIZES_MB
     if operation.source_format == "json":
         return DEFAULT_JSON_SIZES_MB
     if operation.yaml_typ == "safe-c":
@@ -1425,6 +1504,13 @@ def generate_files(
         footer_prefix = YAML_FOOTER_PREFIX
         footer_suffix = YAML_FOOTER_SUFFIX
         render_item = _yaml_item
+    elif source_format == "xml":
+        suffix = ".xml"
+        header = XML_HEADER
+        separator = XML_SEPARATOR
+        footer_prefix = XML_FOOTER_PREFIX
+        footer_suffix = XML_FOOTER_SUFFIX
+        render_item = _xml_item
     elif source_format == "python":
         suffix = ".py"
         header = PYTHON_HEADER
@@ -1515,6 +1601,11 @@ def _validate_sample(
     path: Path, source_format: str, *, encoding: str = "ascii"
 ) -> None:
     text = path.read_text(encoding=encoding)
+    if source_format == "xml":
+        validate_xml(text)
+        if "<item " not in text:
+            raise RuntimeError("Synthetic xml document did not parse.")
+        return
     if source_format == "json":
         parsed = json.loads(text)
     elif source_format == "python":
@@ -1652,7 +1743,11 @@ def _time_once(
 
 
 def _warmup(operation: Operation) -> None:
-    samples = {"json": '{"warmup":1}\n', "python": "{'warmup': 1}\n"}
+    samples = {
+        "json": '{"warmup":1}\n',
+        "python": "{'warmup': 1}\n",
+        "xml": "<warmup/>\n",
+    }
     operation.phases(samples.get(operation.source_format, "warmup: 1\n"))
 
 

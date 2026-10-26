@@ -18,6 +18,7 @@ from galley.core.diff import DiffResult, diff, load_document
 from galley.core.errors import InputError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
+from galley.core.formats import format_named
 from galley.core.problems import Problem, collect_problems
 
 TEMP_PREFIX = ".galley-"
@@ -214,9 +215,16 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
 
 
 def _scan_folds(text: str, target: str) -> bytes:
-    """Fold ranges for the Output, found here so the UI thread does not scan."""
-    fmt = "YAML" if target.strip().lower() == "yaml" else "JSON"
-    return pack_ranges(fold_ranges(text, fmt), line_count(text))
+    """Fold ranges for the Output, found here so the UI thread does not scan.
+
+    Only JSON and YAML Output folds. XML has no fold ranges yet.
+    """
+    kind = format_named(target).name
+    if kind == "yaml":
+        return pack_ranges(fold_ranges(text, "YAML"), line_count(text))
+    if kind == "json":
+        return pack_ranges(fold_ranges(text, "JSON"), line_count(text))
+    return b""
 
 
 def _write_output(job: FormatJob, payload: bytes, event_queue: Queue) -> str:
@@ -300,12 +308,18 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
     """Load both sides, then diff them. Left is checked before right.
 
     This is the whole compare job without the queue, so it also runs
-    in-process. A side that fails stops the job before ``diff`` runs.
+    in-process. A side that fails stops the job before ``diff`` runs. A
+    side whose format does not load to a value, such as XML, fails before
+    it is read, whatever the app offered.
     """
     sides: tuple[tuple[CompareSide, str, str], ...] = (
         ("left", job.left_text, job.left_format),
         ("right", job.right_text, job.right_format),
     )
+    for side, _text, source in sides:
+        refused = _not_comparable(source)
+        if refused is not None:
+            return CompareFailureEvent(job.job_id, side, refused)
     docs = []
     for side, text, source in sides:
         early = collect_problems(text, source)
@@ -323,6 +337,20 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
         error = exc if isinstance(exc, InputError) else None
         return CompareFailureEvent(job.job_id, None, _failure_message(exc), error)
     return CompareEvent(job.job_id, result)
+
+
+def _not_comparable(source: str) -> str | None:
+    """Why a ``source`` document can't be compared, or None when it can.
+
+    An unknown name is None here. Loading that side reports it.
+    """
+    try:
+        fmt = format_named(source)
+    except ValueError:
+        return None
+    if fmt.loads_to_value:
+        return None
+    return f"{fmt.label} can't be compared."
 
 
 def _execute_compare(job: CompareJob, event_queue: Queue) -> None:

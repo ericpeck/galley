@@ -1,6 +1,7 @@
 """Galley application shell."""
 
 import importlib
+import pyexpat
 import sys
 
 from PySide6.QtWidgets import QApplication, QMainWindow
@@ -12,6 +13,7 @@ from galley.app.appearance import install_appearance
 from galley.app.fonts import ui_font
 from galley.app.main_window import MainWindow
 from galley.app.runtime import configure_runtime
+from galley.core.xml_format import expat_problem
 
 # Hidden from the window. The disk-image job runs the built executable with it.
 _SELF_CHECK_FLAG = "--self-check"
@@ -61,7 +63,8 @@ def run_self_check() -> int:
 
     A development checkout prints the ``ruamel.yaml.clib`` line. A frozen
     app also prints whether ``licenses_directory`` found license files
-    inside the bundle.
+    inside the bundle. The last line checks that expat is new enough for
+    XML.
     """
     lines: list[str] = []
     failed = False
@@ -79,6 +82,12 @@ def run_self_check() -> int:
         else:
             failed = True
             lines.append(f"LICENSES self-check: failed: {_one_line(license_problem)}")
+    expat_failure = expat_problem()
+    if expat_failure is None:
+        lines.append(f"expat self-check: ok {pyexpat.EXPAT_VERSION}")
+    else:
+        failed = True
+        lines.append(f"expat self-check: failed: {expat_failure}")
     print("\n".join(lines), flush=True)
     return 1 if failed else 0
 
@@ -93,8 +102,8 @@ def _one_line(problem: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     """Open one Galley window and run its event loop.
 
-    ``--self-check`` checks ``ruamel.yaml.clib`` and, when frozen, the
-    bundled LICENSES folder. It exits without a window.
+    ``--self-check`` checks ``ruamel.yaml.clib``, when frozen the bundled
+    LICENSES folder, and the expat version. It exits without a window.
     """
     configure_runtime()
     args = sys.argv if argv is None else argv
