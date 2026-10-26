@@ -9,6 +9,7 @@ import json
 import multiprocessing
 import pickle
 import re
+import sys
 import time
 from pathlib import Path
 from queue import Empty
@@ -729,15 +730,24 @@ def test_a_format_that_does_not_load_to_a_value_is_never_shown(monkeypatch) -> N
 # Perf budgets (``uv run pytest -m perf``), Isaac's on #107. Each is the
 # #104 Convert budget at that size plus 0.2 s of masking per MB, timed from
 # the job going in to its result coming out of a warm worker. macOS and
-# Windows use the same numbers.
+# Windows use the same numbers, except the YAML job on Windows below.
 _JOB_JSON_BUDGET_S = 0.7
 # #112 writes YAML through ruamel's pure-Python emitter on every platform so
 # both engines give identical bytes. The team chose to accept the slowdown
 # (#115 tracks making the C emitter match), so YAML gets 1 s until #115
-# lands. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
-# (192 KB at 0.2 s per MB), rounded up. It drops to 0.6 s when #115 restores
-# the 0.5 s YAML budget.
+# lands, as ``_CONVERT_YAML_BUDGET_S`` in ``test_convert_from_python.py``
+# does. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
+# (192 KB at 0.2 s per MB), rounded up. When #115 restores the 0.5 s YAML
+# budget, it drops ``_CONVERT_YAML_BUDGET_S`` and this one (to 0.6 s).
 _JOB_YAML_BUDGET_S = 1.1
+# Windows only, for the same job (#115): after #112 moved YAML to the
+# pure-Python emitter, the Windows runner measured 1084 ms against the 1.1 s
+# above, too close for the strict nightly. Isaac set 1.6 s, about 1.5x that
+# measurement. When #115 lands, Isaac resets it from that PR's measurement.
+_JOB_YAML_WINDOWS_BUDGET_S = 1.6
+_JOB_YAML_BUDGET_HERE_S = (
+    _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S
+)
 # 0.8 s to parse and format the line, plus 0.32 s of masking.
 _JOB_ONE_LINE_BUDGET_S = 1.2
 # The mask step alone on 1 MB with the default keys (#66).
@@ -749,7 +759,7 @@ _MASK_TREE_BUDGET_S = 0.2
     ("label", "render", "size", "source", "budget"),
     [
         ("1 MB JSON", pretty_json, ONE_MB, "json", _JOB_JSON_BUDGET_S),
-        ("192 KB YAML", yaml_text, YAML_BUSY_BYTES, "yaml", _JOB_YAML_BUDGET_S),
+        ("192 KB YAML", yaml_text, YAML_BUSY_BYTES, "yaml", _JOB_YAML_BUDGET_HERE_S),
         (
             "1.6 MB minified JSON line",
             one_line,
