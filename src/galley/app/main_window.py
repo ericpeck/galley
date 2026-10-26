@@ -8,6 +8,10 @@ from typing import NamedTuple
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QResizeEvent,
@@ -46,6 +50,7 @@ from galley.app.escape_string import (
     unescape_input,
     unescape_too_large_message,
 )
+from galley.app.file_drop import dropped_files
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
 
@@ -78,8 +83,10 @@ from galley.app.open_file import (
     save_last_open_dir,
 )
 from galley.app.open_text import (
+    DROP_WHILE_FORMATTING_TEXT,
     input_window_title,
     open_error_text,
+    opened_first_text,
     opened_text,
     opening_text,
     replace_input_text,
@@ -220,6 +227,7 @@ class MainWindow(QMainWindow):
         self._size_warning: QMessageBox | None = None
         self._replace_box: QMessageBox | None = None
         self._loading_path: Path | None = None
+        self._loading_of_files = 1
         self._open_job = 0
         self._reader = FileReader(self)
         self._reader.finished.connect(self._on_file_read)
@@ -249,6 +257,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
         self.setAutoFillBackground(True)
+        self.setAcceptDrops(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -1326,7 +1335,7 @@ class MainWindow(QMainWindow):
         """True when a file may replace the source pane's text now.
 
         Never while a format job runs, a file is loading, or a sheet is up.
-        Menu, shortcut, button, Open Recent, and later drop all ask this.
+        Menu, shortcut, button, Open Recent, and drop all ask this.
         """
         return not (
             self._formatting
@@ -1335,19 +1344,20 @@ class MainWindow(QMainWindow):
             or self._size_warning is not None
         )
 
-    def open_path(self, path: Path) -> None:
+    def open_path(self, path: Path, *, of_files: int = 1) -> None:
         """Load ``path`` into the source pane. Opening never formats.
 
         Every way of opening a file comes through here. Unsaved edits are
-        confirmed first.
+        confirmed first. ``of_files`` counts a drop of several files, of
+        which ``path`` is the first and the only one opened (#86).
         """
         if not self.can_open():
             return
         pane = self._source_pane()
         if input_needs_replace(pane.editor.toPlainText(), pane.document):
-            self._ask_replace_input(path)
+            self._ask_replace_input(path, of_files)
             return
-        self._start_loading(path)
+        self._start_loading(path, of_files)
 
     def cancel_open(self) -> None:
         """Drop the file being read. The read itself runs to its end."""
@@ -1358,6 +1368,45 @@ class MainWindow(QMainWindow):
         self._loading_path = None
         self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._source_pane().set_drop_highlight(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Open the first dropped file. A format in progress refuses it."""
+        self._source_pane().set_drop_highlight(False)
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        if self._formatting:
+            self._status.set_state(DROP_WHILE_FORMATTING_TEXT)
+            return
+        self.open_path(files[0], of_files=len(files))
+
+    def _follow_file_drag(self, event: QDragMoveEvent) -> None:
+        """Take a file anywhere in the window and outline the source pane.
+
+        Every drop opens into the source pane, so it is outlined wherever
+        the file is. While a format runs the drag is still taken, so the
+        drop can say why it was refused, but the pane gets no outline (#86).
+        """
+        pane = self._source_pane()
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            pane.set_drop_highlight(False)
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        pane.set_drop_highlight(self.can_open())
 
     def _source_pane(self) -> PaneWidget:
         """The pane Open fills: the one whose spec is a source (#73)."""
@@ -1387,7 +1436,7 @@ class MainWindow(QMainWindow):
             return None
         return Path(filename)
 
-    def _ask_replace_input(self, path: Path) -> None:
+    def _ask_replace_input(self, path: Path, of_files: int = 1) -> None:
         """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
         box = QMessageBox(self)
         box.setObjectName("replaceInput")
@@ -1415,16 +1464,17 @@ class MainWindow(QMainWindow):
             if not accepted or not self.can_open():
                 self._return_focus_to_input()
                 return
-            self._start_loading(path)
+            self._start_loading(path, of_files)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_loading(self, path: Path) -> None:
+    def _start_loading(self, path: Path, of_files: int = 1) -> None:
         """Read ``path`` off the UI thread. Open and Format wait for it."""
         self._opened_status_timer.stop()
         self._open_job += 1
         self._loading_path = path
+        self._loading_of_files = of_files
         self._sync_format_button()
         self._open_reveal_timer.start(OPEN_REVEAL_MS)
         self.open_started.emit()
@@ -1476,6 +1526,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(input_window_title(path.name))
         self.setWindowFilePath(str(path))
         status = opened_text(path.name, si_size(loaded.size))
+        if self._loading_of_files > 1:
+            status = opened_first_text(self._loading_of_files)
         self._opened_status = status
         self._status.set_state(status, str(path))
         self._opened_status_timer.start(OPENED_STATUS_MS)
