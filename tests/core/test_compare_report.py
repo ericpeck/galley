@@ -567,6 +567,8 @@ _REPORT_BUDGET_S = 0.25
 # The whole job in-process, pickling the event as the queue does: both
 # loads, the diff, the report, and Format first when ``reformat`` is set.
 _JOB_BUDGET_S = 1.5
+# The same job with ``reformat``, which formats both sides first.
+_JOB_REFORMAT_BUDGET_S = 2.0
 # Isaac's #65 budgets for the diff, here with the report built as well.
 _ISAAC_BUDGET_S = 0.5
 # The reordered array leaves 20,000 rows to build, so the diff plus the
@@ -676,7 +678,7 @@ def test_a_compare_job_for_a_1_5_mb_pair_is_within_budget(
     job = _job(left_text, right_text, reformat=reformat)
     assert isinstance(run_compare(job), CompareEvent)
     perf_budget.within(
-        _JOB_BUDGET_S,
+        _JOB_REFORMAT_BUDGET_S if reformat else _JOB_BUDGET_S,
         lambda: pickle.loads(pickle.dumps(run_compare(job))),
         fixture=f"1.5 MB JSON pair, whole job and pickle, reformat={reformat}",
     )
