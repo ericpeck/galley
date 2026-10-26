@@ -107,6 +107,7 @@ from galley.app.problems_settings import (
     save_split_sizes,
     save_stacked_panes,
 )
+from galley.app.recent_files import RecentFilesMenu, remember_recent_file
 from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
 from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
@@ -386,6 +387,8 @@ class MainWindow(QMainWindow):
         file_menu = _add_menu(bar, "File")
         file_menu.setToolTipsVisible(True)
         file_menu.addAction(actions.open_file)
+        self._recent_menu = RecentFilesMenu(file_menu)
+        file_menu.addMenu(self._recent_menu)
 
         edit = _add_menu(bar, "Edit")
         edit.addAction(actions.undo)
@@ -594,6 +597,8 @@ class MainWindow(QMainWindow):
         actions = self._actions
         actions.about.triggered.connect(self._show_about)
         actions.open_file.triggered.connect(self._open_file)
+        self._recent_menu.open_requested.connect(self.open_path)
+        self.open_finished.connect(self._remember_recent)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -1321,7 +1326,7 @@ class MainWindow(QMainWindow):
         """True when a file may replace the source pane's text now.
 
         Never while a format job runs, a file is loading, or a sheet is up.
-        Menu, shortcut, button, and later drop and recents all ask this.
+        Menu, shortcut, button, Open Recent, and later drop all ask this.
         """
         return not (
             self._formatting
@@ -1477,6 +1482,10 @@ class MainWindow(QMainWindow):
         self.open_finished.emit(document)
         self._return_focus_to_input()
 
+    def _remember_recent(self, document: InputDocument) -> None:
+        remember_recent_file(document.path)
+        self._recent_menu.rebuild()
+
     def _clear_opened_status(self) -> None:
         if self._formatting or self._status.state_text() != self._opened_status:
             return
@@ -1490,6 +1499,9 @@ class MainWindow(QMainWindow):
         available = self.can_open()
         action.setEnabled(available)
         action.setToolTip(OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else "")
+        recent = self._recent_menu.menuAction()
+        recent.setEnabled(available)
+        recent.setToolTip(action.toolTip())
         open_button = self._source_pane().open_button
         if open_button is not None:
             open_button.setEnabled(available)
