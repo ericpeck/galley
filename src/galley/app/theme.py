@@ -4,7 +4,8 @@ Widgets paint ``QPalette`` roles. These samples seed the light palette so
 light mode matches the spec. Dark mode starts from the platform's own dark
 palette and only fixes the roles below it that miss the contrast rules.
 The only sample a widget may name is ``ACCENT`` (``#0080A6``), and only
-for the Format button fill and the find highlight. Syntax colors stay hex.
+for the Format button fill and the find highlight. Syntax colors and the
+diff kind colors stay hex.
 macOS window-control colors belong to platform chrome and are not roles
 here.
 """
@@ -13,6 +14,8 @@ from collections.abc import Sequence
 from typing import Final
 
 from PySide6.QtGui import QColor, QPalette
+
+from galley.core.diff import ChangeKind
 
 WINDOW_BG: Final = "#F3F2F2"
 PANE_EDGE: Final = "#7D7979"
@@ -66,6 +69,25 @@ TEXT_MUTED_DARK: Final = "#A8A4A4"
 # 3.35:1). 5.38:1 on #171717 and 4.66:1 on the dark gutter #242424, and
 # dimmer than the dark punctuation TEXT_MUTED_DARK.
 LINE_NUMBER_DARK: Final = "#908C89"
+
+# Diff kind inks, Bill's B1 answer on #65. Removed is orange so it stays
+# clear of the error red. Moved uses the accent: ACCENT in light mode and
+# ACCENT_TEXT_DARK in dark. Each clears 3:1 as a glyph on Base, the gutter,
+# its tint, and the current-line band, in both modes.
+ADDED: Final = "#1A7F37"
+ADDED_DARK: Final = "#57AB5A"
+REMOVED: Final = "#B35900"
+REMOVED_DARK: Final = "#E0823D"
+CHANGED: Final = "#7A5C00"
+CHANGED_DARK: Final = "#C9A227"
+_CHANGE_INKS: Final[dict[ChangeKind, tuple[str, str]]] = {
+    "added": (ADDED, ADDED_DARK),
+    "removed": (REMOVED, REMOVED_DARK),
+    "changed": (CHANGED, CHANGED_DARK),
+    "moved": (ACCENT, ACCENT_TEXT_DARK),
+}
+# Share of the kind's ink over Base for a changed line's band (B1).
+CHANGE_TINT_SHARE: Final = 0.12
 
 # Role names match the spec table. Guide depth lists the two sampled hues.
 COLORS: Final[dict[str, str]] = {
@@ -362,6 +384,18 @@ def problem_line_tint(palette: QPalette) -> QColor:
         return QColor(ERROR_TINT)
     base = palette.color(QPalette.ColorRole.Base)
     return mix(base, QColor(ERROR_DARK), _ERROR_TINT_DARK_SHARE)
+
+
+def change_color(kind: ChangeKind, palette: QPalette) -> QColor:
+    """Ink for a diff kind's glyph in the scheme ``palette`` belongs to."""
+    light, dark = _CHANGE_INKS[kind]
+    return QColor(dark if is_dark(palette) else light)
+
+
+def change_tint(kind: ChangeKind, palette: QPalette) -> QColor:
+    """Band behind a changed line: 12% of the kind's ink over Base."""
+    base = palette.color(QPalette.ColorRole.Base)
+    return mix(base, change_color(kind, palette), CHANGE_TINT_SHARE)
 
 
 def _first_passing(
