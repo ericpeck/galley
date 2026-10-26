@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="style.xsl"?>
+<!-- Generated  fake   data -->
+<root><!-- first child --><a/><?app  do-this ?><b><![CDATA[ x < y && z > w ]]></b><c>before <![CDATA[<raw>]]> after</c><!--
+  multi-line
+  comment
+--><d/></root>
+<!-- trailing -->
+<?trailing pi?>

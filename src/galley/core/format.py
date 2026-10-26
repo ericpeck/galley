@@ -1,4 +1,4 @@
-"""JSON and YAML formatting.
+"""JSON, YAML, and XML formatting.
 
 Invalid UTF-8, documents nested past ``MAX_DEPTH``, and JSON lone-surrogate
 escapes raise ``InputError``. So does a YAML surrogate escape on its way to
@@ -15,6 +15,10 @@ name and ordered by ``repr``, so the order does not follow
 
 ``sort_keys=True`` reorders the output only; the input text is never
 changed. See :func:`sort_mapping_keys` for the ordering rule.
+
+XML is formatted by ``galley.core.xml_format`` and is written only as XML.
+It reaches ``format_document`` once the format table has an XML row, which
+#63 slice 3 adds with the picker item.
 """
 
 import json
@@ -61,7 +65,8 @@ from galley.core.errors import (
     nesting_error,
     utf8_input_error,
 )
-from galley.core.formats import format_named
+from galley.core.formats import format_named, targets_for
+from galley.core.xml_format import format_xml
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
 # Past this depth a document that is still within MAX_DEPTH would hit
@@ -1033,13 +1038,18 @@ def format_document(
 ) -> str:
     """Format ``text`` from ``source`` into ``target``.
 
-    ``source`` and ``target`` are ``json`` or ``yaml`` (case-insensitive).
-    Same-format calls go through ``format_json`` and ``format_yaml``, so
-    located ``InputError`` checks stay exactly those functions.
-    ``sort_keys`` orders the output's keys with :func:`sort_mapping_keys`.
+    ``source`` and ``target`` are format names (case-insensitive). Same-format
+    calls go through ``format_json``, ``format_yaml``, and ``format_xml``, so
+    located ``InputError`` checks stay exactly those functions. A pair
+    ``targets_for`` does not list raises ``ValueError``. ``sort_keys`` orders
+    JSON and YAML output keys with :func:`sort_mapping_keys`; XML ignores it.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
+    if target_kind not in (fmt.name for fmt in targets_for(source_kind)):
+        raise ValueError(f"Can't write {source.strip()} as {target.strip()}.")
+    if source_kind == "xml":
+        return format_xml(text)
     if source_kind == "json" and target_kind == "json":
         return format_json(text, sort_keys=sort_keys)
     if source_kind == "yaml" and target_kind == "yaml":
@@ -1061,9 +1071,10 @@ def load_document(text: str | bytes, source: str) -> object:
     The text passes the same checks as ``format_json`` or ``format_yaml``
     and raises the same errors. YAML is then loaded from ``text`` itself
     with the pure-Python parser, not from the rendered text, so an anchor
-    and each of its aliases are one shared object, scalars included.
+    and each of its aliases are one shared object, scalars included. A
+    format that does not load to a value, such as XML, raises ``ValueError``.
     """
-    if _normalize_format(source) == "json":
+    if _value_format(source) == "json":
         return json.loads(format_json(text))
     format_yaml(text)
     return _load_parsed(text, _yaml_limits(text, pure=True), pure=True)
@@ -1074,9 +1085,10 @@ def dump_value(value: object, target: str) -> str:
 
     JSON uses the JSON dumper. YAML uses the pure-Python safe emitter that
     ``format_yaml`` shows, and falls back to the explicit-stack block dump
-    for a value too deep for ruamel.
+    for a value too deep for ruamel. A format that does not load to a value
+    raises ``ValueError``.
     """
-    if _normalize_format(target) == "json":
+    if _value_format(target) == "json":
         return _dump_json(value)
     try:
         return _dump_parsed(value, pure=True)
@@ -1144,6 +1156,14 @@ def _key_order(item: tuple[object, object]) -> str:
 
 def _normalize_format(name: str) -> str:
     return format_named(name).name
+
+
+def _value_format(name: str) -> str:
+    """The name of a format that loads to a value. Others raise ``ValueError``."""
+    fmt = format_named(name)
+    if not fmt.loads_to_value:
+        raise ValueError(f"{fmt.label} doesn't load to a value.")
+    return fmt.name
 
 
 def _dump_json(
