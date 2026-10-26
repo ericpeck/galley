@@ -32,6 +32,7 @@ from queue import Empty
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from galley.app.banner import FORMATTER_STOPPED, banner_text
+from galley.app.escape_string import NOT_JSON_VALUE_MESSAGE
 from galley.app.problem_text import (
     DisplayProblem,
     display_input_error,
@@ -764,7 +765,12 @@ def _displayed_problems(
 
 
 def _failure_text(event: FailureEvent) -> str:
-    """Banner sentence for a located error; other failures keep their message."""
+    """Banner sentence for a located error or a value JSON can't hold.
+
+    Other failures keep their message.
+    """
+    if event.not_json_value:
+        return NOT_JSON_VALUE_MESSAGE
     if event.error is None:
         return event.message
     return banner_text(event.error)

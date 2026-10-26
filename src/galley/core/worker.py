@@ -15,7 +15,7 @@ from multiprocessing.queues import Queue
 from typing import BinaryIO, Literal
 
 from galley.core.diff import DiffResult, diff, load_document
-from galley.core.errors import InputError
+from galley.core.errors import InputError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.problems import Problem, collect_problems
@@ -75,8 +75,9 @@ class FailureEvent:
     """Formatting failed. ``temp_path`` is set when a temp file was created.
 
     ``error`` is set when the failure is an ``InputError``. Its ``kind``,
-    ``lineno``, ``colno``, and ``details`` are the structured fields. The
-    banner sentence is built in the app, not here.
+    ``lineno``, ``colno``, and ``details`` are the structured fields.
+    ``not_json_value`` is True for a ``NotJSONValueError``. The banner
+    sentence is built in the app, not here.
     """
 
     job_id: int
@@ -84,6 +85,7 @@ class FailureEvent:
     temp_path: str | None = None
     error: InputError | None = None
     problems: tuple[Problem, ...] = ()
+    not_json_value: bool = False
 
 
 @dataclass(frozen=True)
@@ -271,7 +273,14 @@ def _failure_event(
     problems: tuple[Problem, ...] = ()
     if error is None:
         problems = collect_problems(job.text, job.source, exc)
-    return FailureEvent(job.job_id, _failure_message(exc), temp_path, error, problems)
+    return FailureEvent(
+        job.job_id,
+        _failure_message(exc),
+        temp_path,
+        error,
+        problems,
+        not_json_value=isinstance(exc, NotJSONValueError),
+    )
 
 
 def _failure_message(exc: Exception) -> str:

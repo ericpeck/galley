@@ -1,11 +1,11 @@
 """One editor pane: tab strip, editor, footer, empty state."""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Never
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
@@ -50,6 +50,20 @@ class PaneSpec:
     title: str
     format_label: str
     kind: PaneKind
+
+
+class StripShed(IntEnum):
+    """How much a narrow tab strip has given up, in the order it gives way.
+
+    Each step keeps the earlier ones: the format caption hides first, then
+    Pop out drops its text, then the tab title is shortened with "…".
+    Tooltips and accessible names keep the full words at every step.
+    """
+
+    NONE = 0
+    CAPTION = 1
+    POP_OUT_TEXT = 2
+    TITLE = 3
 
 
 class PaneRole:
@@ -111,6 +125,92 @@ class PaneWidget(QWidget):
     def format_name(self) -> str:
         return self.format_combo.currentText()
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.tab_strip and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ):
+            self.fit_tab_strip()
+        return super().eventFilter(watched, event)
+
+    def full_strip_width(self) -> int:
+        """Pane width at which the tab strip sheds nothing."""
+        return self._pane_width(self._strip_width(StripShed.NONE))
+
+    def min_strip_width(self) -> int:
+        """Narrowest pane width at which the fully shed strip, title "…", fits."""
+        return self._pane_width(self._strip_width(StripShed.TITLE, "…"))
+
+    def _pane_width(self, strip_width: int) -> int:
+        margins = self.layout().contentsMargins()
+        return strip_width + margins.left() + margins.right()
+
+    def fit_tab_strip(self, width: int | None = None) -> StripShed:
+        """Shed strip parts until the strip fits ``width`` (default: its own).
+
+        Nothing here knows about the window, so any pane, including the
+        two equal Compare panes, fits the same way.
+        """
+        available = self.tab_strip.width() if width is None else width
+        shed = StripShed.NONE
+        while shed < StripShed.TITLE and self._strip_width(shed) > available:
+            shed = StripShed(shed + 1)
+        self._apply_strip_shed(shed, available)
+        return shed
+
+    def strip_shed(self) -> StripShed:
+        return self._strip_shed
+
+    def _strip_width(self, shed: StripShed, title: str | None = None) -> int:
+        """Strip width with ``shed`` applied and ``title`` (default: the full one)."""
+        title_extra = self._tab_title.sizeHint().width() - _text_width(
+            self._tab_title, self._tab_title.text()
+        )
+        parts = [
+            _text_width(self._tab_title, title or self.spec.title) + title_extra,
+            _hint_width(self.close_tab_button),
+            _hint_width(self.new_tab_button),
+            _hint_width(self.format_combo),
+            self.pop_out_button.icon_width()
+            if shed >= StripShed.POP_OUT_TEXT
+            else self.pop_out_button.text_width(),
+        ]
+        if shed < StripShed.CAPTION:
+            parts.append(_hint_width(self._format_caption))
+        row = self.tab_strip.layout()
+        margins = row.contentsMargins()
+        spacing = row.spacing() * (len(parts) - 1)
+        return margins.left() + margins.right() + spacing + sum(parts)
+
+    def _apply_strip_shed(self, shed: StripShed, available: int) -> None:
+        self._strip_shed = shed
+        caption_shown = shed < StripShed.CAPTION
+        self._format_caption.setVisible(caption_shown)
+        self.format_combo.setToolTip("" if caption_shown else self.spec.format_label)
+        self.pop_out_button.set_icon_only(shed >= StripShed.POP_OUT_TEXT)
+        title = self.spec.title
+        if shed >= StripShed.TITLE:
+            spare = available - self._strip_width(shed)
+            room = _text_width(self._tab_title, title) + spare
+            title = self._elided_title(room)
+        self._tab_title.setText(title)
+        self._tab_title.setToolTip("" if title == self.spec.title else self.spec.title)
+        # The strip's layout already placed its parts for this resize, so
+        # place them again now rather than one event late.
+        self.tab_strip.layout().activate()
+
+    def _elided_title(self, room: int) -> str:
+        """The longest "…" form of the title whose label fits ``room``."""
+        metrics = self._tab_title.fontMetrics()
+        title = self.spec.title
+        while room > 0:
+            elided = metrics.elidedText(title, Qt.TextElideMode.ElideRight, room)
+            if elided and _text_width(self._tab_title, elided) <= room:
+                return elided
+            room -= 1
+        return "…"
+
     def set_empty_visible(self, visible: bool) -> None:
         self.empty_overlay.setVisible(visible)
         if visible:
@@ -136,6 +236,8 @@ class PaneWidget(QWidget):
     def _build_tab_strip(self) -> None:
         tab = QLabel(self.spec.title)
         tab.setObjectName(f"{self.spec.name}TabTitle")
+        tab.setAccessibleName(self.spec.title)
+        self._tab_title = tab
         tab.setStyleSheet("padding: 4px 8px;")
         tab_font = ui_font()
         tab_font.setBold(True)
@@ -156,13 +258,14 @@ class PaneWidget(QWidget):
         self.new_tab_button.setStyleSheet(muted_text_style())
 
         format_caption = QLabel(self.spec.format_label)
+        format_caption.setObjectName(f"{self.spec.name}FormatCaption")
         format_caption.setStyleSheet(muted_text_style())
+        self._format_caption = format_caption
         self.format_combo = self._format_combo(self.spec.format_label)
         format_caption.setBuddy(self.format_combo)
 
         self.pop_out_button = PopOutButton()
-        self.pop_out_button.setAccessibleName("Pop out into window")
-        self.pop_out_button.setToolTip("Pop out into window")
+        self.pop_out_button.setObjectName(f"{self.spec.name}PopOut")
 
         row = QHBoxLayout(self.tab_strip)
         row.setContentsMargins(8, 4, 8, 4)
@@ -174,6 +277,8 @@ class PaneWidget(QWidget):
         row.addWidget(format_caption)
         row.addWidget(self.format_combo)
         row.addWidget(self.pop_out_button)
+        self._strip_shed = StripShed.NONE
+        self.tab_strip.installEventFilter(self)
 
     def _format_combo(self, accessible_name: str) -> QComboBox:
         self.format_combo = FormatComboBox()
@@ -282,6 +387,17 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(self.count_label)
         row.addWidget(self.copy_button)
+
+
+def _hint_width(widget: QWidget) -> int:
+    """Width a box layout gives ``widget`` when there is room for it."""
+    hint = widget.sizeHint().width()
+    return max(widget.minimumWidth(), min(widget.maximumWidth(), hint))
+
+
+def _text_width(label: QLabel, text: str) -> int:
+    """Text width as QLabel sizes it. ``horizontalAdvance`` rounds differently."""
+    return label.fontMetrics().size(0, text).width()
 
 
 def _source_empty_heading() -> str:

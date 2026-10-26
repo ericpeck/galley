@@ -18,7 +18,7 @@ nothing to show is hidden and takes no space.
 from enum import Enum, auto
 
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent, QFont
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QStatusBar, QWidget
 
 from galley.app.fonts import ui_font
@@ -113,6 +113,7 @@ class StatusBar(QStatusBar):
         self._cancel.hide()
         self._cancel.clicked.connect(self.cancel_clicked)
         self._direction = _text_slot("directionLabel", font, INFO_RESERVE)
+        self._announcement = ""
         self.addWidget(self._spinner)
         self.addWidget(self._message, 1)
         self.addWidget(self._counts)
@@ -134,6 +135,16 @@ class StatusBar(QStatusBar):
     def set_problem_count(self, count: int) -> None:
         """Show ``N problems`` in the state slot and accept a click."""
         self._message.show_problem_count(count)
+
+    def announce(self, text: str) -> None:
+        """Ask screen readers to read ``text`` now, from the state slot."""
+        self._announcement = text
+        QAccessible.updateAccessibility(
+            QAccessibleAnnouncementEvent(self._message, text)
+        )
+
+    def last_announcement(self) -> str:
+        return self._announcement
 
     def state_text(self) -> str:
         """The full state text, even while the slot shows it elided."""

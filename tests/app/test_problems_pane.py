@@ -287,6 +287,10 @@ def test_closed_state_persists_across_a_new_window(qtbot) -> None:
     assert not restored.isVisible()
     assert restored.messages() == ["Couldn't read this JSON on line 1."]
     assert not _action(again, "Show Problems").isChecked()
+    # Problems narrows before the tab strips shed (#91 D2), and Windows'
+    # wider fonts need more than 1280 px for the saved width and both strips.
+    again.resize(1800, again.height())
+    qtbot.waitUntil(lambda: again.width() == 1800, timeout=15000)
     _action(again, "Show Problems").trigger()
     qtbot.waitUntil(lambda: restored.isVisible(), timeout=15000)
     assert abs(restored.width() - saved) <= 40

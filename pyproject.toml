@@ -57,3 +57,9 @@ select = ["E", "F", "I", "UP", "S102", "S307", "TID251"]
 testpaths = ["tests"]
 pythonpath = ["."]
 qt_api = "pyside6"
+# Wall-clock budgets run only with -m perf. A later -m on the command line
+# replaces this one.
+addopts = "-m 'not perf'"
+markers = [
+    "perf: wall-clock budget; deselected by default, run with -m perf (tests/perf.py)",
+]
