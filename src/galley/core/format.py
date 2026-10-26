@@ -1,10 +1,17 @@
 """JSON and YAML formatting.
 
 Invalid UTF-8, documents nested past ``MAX_DEPTH``, and JSON lone-surrogate
-escapes raise ``InputError``. A JSON object that repeats a key raises
+escapes raise ``InputError``. So does a YAML surrogate escape on its way to
+JSON output. A JSON object that repeats a key raises
 ``JSONDuplicateKeyError`` instead of keeping the last value. Other syntax
 errors keep the line and column from the parser. Banner sentences are not
 built here.
+
+Every YAML dump uses the pure-Python emitter, so the text is the same with
+or without ``ruamel.yaml.clib``. A ``!!set`` is written with its string
+members first, in code-point order, then its other members grouped by type
+name and ordered by ``repr``, so the order does not follow
+``PYTHONHASHSEED``.
 
 ``sort_keys=True`` reorders the output only; the input text is never
 changed. See :func:`sort_mapping_keys` for the ordering rule.
@@ -14,6 +21,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from io import StringIO
 
 from ruamel.yaml import YAML
@@ -27,8 +35,9 @@ from ruamel.yaml.events import (
     SequenceStartEvent,
 )
 from ruamel.yaml.main import CEmitter, CParser
-from ruamel.yaml.nodes import ScalarNode
+from ruamel.yaml.nodes import MappingNode, ScalarNode
 from ruamel.yaml.reader import ReaderError
+from ruamel.yaml.representer import SafeRepresenter
 from ruamel.yaml.tokens import (
     BlockEndToken,
     BlockMappingStartToken,
@@ -47,10 +56,12 @@ from galley.core.errors import (
     DuplicateKey,
     InputError,
     JSONDuplicateKeyError,
+    NotJSONValueError,
     escape_error,
     nesting_error,
     utf8_input_error,
 )
+from galley.core.formats import format_named
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
 # Past this depth a document that is still within MAX_DEPTH would hit
@@ -102,6 +113,14 @@ _LONE_SURROGATE_RE = re.compile(
     "[\ud800-\udfff]"
 )
 _CHARACTER_WALK = object()
+
+# A surrogate in a YAML value, and the escape the pure-Python emitter writes
+# for one. YAML ``\u`` and ``\U`` escapes are code points, so two escapes
+# that would be a UTF-16 pair in JSON are two surrogates here.
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+_RENDERED_SURROGATE_RE = re.compile(r"\\(?:u|U0000)[dD][89a-fA-F][0-9a-fA-F]{2}")
+_YAML_HEX_ESCAPE_WIDTHS = {"x": 2, "u": 4, "U": 8}
+_YAML_LINE_BREAKS = frozenset("\n\x85\u2028\u2029")
 
 # A JSON string with the colon that makes it a key, or one bracket. In valid
 # JSON a string followed by a colon is always a key of the innermost object.
@@ -268,8 +287,27 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
     return buffer.getvalue()
 
 
+def _set_member_key(member: object) -> tuple[int, str, str]:
+    """Sort key for a ``!!set`` member: strings by code point, then the rest."""
+    if isinstance(member, str):
+        return (0, "", member)
+    return (1, type(member).__name__, repr(member))
+
+
+class _BlockRepresenter(SafeRepresenter):
+    """Safe representer that writes ``!!set`` members in a fixed order."""
+
+    def represent_set(self, data: set[object]) -> MappingNode:
+        members = dict.fromkeys(sorted(data, key=_set_member_key))
+        return self.represent_mapping("tag:yaml.org,2002:set", members)
+
+
+_BlockRepresenter.add_representer(set, _BlockRepresenter.represent_set)
+
+
 def _block_dumper(yaml: YAML) -> YAML:
-    """Set the block style, key order and width every YAML dump shares."""
+    """Set the block style, key order, set order and width every dump shares."""
+    yaml.Representer = _BlockRepresenter
     yaml.default_flow_style = False
     yaml.representer.sort_base_mapping_type_on_output = False
     yaml.width = YAML_DUMP_WIDTH
@@ -1009,11 +1047,10 @@ def format_document(
     if source_kind == "json":
         value = json.loads(format_json(text, sort_keys=sort_keys))
         return _dump_yaml_value(value)
-    rendered = format_yaml(text)
+    value = yaml_json_value(text)
     opened = _yaml_limits(text)
     try:
-        loaded = _load_rendered_yaml(text, rendered)
-        return _dump_json(_ordered(loaded, sort_keys))
+        return _dump_json(_ordered(value, sort_keys), default=_not_json_value)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1106,35 +1143,156 @@ def _key_order(item: tuple[object, object]) -> str:
 
 
 def _normalize_format(name: str) -> str:
-    kind = name.strip().lower()
-    if kind not in {"json", "yaml"}:
-        raise ValueError(f"Unsupported format: {name}")
-    return kind
+    return format_named(name).name
 
 
-def _dump_json(value: object, *, sort_keys: bool = False) -> str:
+def _dump_json(
+    value: object,
+    *,
+    sort_keys: bool = False,
+    default: Callable[[object], object] | None = None,
+) -> str:
     """``sort_keys`` is for JSON input, whose keys are all strings."""
-    return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=sort_keys) + "\n"
+    return (
+        json.dumps(
+            value, indent=2, ensure_ascii=False, sort_keys=sort_keys, default=default
+        )
+        + "\n"
+    )
+
+
+def _not_json_value(value: object) -> object:
+    """``json.dumps`` hook for a YAML value JSON can't hold, at any depth."""
+    raise NotJSONValueError(f"JSON can't hold a {type(value).__name__} value")
 
 
 def _dump_yaml_value(value: object) -> str:
-    """Dump ``value`` with the same safe block style ``format_yaml`` uses."""
-    yaml = _block_dumper(YAML(typ="safe"))
-    buffer = StringIO()
+    """Dump ``value`` with the pure-Python emitter ``format_yaml`` shows.
+
+    The C emitter escapes characters past U+FFFF (``"\\U0001F600"``) and
+    quotes some strings differently, so it is not used.
+    """
     try:
-        yaml.dump(value, buffer)
+        dumped = _dump_parsed(value, pure=True)
     except RecursionError:
         return _dump_block(value)
-    dumped = buffer.getvalue()
     if dumped and not dumped.endswith("\n"):
         return dumped + "\n"
     return dumped
 
 
+def yaml_json_value(text: str | bytes) -> object:
+    """Return the value Format to JSON writes for YAML ``text``.
+
+    The text passes ``format_yaml``'s checks and raises its errors. The
+    rendered text is loaded back, and a surrogate in that value raises a
+    ``bad_escape`` ``InputError`` at its escape in ``text``. JSON output
+    can't hold a lone surrogate, and JSON input rejects one the same way.
+    """
+    rendered = format_yaml(text)
+    value = _load_rendered_yaml(text, rendered)
+    if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
+        raise _yaml_surrogate_error(text)
+    return value
+
+
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:
-    """Load YAML text ``format_yaml`` already accepted."""
-    yaml = YAML(typ="safe")
+    """Load YAML text ``format_yaml`` already accepted.
+
+    The C parser rejects some pure-Python emitter output, such as a
+    surrogate escape or a root ``!!binary`` block. Then pure Python loads
+    it, as ``format_yaml`` retries a C parser error.
+    """
     try:
-        return yaml.load(rendered)
+        return _load_rendered_with(original, rendered, pure=False)
+    except YAMLError:
+        if not _clib_available():
+            raise
+    return _load_rendered_with(original, rendered, pure=True)
+
+
+def _load_rendered_with(original: str | bytes, rendered: str, *, pure: bool) -> object:
+    try:
+        return _safe_yaml(pure=pure).load(rendered)
     except RecursionError:
-        return _yaml_from_events(original)
+        return _yaml_from_events(original, pure=pure)
+
+
+def _value_has_surrogate(value: object) -> bool:
+    """Return True when a string key or value in ``value`` holds a surrogate.
+
+    An alias can make a container hold itself, so each one is visited once.
+    """
+    stack = [value]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if isinstance(node, str):
+            if _SURROGATE_RE.search(node):
+                return True
+            continue
+        if not isinstance(node, (dict, list, set)) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, dict):
+            stack.extend(node.keys())
+            stack.extend(node.values())
+        else:
+            stack.extend(node)
+    return False
+
+
+def _yaml_surrogate_error(text: str | bytes) -> InputError:
+    """Locate the first surrogate escape in a double-quoted scalar of ``text``.
+
+    Surrogates reach a YAML value only through ``\\u``, ``\\U`` escapes in
+    double-quoted scalars, since the reader rejects raw ones. Pure-Python
+    marks count characters of the decoded text, a leading BOM included.
+    """
+    source = text.decode("utf-8") if isinstance(text, bytes) else text
+    for token in _safe_yaml(pure=True).scan(text):
+        if not isinstance(token, ScalarToken) or token.style != '"':
+            continue
+        if not _SURROGATE_RE.search(token.value):
+            continue
+        start = token.start_mark
+        raw = source[start.index : token.end_mark.index]
+        found = _surrogate_escape(raw)
+        if found is None:
+            continue
+        offset, literal = found
+        line, column = _yaml_position(raw, offset, start.line, start.column)
+        return escape_error(line + 1, column + 1, literal)
+    raise AssertionError("surrogate value without a surrogate escape")
+
+
+def _surrogate_escape(raw: str) -> tuple[int, str] | None:
+    """Return the offset and text of the first surrogate escape in ``raw``."""
+    index = 1
+    while index < len(raw):
+        if raw[index] != "\\":
+            index += 1
+            continue
+        width = _YAML_HEX_ESCAPE_WIDTHS.get(raw[index + 1 : index + 2])
+        if width is None:
+            index += 2
+            continue
+        literal = raw[index : index + 2 + width]
+        if _HIGH_MIN <= int(literal[2:], 16) <= _LOW_MAX:
+            return index, literal
+        index += len(literal)
+    return None
+
+
+def _yaml_position(raw: str, offset: int, line: int, column: int) -> tuple[int, int]:
+    """Advance a 0-based ruamel mark over ``raw[:offset]``, as its reader does."""
+    for index in range(offset):
+        char = raw[index]
+        if char in _YAML_LINE_BREAKS or (
+            char == "\r" and raw[index + 1 : index + 2] != "\n"
+        ):
+            line += 1
+            column = 0
+        elif char != "\ufeff":
+            column += 1
+    return line, column

@@ -9,7 +9,7 @@ from galley.app.main import create_main_window
 from galley.app.problem_text import display_problem
 from galley.app.problems_pane import ProblemsPane
 from galley.app.problems_settings import load_stacked_panes, problems_settings
-from galley.app.shortcuts import STACK_PANES
+from galley.app.shortcuts import STACK_PANES, STACK_PANES_ALT
 from galley.app.splitter import RESET_NAME
 from galley.core.problems import Problem
 
@@ -136,8 +136,11 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     window = _show(qtbot)
     labels = _labels(_menu(window, "View"))
     show = labels.index("Show Problems")
-    # The fold section (#64) sits between Show Problems and Stack Panes.
-    assert labels[show + 1 : show + 8] == [
+    # Next and Previous Problem (#78), then the fold section (#64), sit
+    # between Show Problems and Stack Panes.
+    assert labels[show + 1 : show + 10] == [
+        "Next Problem",
+        "Previous Problem",
         "|",
         "Expand all",
         "Collapse all",
@@ -149,11 +152,14 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     action = _action(window, "Stack Panes")
     assert action.isCheckable()
     assert not action.isChecked()
+    # Ctrl+\ comes first, so it is the one the menu shows.
+    assert action.shortcuts() == [STACK_PANES, STACK_PANES_ALT]
     assert action.shortcut() == STACK_PANES
-    assert (
-        action.shortcut().toString(QKeySequence.SequenceFormat.PortableText)
-        == "Ctrl+Alt+L"
-    )
+    portable = QKeySequence.SequenceFormat.PortableText
+    assert [key.toString(portable) for key in action.shortcuts()] == [
+        "Ctrl+\\",
+        "Ctrl+Shift+L",
+    ]
 
 
 def test_stack_panes_toggles_orientation_and_the_shortcut(qtbot) -> None:
@@ -174,17 +180,23 @@ def test_stack_panes_toggles_orientation_and_the_shortcut(qtbot) -> None:
 
     window.activateWindow()
     qtbot.waitUntil(window.isActiveWindow)
-    qtbot.keySequence(window, QKeySequence("Ctrl+Alt+L"))
+    qtbot.keySequence(window, QKeySequence("Ctrl+\\"))
     assert not action.isChecked()
     assert splitter.orientation() == Qt.Orientation.Horizontal
     assert _origin(input_pane, window).x() < _origin(output_pane, window).x()
 
     qtbot.keySequence(
         window,
-        QKeySequence(Qt.ControlModifier | Qt.AltModifier | Qt.Key.Key_L),
+        QKeySequence(Qt.ControlModifier | Qt.Key.Key_Backslash),
     )
     assert action.isChecked()
     assert splitter.orientation() == Qt.Orientation.Vertical
+
+    control = Qt.KeyboardModifier.ControlModifier
+    shift = Qt.KeyboardModifier.ShiftModifier
+    qtbot.keyClick(window, Qt.Key.Key_L, control | shift)
+    assert not action.isChecked()
+    assert splitter.orientation() == Qt.Orientation.Horizontal
 
 
 def test_toggle_keeps_text_cursor_scroll_and_ratio(qtbot) -> None:

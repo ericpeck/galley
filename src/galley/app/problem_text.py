@@ -1,7 +1,7 @@
 """Plain-language sentences for syntax problems.
 
-Core reports a code and a line. The words live here, with no column and
-no character offset.
+Core reports a code, a line, and a column. The words live here. A
+sentence names the line only; a pane row shows the column beside it.
 """
 
 import json
@@ -13,6 +13,10 @@ from galley.core.problems import Problem, ProblemCode
 
 # Longer keys are cut to this many characters and end with "…".
 KEY_DISPLAY_LIMIT = 40
+
+# After the scan guessed at a repair, a later problem may come from the guess.
+UNCERTAIN_SUFFIX = "(may be caused by an earlier error)"
+STOPPED_TEXT = "Galley stopped checking after this point."
 
 
 def message_for(problem: Problem) -> str:
@@ -42,6 +46,8 @@ def message_for(problem: Problem) -> str:
         return _duplicate_key_text(problem.token, line)
     if code == "json_other":
         return f"Couldn't read this JSON on line {line}."
+    if code == "json_stopped":
+        return STOPPED_TEXT
     if code == "yaml_tab":
         return f"Line {line} starts with a tab. YAML needs spaces for indenting."
     if code == "yaml_incomplete":
@@ -80,7 +86,10 @@ def accessible_text(problem: Problem) -> str:
             f"Line {problem.lineno}: Starts with a tab. "
             "YAML needs spaces for indenting."
         )
-    return f"Line {problem.lineno}: {message_for(problem)}"
+    message = message_for(problem)
+    if problem.uncertain:
+        message = f"{message} {UNCERTAIN_SUFFIX}"
+    return f"Line {problem.lineno}: {message}"
 
 
 def problem_count_text(count: int) -> str:
@@ -89,14 +98,56 @@ def problem_count_text(count: int) -> str:
     return f"{count} {noun}"
 
 
-class DisplayProblem:
-    """One row in the Problems pane."""
+def place_text(lineno: int, colno: int) -> str:
+    """``Line N, Col M``, or ``Line N`` when the column is not known."""
+    if colno > 0:
+        return f"Line {lineno}, Col {colno}"
+    return f"Line {lineno}"
 
-    def __init__(self, lineno: int, message: str, accessible: str, code: str) -> None:
+
+def shown_count_text(shown: int, total: int) -> str:
+    """The note under a cut list: ``Showing the first 100 of 240 problems.``"""
+    return f"Showing the first {shown} of {total} problems."
+
+
+def announcement_text(count: int, first: "DisplayProblem") -> str:
+    """What a screen reader hears after a check that found problems."""
+    message = first.message.rstrip(".")
+    return f"{problem_count_text(count)}. First: {message}, line {first.lineno}"
+
+
+class DisplayProblem:
+    """One row in the Problems pane.
+
+    ``colno`` is 0 when the column is not known. An ``uncertain`` row may
+    come from an earlier problem and shows ``UNCERTAIN_SUFFIX``. A
+    ``json_stopped`` row is a note that ends the list, not a problem.
+    """
+
+    def __init__(
+        self,
+        lineno: int,
+        message: str,
+        accessible: str,
+        code: str,
+        colno: int = 0,
+        uncertain: bool = False,
+    ) -> None:
         self.lineno = lineno
         self.message = message
         self.accessible = accessible
         self.code = code
+        self.colno = colno
+        self.uncertain = uncertain
+
+    def is_note(self) -> bool:
+        return self.code == "json_stopped"
+
+    def full_message(self) -> str:
+        """The message with the uncertain suffix, as the row shows it."""
+        if self.uncertain:
+            return f"{self.message} {UNCERTAIN_SUFFIX}"
+        return self.message
 
 
 def display_problem(problem: Problem) -> DisplayProblem:
@@ -106,6 +157,8 @@ def display_problem(problem: Problem) -> DisplayProblem:
         message_for(problem),
         accessible_text(problem),
         problem.code,
+        problem.colno,
+        problem.uncertain,
     )
 
 
@@ -117,4 +170,5 @@ def display_input_error(error: InputError) -> DisplayProblem:
     """
     message = banner_text(error)
     line = error.lineno if error.lineno is not None else 1
-    return DisplayProblem(line, message, f"Line {line}: {message}", error.kind)
+    column = error.colno if error.colno is not None else 0
+    return DisplayProblem(line, message, f"Line {line}: {message}", error.kind, column)

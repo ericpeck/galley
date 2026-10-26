@@ -24,9 +24,12 @@ from galley.app.shortcuts import (
     EXPAND_ALL,
     FOLD,
     FORMAT,
+    NEXT_PROBLEM,
+    PREVIOUS_PROBLEM,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
     STACK_PANES,
+    STACK_PANES_ALT,
     UNESCAPE_STRING,
     UNFOLD,
     WORD_WRAP,
@@ -41,6 +44,7 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Preferences",
     "Find",
     "Guides",
+    "Pop out",
     "Indent",
     "Minify",
     "Validate",
@@ -55,6 +59,8 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Find": ("find",),
     # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
     "Guides": ("guides_off", "guides_lines", "guides_depth"),
+    # The Window menu and the tab strip's Pop out ship together (#91 D8).
+    "Pop out": ("pop_out", "show_window", "bring_back"),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -307,7 +313,12 @@ class ShellActions:
             shortcut=STACK_PANES,
             checkable=True,
         )
+        self.stack_panes.setShortcuts([STACK_PANES, STACK_PANES_ALT])
         self.stack_panes.setObjectName("stackPanes")
+        self.next_problem = _action(parent, "Next Problem")
+        self.next_problem.setShortcuts(list(NEXT_PROBLEM))
+        self.previous_problem = _action(parent, "Previous Problem")
+        self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
         self.appearance_light = _action(parent, "Light", checkable=True)
         self.appearance_dark = _action(parent, "Dark", checkable=True)
@@ -397,6 +408,9 @@ class ShellActions:
             self.guides_off,
             self.guides_lines,
             self.guides_depth,
+            self.pop_out,
+            self.show_window,
+            self.bring_back,
             self.rename,
             self.duplicate,
             self.close_tab,
@@ -417,9 +431,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.pop_out,
-            self.show_window,
-            self.bring_back,
             self.outdent,
         ]
 

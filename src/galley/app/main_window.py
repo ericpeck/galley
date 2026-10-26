@@ -40,6 +40,7 @@ from galley.app.appearance import (
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
+    convert_python_too_large_message,
     escape_input,
     escape_too_large_message,
     unescape_input,
@@ -56,6 +57,8 @@ from galley.app.limits import (
     JSON_BUSY_BYTES,
     JSON_PROGRESS_BYTES,
     JSON_WARNING_BYTES,
+    PYTHON_TO_JSON_BYTES,
+    PYTHON_TO_YAML_BYTES,
     YAML_BUSY_BYTES,
     YAML_PROGRESS_BYTES,
     YAML_TAB_BUSY_BYTES,
@@ -83,7 +86,11 @@ from galley.app.open_text import (
 )
 from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
-from galley.app.problem_text import DisplayProblem, problem_count_text
+from galley.app.problem_text import (
+    DisplayProblem,
+    announcement_text,
+    problem_count_text,
+)
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import (
     MIN_WIDTH,
@@ -116,6 +123,7 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
+from galley.core.formats import YAML, format_named
 from galley.core.load import LoadedDocument, LoadError
 
 NOT_YET_MESSAGE = "Not yet available."
@@ -290,6 +298,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._settle_split()
+        self._layout_problems()
 
     def _settle_split(self) -> None:
         splitter = self._splitter
@@ -408,6 +417,8 @@ class MainWindow(QMainWindow):
         guides.addAction(actions.guides_lines)
         guides.addAction(actions.guides_depth)
         view.addAction(actions.show_problems)
+        view.addAction(actions.next_problem)
+        view.addAction(actions.previous_problem)
         view.addSeparator()
         view.addAction(actions.expand_all)
         view.addAction(actions.collapse_all)
@@ -601,6 +612,8 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.next_problem.triggered.connect(self._next_problem)
+        actions.previous_problem.triggered.connect(self._previous_problem)
         actions.expand_all.triggered.connect(self._expand_all)
         actions.collapse_all.triggered.connect(self._collapse_all)
         actions.fold.triggered.connect(self._output_pane.editor.fold_at_cursor)
@@ -669,6 +682,8 @@ class MainWindow(QMainWindow):
         for pane in (self._input_pane, self._output_pane):
             coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
+            coming_soon_wrapper(pane.pop_out_button, actions.pop_out)
+            pane.pop_out_button.sync_tool_tip()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format from whichever editor has focus."""
@@ -790,13 +805,24 @@ class MainWindow(QMainWindow):
             self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
 
     def _convert_python(self) -> None:
-        """Convert the input literal into the output editor and show notices."""
+        """Convert the input literal into the output editor and show notices.
+
+        This runs on the UI thread, so Input must be no larger than the limit
+        for the Output format. Above it, Output is left unchanged.
+        """
         if self._formatting:
             return
         text = self._input_pane.editor.toPlainText()
         if _is_blank(text):
             return
-        result = convert_python(text, self._output_pane.format_name())
+        target = self._output_pane.format_name()
+        size = _utf8_size(text)
+        yaml_target = target.casefold() == "yaml"
+        limit = PYTHON_TO_YAML_BYTES if yaml_target else PYTHON_TO_JSON_BYTES
+        if size > limit:
+            self._status.set_state(convert_python_too_large_message(si_size(size)))
+            return
+        result = convert_python(text, target)
         if isinstance(result, ConvertError):
             self._status.set_state(result.message)
             return
@@ -806,7 +832,6 @@ class MainWindow(QMainWindow):
                 " ".join(notice.message for notice in result.notices)
             )
             return
-        target = self._output_pane.format_name()
         self._status.set_state(f"Converted to {target}.")
 
     def _escape_string(self) -> None:
@@ -971,7 +996,8 @@ class MainWindow(QMainWindow):
             self._reveal_timer.stop()
             self._apply_problems(rows)
             return
-        self._finish_format(problem_count_text(len(rows)))
+        count = sum(1 for row in rows if not row.is_note())
+        self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
 
     def _finish_format(self, status: str) -> None:
@@ -996,24 +1022,55 @@ class MainWindow(QMainWindow):
         self._output_pane.editor.setReadOnly(locked)
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
-        self._problems_pane.set_problems(rows)
+        """Fill the pane, mark the gutter, count, and tell screen readers.
+
+        Only listed rows get a gutter marker, so every marker has a row to
+        select. The count is every problem.
+        """
+        pane = self._problems_pane
+        pane.set_problems(rows)
+        shown = pane.shown()
         messages: dict[int, list[str]] = {}
-        for row in rows:
-            messages.setdefault(row.lineno, []).append(row.message)
+        for row in shown:
+            messages.setdefault(row.lineno, []).append(row.full_message())
         self._input_pane.editor.set_problem_messages(
             {lineno: "\n".join(texts) for lineno, texts in messages.items()}
         )
         self._layout_problems()
-        self._status.set_problem_count(len(rows))
+        self._status.set_problem_count(pane.count())
+        if shown:
+            self._status.announce(announcement_text(pane.count(), shown[0]))
 
     def _clear_problems(self) -> None:
         self._problems_pane.set_problems(())
         self._input_pane.editor.set_problem_lines(set())
         self._layout_problems()
 
-    def _jump_to_problem(self, lineno: int) -> None:
+    def _next_problem(self) -> None:
+        self._step_problem(forward=True)
+
+    def _previous_problem(self) -> None:
+        self._step_problem(forward=False)
+
+    def _step_problem(self, *, forward: bool) -> None:
+        """Go to the listed problem after or before the Input cursor, wrapping."""
+        shown = self._problems_pane.shown()
+        if not shown:
+            return
+        here = self._input_pane.editor.cursor_place()
+        places = [(row.lineno, max(row.colno, 1)) for row in shown]
+        if forward:
+            later = [index for index, place in enumerate(places) if place > here]
+            index = later[0] if later else 0
+        else:
+            earlier = [index for index, place in enumerate(places) if place < here]
+            index = earlier[-1] if earlier else len(places) - 1
+        self._problems_pane.select_row(index)
+        self._jump_to_problem(shown[index].lineno, shown[index].colno)
+
+    def _jump_to_problem(self, lineno: int, colno: int = 0) -> None:
         editor = self._input_pane.editor
-        editor.reveal_line(lineno)
+        editor.reveal_line(lineno, colno)
         self._active_editor = editor
         self._update_caption()
         self._update_focus_ring()
@@ -1041,6 +1098,7 @@ class MainWindow(QMainWindow):
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
         save_stacked_panes(stacked)
+        self._layout_problems()
 
     def _apply_stacked_layout(self, stacked: bool) -> None:
         splitter = self._splitter
@@ -1115,8 +1173,21 @@ class MainWindow(QMainWindow):
             return
         pane.setMaximumWidth(16_777_215)
         pane.setMinimumWidth(MIN_WIDTH)
-        width = min(self._problems_width, max(MIN_WIDTH, total - 240))
+        # Shrink toward MIN_WIDTH before the tab strips shed (#91 D2).
+        # The saved width stays as the user left it.
+        room = total - splitter.handleWidth() - self._panes_full_width()
+        width = min(self._problems_width, max(MIN_WIDTH, min(room, total - 240)))
         splitter.setSizes([width, max(0, total - width)])
+
+    def _panes_full_width(self) -> int:
+        """Input / Output width at which neither tab strip sheds, split evenly."""
+        widths = [
+            pane.full_strip_width() for pane in (self._input_pane, self._output_pane)
+        ]
+        splitter = self._splitter
+        if splitter is None or splitter.orientation() == Qt.Orientation.Vertical:
+            return max(widths)
+        return 2 * max(widths) + splitter.handleWidth()
 
     def _on_problems_splitter_moved(self, pos: int, _index: int) -> None:
         sizes = self._problems_splitter.sizes()
@@ -1649,7 +1720,7 @@ def _utf8_size(text: str) -> int:
 
 
 def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         if _has_tab(text):
             return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
@@ -1657,7 +1728,7 @@ def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
 
 
 def _warning_bytes(source: str) -> int:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
 

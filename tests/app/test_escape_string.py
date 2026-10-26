@@ -209,6 +209,26 @@ def test_escape_reports_yaml_values_json_cannot_hold(qtbot) -> None:
 
 @pytest.mark.parametrize(
     "text",
+    ["!!binary aGVsbG8=\n", "file:\n  data: !!binary aGVsbG8=\n", "day: 2020-01-01\n"],
+)
+def test_format_to_json_reports_yaml_values_json_cannot_hold(qtbot, text: str) -> None:
+    """Format shows the sentence Escape shows, not the ``json`` error text."""
+    window = _show(qtbot)
+    source, output = _editors(window)
+    _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
+    _child(window, QComboBox, "outputFormat").setCurrentText("JSON")
+    output.setPlainText("previous\n")
+    source.setPlainText(text)
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: _status(window) == NOT_JSON_VALUE_MESSAGE, timeout=15000)
+    assert NOT_JSON_VALUE_MESSAGE == (
+        "This document has a value JSON can't hold, such as a date or binary data."
+    )
+    assert source.toPlainText() == text
+
+
+@pytest.mark.parametrize(
+    "text",
     [
         '{"nested": {"list": [1, {"deep": [true, null]}]}, "empty": {}, "none": []}',
         '{"quote": "\\"", "slash": "\\\\", "lines": "a\\nb\\tc\\r\\n"}',
@@ -232,21 +252,22 @@ def test_shortcuts_use_the_control_modifier(qtbot) -> None:
     unescape = _action(window, _UNESCAPE)
     control = Qt.KeyboardModifier.ControlModifier
     shift = Qt.KeyboardModifier.ShiftModifier
-    alt = Qt.KeyboardModifier.AltModifier
     assert escape.shortcut() == QKeySequence(control | shift | Qt.Key.Key_E)
-    assert unescape.shortcut() == QKeySequence(control | alt | shift | Qt.Key.Key_E)
+    assert unescape.shortcut() == QKeySequence(
+        control | Qt.Key.Key_K, control | Qt.Key.Key_E
+    )
     assert escape.shortcut() == ESCAPE_AS_STRING
     assert unescape.shortcut() == UNESCAPE_STRING
     portable = QKeySequence.SequenceFormat.PortableText
     assert escape.shortcut().toString(portable) == "Ctrl+Shift+E"
-    assert unescape.shortcut().toString(portable) == "Ctrl+Alt+Shift+E"
+    assert unescape.shortcut().toString(portable) == "Ctrl+K, Ctrl+E"
     native = QKeySequence.SequenceFormat.NativeText
     if sys.platform == "darwin":
         assert escape.shortcut().toString(native) == "⇧⌘E"
-        assert unescape.shortcut().toString(native) == "⌥⇧⌘E"
+        assert unescape.shortcut().toString(native) == "⌘K, ⌘E"
     else:
         assert escape.shortcut().toString(native) == "Ctrl+Shift+E"
-        assert unescape.shortcut().toString(native) == "Ctrl+Alt+Shift+E"
+        assert unescape.shortcut().toString(native) == "Ctrl+K, Ctrl+E"
 
 
 def test_shortcut_keys_run_both_commands(qtbot) -> None:
@@ -257,14 +278,14 @@ def test_shortcut_keys_run_both_commands(qtbot) -> None:
     qtbot.waitUntil(source.hasFocus)
     control = Qt.KeyboardModifier.ControlModifier
     shift = Qt.KeyboardModifier.ShiftModifier
-    alt = Qt.KeyboardModifier.AltModifier
     qtbot.keyClick(source, Qt.Key.Key_E, control | shift)
     assert output.toPlainText() == '"{\\"a\\":1}"\n'
     assert source.toPlainText() == '{"a": 1}'
 
     source.setPlainText('"[1]"')
     source.setFocus()
-    qtbot.keyClick(source, Qt.Key.Key_E, control | alt | shift)
+    qtbot.keyClick(source, Qt.Key.Key_K, control)
+    qtbot.keyClick(source, Qt.Key.Key_E, control)
     assert output.toPlainText() == "[\n  1\n]\n"
     assert source.toPlainText() == '"[1]"'
 

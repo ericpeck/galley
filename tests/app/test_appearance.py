@@ -82,9 +82,35 @@ def _appearance_actions(window) -> dict[str, QAction]:
 
 
 def _pick(qtbot, window, label: str) -> None:
-    """Trigger View › Appearance › ``label`` and let deferred refreshes run."""
+    """Trigger View › Appearance › ``label`` and let deferred refreshes run.
+
+    The split rail and the format pickers copy palette colors on the next
+    event-loop turn. A slow runner can take longer than a fixed wait, so
+    this waits until those copies match the new palette.
+    """
     _appearance_actions(window)[label].trigger()
-    qtbot.wait(20)
+    qtbot.waitUntil(lambda: _deferred_copies_landed(window), timeout=5000)
+
+
+def _deferred_copies_landed(window) -> bool:
+    if not window.isVisible():
+        return True
+    muted = _palette().color(_R.PlaceholderText).name()
+    ratio = window.findChild(QLabel, "splitRatio")
+    if (
+        isinstance(ratio, QLabel)
+        and ratio.palette().color(_R.WindowText).name() != muted
+    ):
+        return False
+    ink = window.palette().color(_R.ButtonText).name()
+    for name in ("inputFormat", "outputFormat"):
+        picker = window.findChild(QComboBox, name)
+        if (
+            isinstance(picker, QComboBox)
+            and picker.palette().color(_R.ButtonText).name() != ink
+        ):
+            return False
+    return True
 
 
 def _palette() -> QPalette:

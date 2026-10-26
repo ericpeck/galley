@@ -3,7 +3,6 @@
 import json
 import random
 import sys
-import time
 from collections.abc import Callable
 
 import pytest
@@ -468,9 +467,11 @@ def test_fold_inks_meet_contrast(
 
 def test_actions_have_spec_shortcuts_and_tooltips(qtbot) -> None:
     window, _output = _formatted(qtbot)
+    # ⇧⌘[ switches tabs on macOS, so only macOS keeps ⌥⌘ (#95).
+    fold = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
     expected = {
-        "Fold": ("Ctrl+Alt+[", FOLD),
-        "Unfold": ("Ctrl+Alt+]", UNFOLD),
+        "Fold": (fold + "[", FOLD),
+        "Unfold": (fold + "]", UNFOLD),
         "Collapse all": ("Ctrl+K, Ctrl+0", COLLAPSE_ALL),
         "Expand all": ("Ctrl+K, Ctrl+J", EXPAND_ALL),
     }
@@ -486,10 +487,12 @@ def test_actions_have_spec_shortcuts_and_tooltips(qtbot) -> None:
         assert native_chord_text(COLLAPSE_ALL) == "⌘K ⌘0"
         assert native_chord_text(EXPAND_ALL) == "⌘K ⌘J"
         assert native_chord_text(FOLD) == "⌥⌘["
+        assert native_chord_text(UNFOLD) == "⌥⌘]"
     else:
         assert native_chord_text(COLLAPSE_ALL) == "Ctrl+K Ctrl+0"
         assert native_chord_text(EXPAND_ALL) == "Ctrl+K Ctrl+J"
-        assert native_chord_text(FOLD) == "Ctrl+Alt+["
+        assert native_chord_text(FOLD) == "Ctrl+Shift+["
+        assert native_chord_text(UNFOLD) == "Ctrl+Shift+]"
     collapse = _action(window, "Collapse all")
     expand = _action(window, "Expand all")
     assert collapse.toolTip() == (
@@ -559,7 +562,7 @@ def test_yaml_output_folds_by_indentation(qtbot) -> None:
     assert editor.fold_summary(1) == (" …", "2 keys")
 
 
-def test_collapse_all_on_2_mb_is_within_budget(qtbot) -> None:
+def _two_mb_output(qtbot) -> CodeEditor:
     records = [
         {
             "id": index,
@@ -574,20 +577,39 @@ def test_collapse_all_on_2_mb_is_within_budget(qtbot) -> None:
     assert len(text.encode("utf-8")) >= 2_000_000
     editor = _editor(qtbot, text)
     assert len(editor.fold_ranges()) > 20_000
-    best = float("inf")
-    for _ in range(3):
-        editor.expand_all()
-        editor.viewport().repaint()
-        QApplication.processEvents()
-        started = time.perf_counter()
-        editor.collapse_all()
-        editor.viewport().repaint()
-        editor.line_number_area().repaint()
-        best = min(best, time.perf_counter() - started)
+    return editor
+
+
+def _expand_and_paint(editor: CodeEditor) -> None:
+    editor.expand_all()
+    editor.viewport().repaint()
+    QApplication.processEvents()
+
+
+def _collapse_and_paint(editor: CodeEditor) -> None:
+    editor.collapse_all()
+    editor.viewport().repaint()
+    editor.line_number_area().repaint()
+
+
+def test_collapse_all_on_2_mb_folds_every_nested_container(qtbot) -> None:
+    editor = _two_mb_output(qtbot)
+    _expand_and_paint(editor)
+    _collapse_and_paint(editor)
     assert editor.folded_lines() == {2}.union(
         item.start_line + 1 for item in editor.fold_ranges() if item.depth > 1
     )
-    assert best <= _COLLAPSE_BUDGET_S, f"Collapse all took {best * 1000:.1f} ms"
+
+
+@pytest.mark.perf
+def test_collapse_all_on_2_mb_is_within_budget(qtbot, perf_budget) -> None:
+    editor = _two_mb_output(qtbot)
+    perf_budget.within(
+        _COLLAPSE_BUDGET_S,
+        lambda: _collapse_and_paint(editor),
+        setup=lambda: _expand_and_paint(editor),
+        fixture="2 MB JSON Output, 6100 records",
+    )
 
 
 def test_lines_above_a_fold_paint_as_qt_paints_them(qtbot) -> None:

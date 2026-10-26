@@ -133,6 +133,31 @@ def test_worker_error_reaches_the_parent_with_its_fields() -> None:
     assert error.details == {"escape": "\\uD800"}
 
 
+def test_worker_flags_a_value_json_cannot_hold() -> None:
+    events = _run_job(
+        FormatJob(
+            job_id=1,
+            text="file:\n  data: !!binary aGVsbG8=\n",
+            source="yaml",
+            target="json",
+        )
+    )
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.not_json_value is True
+    assert failure.error is None
+    assert failure.problems == ()
+
+
+def test_other_worker_failures_are_not_flagged() -> None:
+    events = _run_job(
+        FormatJob(job_id=1, text='{"a": "\\uD800"}', source="json", target="json")
+    )
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.not_json_value is False
+
+
 def test_worker_module_does_not_replace_the_destination() -> None:
     tree = ast.parse(WORKER_PATH.read_text(encoding="utf-8"))
     replaced = [

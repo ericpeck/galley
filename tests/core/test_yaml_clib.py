@@ -6,11 +6,13 @@ import warnings
 from datetime import date
 
 import pytest
+import ruamel.yaml.main as ruamel_main
 from ruamel.yaml import YAML
 from ruamel.yaml.main import CEmitter, CParser
 
 import galley.core.format as format_module
-from galley.core.format import format_yaml
+from galley.core.errors import InputError
+from galley.core.format import format_document, format_yaml
 
 # Malformed documents, documents the C parser accepts and pure Python rejects,
 # documents pure Python accepts and the C parser rejects, and edge cases whose
@@ -836,3 +838,41 @@ def test_format_comparison_fails_on_a_deliberate_mismatch() -> None:
     assert _formats_equal(format_yaml(document), expected)
     drifted = expected.replace("1", "9", 1)
     assert not _formats_equal(drifted, expected)
+
+
+_CONVERSIONS = (("yaml", "json"), ("json", "yaml"), ("yaml", "yaml"))
+
+
+def _conversion_outcome(text: str | bytes, source: str, target: str) -> object:
+    try:
+        return ("value", format_document(text, source, target))
+    except InputError as exc:
+        return ("input", exc.kind, exc.lineno, exc.colno, dict(exc.details))
+    except Exception as exc:
+        return ("error", type(exc).__name__, str(exc))
+
+
+def _conversion_outcomes(documents: list[str | bytes]) -> list[object]:
+    return [
+        _conversion_outcome(text, source, target)
+        for text in documents
+        for source, target in _CONVERSIONS
+    ]
+
+
+def test_conversions_match_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JSON to YAML and YAML to JSON give the pure-Python text or error (#110)."""
+    _require_clib()
+    documents: list[str | bytes] = [
+        *_CORPUS,
+        *_ci_comparison_documents(),
+        '{"a": "😀", "b": "two\\nlines", "c": ["\'x\'", "{\'k\': 1}"]}',
+        '{"a": "\\ud800"}',
+        "tags: !!set {beta, alpha}\n",
+    ]
+    with_c = _conversion_outcomes(documents)
+    monkeypatch.setattr(ruamel_main, "CParser", None)
+    monkeypatch.setattr(ruamel_main, "CEmitter", None)
+    monkeypatch.setattr(format_module, "_CLIB_READY", False)
+    assert format_module._safe_yaml(pure=False).Parser is not CParser
+    assert _conversion_outcomes(documents) == with_c
