@@ -497,10 +497,19 @@ def test_matches_in_folds_are_not_painted_until_shown(qtbot) -> None:
     window, output, bar = _output_with(qtbot)
     _action(window, "Find…").trigger()
     qtbot.keyClicks(bar.field, "price")
-    qtbot.keyClick(bar.field, Qt.Key.Key_Escape)
+    total = bar.match_count()
+    assert total == 5
+    # Keep the bar open. Escape would close it and clear every match, which
+    # would make an empty result say nothing about folds.
+    _focus(qtbot, output)
+    assert bar.isVisible()
     output.collapse_all()
     shown = output._find_selections()
-    assert shown == []
+    # Only the root's "price": "list price" line stays shown: 2 of 5 matches.
+    assert len(shown) == 2
+    assert all(selection.cursor.block().isVisible() for selection in shown)
+    output.expand_all()
+    assert len(output._find_selections()) == total
 
 
 # Edits and large documents ---------------------------------------------------
