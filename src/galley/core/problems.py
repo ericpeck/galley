@@ -1,26 +1,32 @@
 """Structured syntax problems.
 
 The codes here are stable ids. The sentences a person reads are chosen in
-``galley.app``. A YAML indent scan reports every leading tab at once, and
-a JSON document reports every repeated key at once. Other parsers still
-stop at the first problem, so those stay a single code.
+``galley.app``. A YAML indent scan reports every leading tab at once. A
+JSON document reports every syntax error and repeated key: after
+``json.loads`` fails, ``scan_json`` reads on past each error. Other YAML
+failures still stop at the first problem, so those stay a single code.
+Expat stops at the first XML error, so XML reports one ``xml_*`` code.
 """
 
 import json
 import re
-from dataclasses import dataclass
+from bisect import bisect_left
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.tokens import KeyToken, ScalarToken
 
-from galley.core.errors import JSONDuplicateKeyError
+from galley.core.errors import JSONDuplicateKeyError, XMLSyntaxError
+from galley.core.json_recover import Scan, Slip, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
 # linear, and strings are skipped so brackets inside them do not count.
 _STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
 _CLOSERS = {"[": "]", "{": "}"}
+_NEWLINE = re.compile("\n")
 
 ProblemCode = Literal[
     "missing_comma",
@@ -33,25 +39,47 @@ ProblemCode = Literal[
     "incomplete",
     "json_duplicate",
     "json_other",
+    "json_stopped",
     "yaml_tab",
     "yaml_incomplete",
     "yaml_duplicate",
     "yaml_colon",
     "yaml_other",
+    "xml_mismatched_tag",
+    "xml_unclosed",
+    "xml_bad_token",
+    "xml_duplicate_attribute",
+    "xml_undefined_entity",
+    "xml_entity_declared",
+    "xml_unbound_prefix",
+    "xml_after_root",
+    "xml_no_root",
+    "xml_other",
 ]
 
 
 @dataclass(frozen=True)
 class Problem:
-    """One located syntax problem. ``lineno`` is 1-based.
+    """One located syntax problem. ``lineno`` and ``colno`` are 1-based.
 
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
+    For XML it is the element, attribute, entity, or prefix named.
+    ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
+    when the problem was found after the JSON scan guessed at a repair,
+    so an earlier problem may have caused it.
+
+    ``json_stopped`` is not a problem: it ends the list when the scan
+    stopped at ``MAX_FINDINGS``, on the line where it stopped.
+
+    Problems compare by code, line, and token, the parts a sentence says.
     """
 
     code: ProblemCode
     lineno: int
     token: str = ""
+    colno: int = field(default=0, compare=False)
+    uncertain: bool = field(default=False, compare=False)
 
 
 def collect_problems(
@@ -62,8 +90,9 @@ def collect_problems(
     """Return problems to show before, or instead of, a raw parser message.
 
     YAML leading tabs are collected up front and the parser is not asked
-    to continue. Repeated JSON keys give one problem per key and line. Any
-    other failure contributes at most one problem.
+    to continue. Repeated JSON keys give one problem per key and line. A
+    JSON syntax error gives every problem ``scan_json`` finds, in text
+    order. Any other failure contributes at most one problem.
     """
     if source.strip().casefold() == "yaml":
         tabs = tuple(Problem("yaml_tab", line) for line in leading_tab_lines(text))
@@ -73,6 +102,8 @@ def collect_problems(
         return ()
     if isinstance(exc, JSONDuplicateKeyError):
         return duplicate_key_problems(exc)
+    if isinstance(exc, json.JSONDecodeError):
+        return json_problems(exc, text)
     found = classify_failure(exc, text)
     if found is None:
         return ()
@@ -101,8 +132,51 @@ def duplicate_key_problems(exc: JSONDuplicateKeyError) -> tuple[Problem, ...]:
     for duplicate in exc.duplicates:
         place = (duplicate.lineno, duplicate.key)
         if place not in found:
-            found[place] = Problem("json_duplicate", duplicate.lineno, duplicate.key)
+            found[place] = Problem(
+                "json_duplicate", duplicate.lineno, duplicate.key, duplicate.colno
+            )
     return tuple(found.values())
+
+
+def json_problems(exc: json.JSONDecodeError, text: str) -> tuple[Problem, ...]:
+    """Every problem in JSON ``text`` that ``json.loads`` rejected with ``exc``.
+
+    The first error ``scan_json`` finds must be the one ``exc`` names. If
+    it is not, only ``exc`` is reported, so the first error never changes.
+    Problems are sorted by line and column. Repeats of one key on one
+    line are one row, as in ``duplicate_key_problems``.
+    """
+    scan = scan_json(text)
+    first = scan.slips[0] if scan.slips else None
+    if first is None or (first.message, first.pos) != (exc.msg, exc.pos):
+        return (_classify_json(exc, text),)
+    return _scan_problems(scan, text)
+
+
+def _scan_problems(scan: Scan, text: str) -> tuple[Problem, ...]:
+    lines = _Lines(text)
+    found: list[Problem] = [_slip_problem(slip, text, lines) for slip in scan.slips]
+    for repeat in scan.repeats:
+        found.append(
+            Problem(
+                "json_duplicate",
+                lines.line_of(repeat.pos),
+                repeat.key,
+                lines.column(repeat.pos),
+                repeat.after_guess,
+            )
+        )
+    unique: dict[tuple[str, int, int, str], Problem] = {}
+    for problem in sorted(found, key=lambda item: (item.lineno, item.colno)):
+        column = 0 if problem.code == "json_duplicate" else problem.colno
+        place = (problem.code, problem.lineno, column, problem.token)
+        unique.setdefault(place, problem)
+    ordered = tuple(unique.values())
+    if scan.stopped_at is None:
+        return ordered
+    where = scan.stopped_at
+    stopped = Problem("json_stopped", lines.line_of(where), "", lines.column(where))
+    return (*ordered, stopped)
 
 
 def classify_failure(exc: BaseException, text: str) -> Problem | None:
@@ -113,49 +187,112 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
         return _classify_json(exc, text)
     if isinstance(exc, YAMLError):
         return _classify_yaml(exc, text)
+    if isinstance(exc, XMLSyntaxError):
+        return Problem(exc.code, exc.lineno, exc.token, exc.colno)
     return None
 
 
 def _classify_json(exc: json.JSONDecodeError, text: str) -> Problem:
-    message = exc.msg
-    char = _char_at(text, exc.pos)
+    quote = text.rfind('"', 0, exc.pos) if exc.pos > 0 else -1
+    return _json_problem(
+        text,
+        _Lines(text),
+        exc.msg,
+        exc.pos,
+        lambda: _innermost_open(text, exc.pos),
+        quote if quote >= 0 else exc.pos,
+    )
+
+
+def _slip_problem(slip: Slip, text: str, lines: "_Lines") -> Problem:
+    return _json_problem(
+        text,
+        lines,
+        slip.message,
+        slip.pos,
+        lambda: slip.opened,
+        slip.start,
+        uncertain=slip.after_guess,
+    )
+
+
+def _json_problem(
+    text: str,
+    lines: "_Lines",
+    message: str,
+    pos: int,
+    innermost: Callable[[], int | None],
+    quote: int,
+    *,
+    uncertain: bool = False,
+) -> Problem:
+    """Name the problem behind ``json.loads``'s ``message`` at ``pos``.
+
+    ``innermost`` returns the innermost bracket open at ``pos``. ``quote``
+    is where the string with an error opened.
+    """
+    char = _char_at(text, pos)
+    lineno = lines.line_of(pos)
+
+    def at(code: ProblemCode, index: int, token: str = "") -> Problem:
+        return Problem(
+            code, lines.line_of(index), token, lines.column(index), uncertain
+        )
+
     if message.startswith("Unterminated string"):
-        return Problem("unclosed_quote", exc.lineno)
+        return at("unclosed_quote", pos)
     if message.startswith("Invalid control character") and char in {"\n", "\r"}:
-        return Problem("unclosed_quote", exc.lineno)
+        # The quote opened on this line, since the line break is the error.
+        column = lines.column(quote) if lines.line_of(quote) == lineno else 0
+        return Problem("unclosed_quote", lineno, "", column, uncertain)
     if char == "'" and message in {
         "Expecting value",
         "Expecting property name enclosed in double quotes",
     }:
-        return Problem("single_quotes", exc.lineno)
+        return at("single_quotes", pos)
     if message == "Expecting property name enclosed in double quotes" and _word_start(
         char
     ):
-        return Problem("unquoted_key", exc.lineno)
+        return at("unquoted_key", pos)
     if message == "Expecting ',' delimiter":
-        if _at_end(text, exc.pos) or char in {"}", "]"}:
-            return _missing_close(text, exc.pos, exc.lineno)
-        return Problem("missing_comma", _comma_line(text, exc.lineno, exc.colno))
-    if _at_end(text, exc.pos):
-        return _missing_close(text, exc.pos, exc.lineno)
-    comma_at = _comma_before(text, exc.pos)
+        if _at_end(text, pos) or char in {"}", "]"}:
+            return _missing_close(lines, pos, innermost, uncertain)
+        line = _comma_line(lines, pos)
+        return Problem(
+            "missing_comma", line, "", _comma_column(lines, pos, line), uncertain
+        )
+    if _at_end(text, pos):
+        return _missing_close(lines, pos, innermost, uncertain)
+    comma_at = _comma_before(text, pos)
     if comma_at is not None:
-        return Problem("trailing_comma", _line_of_index(text, comma_at))
+        return at("trailing_comma", comma_at)
     if char in {"}", "]"}:
-        return Problem("unexpected_close", exc.lineno, char)
-    return Problem("json_other", max(exc.lineno, 1))
+        return at("unexpected_close", pos, char)
+    return Problem("json_other", max(lineno, 1), "", lines.column(pos), uncertain)
 
 
-def _missing_close(text: str, pos: int, lineno: int) -> Problem:
+def _missing_close(
+    lines: "_Lines",
+    pos: int,
+    innermost: Callable[[], int | None],
+    uncertain: bool,
+) -> Problem:
     """Name the innermost bracket still open at ``pos``.
 
-    The parser accepted everything before ``pos``, so one pass over that
-    prefix finds the open brackets. With none open, the text just ends.
+    With none open, the text just ends.
     """
-    opened = _innermost_open(text, pos)
+    opened = innermost()
     if opened is None:
-        return Problem("incomplete", _end_line(text, lineno))
-    return Problem("missing_close", _line_of_index(text, opened), text[opened])
+        line = _end_line(lines, lines.line_of(pos))
+        column = len(lines.line_text(line).rstrip()) + 1
+        return Problem("incomplete", line, "", column, uncertain)
+    return Problem(
+        "missing_close",
+        lines.line_of(opened),
+        lines.text[opened],
+        lines.column(opened),
+        uncertain,
+    )
 
 
 def _innermost_open(text: str, end: int) -> int | None:
@@ -178,14 +315,15 @@ def _classify_yaml(exc: YAMLError, text: str) -> Problem:
     problem = getattr(exc, "problem", None)
     detail = problem.casefold() if isinstance(problem, str) else ""
     line, column = _yaml_location(exc)
+    lines = _Lines(text)
     if "cannot start any token" in detail and (
-        "tab" in detail or _indent_has_tab(_line_text(text, line))
+        "tab" in detail or _indent_has_tab(lines.line_text(line))
     ):
         return Problem("yaml_tab", line)
     if "duplicate key" in detail:
         return Problem("yaml_duplicate", line, _yaml_key_at(text, line, column))
-    if _expects_delimiter(detail) and _at_line_start(text, line, column):
-        line = _previous_nonblank(text, line)
+    if _expects_delimiter(detail) and _at_line_start(lines, line, column):
+        line = _previous_nonblank(lines, line)
     if "unexpected end of stream" in detail:
         return Problem("yaml_incomplete", line)
     if "expected ':'" in detail:
@@ -246,16 +384,27 @@ def _yaml_location(exc: YAMLError) -> tuple[int, int]:
     return 1, 1
 
 
-def _comma_line(text: str, lineno: int, colno: int) -> int:
+def _comma_line(lines: "_Lines", pos: int) -> int:
     """Point a missing comma at the previous line when the parser is at its start."""
-    if _at_line_start(text, lineno, colno):
-        return _previous_nonblank(text, lineno)
+    lineno = lines.line_of(pos)
+    if _at_line_start(lines, lineno, lines.column(pos)):
+        return _previous_nonblank(lines, lineno)
     return max(lineno, 1)
 
 
-def _end_line(text: str, lineno: int) -> int:
-    if _line_text(text, lineno).strip() == "":
-        return _previous_nonblank(text, lineno)
+def _comma_column(lines: "_Lines", pos: int, line: int) -> int:
+    """The column just after the value that needs the comma."""
+    index = pos - 1
+    while index >= 0 and lines.text[index] in " \t\r\n":
+        index -= 1
+    if index >= 0 and lines.line_of(index) == line:
+        return lines.column(index) + 1
+    return len(lines.line_text(line).rstrip()) + 1
+
+
+def _end_line(lines: "_Lines", lineno: int) -> int:
+    if lines.line_text(lineno).strip() == "":
+        return _previous_nonblank(lines, lineno)
     return max(lineno, 1)
 
 
@@ -279,30 +428,50 @@ def _comma_before(text: str, pos: int) -> int | None:
     return None
 
 
-def _at_line_start(text: str, lineno: int, colno: int) -> bool:
-    prefix = _line_text(text, lineno)[: max(colno - 1, 0)]
+def _at_line_start(lines: "_Lines", lineno: int, colno: int) -> bool:
+    prefix = lines.line_text(lineno)[: max(colno - 1, 0)]
     return prefix.strip() == ""
 
 
-def _previous_nonblank(text: str, lineno: int) -> int:
-    lines = _lines(text)
-    index = min(max(lineno, 1), len(lines) + 1) - 2
-    while index >= 0:
-        if lines[index].strip() != "":
-            return index + 1
+def _previous_nonblank(lines: "_Lines", lineno: int) -> int:
+    index = min(max(lineno, 1), lines.count() + 1) - 1
+    while index >= 1:
+        if lines.line_text(index).strip() != "":
+            return index
         index -= 1
     return max(lineno, 1)
 
 
-def _line_of_index(text: str, index: int) -> int:
-    return text.count("\n", 0, max(index, 0)) + 1
+class _Lines:
+    """Where each line of ``text`` starts, so a lookup is a binary search.
 
+    Lines end at ``\n``, as ``json`` counts them. A ``\r`` before it stays
+    in the line's text.
+    """
 
-def _line_text(text: str, lineno: int) -> str:
-    lines = _lines(text)
-    if lineno < 1 or lineno > len(lines):
-        return ""
-    return lines[lineno - 1]
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self._breaks = [match.start() for match in _NEWLINE.finditer(text)]
+
+    def count(self) -> int:
+        return len(self._breaks) + 1
+
+    def line_of(self, index: int) -> int:
+        return bisect_left(self._breaks, max(index, 0)) + 1
+
+    def start(self, lineno: int) -> int:
+        return 0 if lineno <= 1 else self._breaks[lineno - 2] + 1
+
+    def column(self, index: int) -> int:
+        return max(index, 0) - self.start(self.line_of(index)) + 1
+
+    def line_text(self, lineno: int) -> str:
+        if lineno < 1 or lineno > self.count():
+            return ""
+        end = (
+            self._breaks[lineno - 1] if lineno <= len(self._breaks) else len(self.text)
+        )
+        return self.text[self.start(lineno) : end]
 
 
 def _lines(text: str) -> list[str]:

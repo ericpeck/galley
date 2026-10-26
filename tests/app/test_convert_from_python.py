@@ -2,13 +2,34 @@
 
 import json
 
+import pytest
+from benchmarks.size_bench import render_python_literal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QPushButton, QToolButton
 
+import galley.app.main_window as main_window_module
 from galley.app.editor import CodeEditor
+from galley.app.escape_string import convert_python_too_large_message
+from galley.app.limits import PYTHON_TO_JSON_BYTES, PYTHON_TO_YAML_BYTES
 from galley.app.main import create_main_window
+from galley.app.main_window import si_size
 from galley.app.parse_session import ParseSession
 from galley.core.convert_python import ConvertResult, convert_python
+
+# D6: Convert from Python runs on the UI thread, so at its limit the convert
+# itself must stay under about 0.5 s.
+_CONVERT_BUDGET_S = 0.5
+# #112 writes YAML through ruamel's pure-Python emitter on every platform so
+# both engines give identical bytes. The 192 KB YAML case went from about
+# 86 ms to 213 ms locally and measured 506 ms on the macOS CI runner, over the
+# 0.5 s nightly strict budget. The team chose to accept the slowdown (#115
+# tracks making the C emitter match), so YAML gets 1 s until #115 lands.
+_CONVERT_YAML_BUDGET_S = 1.0
+
+_LIMITS = pytest.mark.parametrize(
+    ("target", "limit"),
+    [("JSON", PYTHON_TO_JSON_BYTES), ("YAML", PYTHON_TO_YAML_BYTES)],
+)
 
 
 def _action(window, text: str) -> QAction:
@@ -150,6 +171,122 @@ def test_convert_success_names_the_output_format(qtbot) -> None:
     assert isinstance(yaml_result, ConvertResult)
     assert output.toPlainText() == yaml_result.text
     assert status.text() == "Converted to YAML."
+
+
+def _convert_window(qtbot, target: str):
+    window = create_main_window()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    output = window.findChild(CodeEditor, "outputEditor")
+    status = window.findChild(QLabel, "statusMessage")
+    output_format = window.findChild(QComboBox, "outputFormat")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(output, CodeEditor)
+    assert status is not None
+    assert isinstance(output_format, QComboBox)
+    output_format.setCurrentText(target)
+    return window, editor, output, status
+
+
+def _refuse_to_convert(*_args, **_kwargs):
+    raise AssertionError("Convert from Python ran above its size limit.")
+
+
+def test_size_limits_are_about_1_mb_to_json_and_192_kb_to_yaml() -> None:
+    assert PYTHON_TO_JSON_BYTES == 1_000_000
+    assert PYTHON_TO_YAML_BYTES == 192_000
+    assert PYTHON_TO_YAML_BYTES == main_window_module.YAML_BUSY_BYTES
+
+
+@_LIMITS
+def test_convert_runs_at_the_limit_for_the_output_format(qtbot, target, limit) -> None:
+    window, editor, output, status = _convert_window(qtbot, target)
+    text = render_python_literal(limit)
+    assert len(text.encode("utf-8")) == limit
+    editor.setPlainText(text)
+    _action(window, "Convert from Python").trigger()
+
+    result = convert_python(text, target)
+    assert isinstance(result, ConvertResult)
+    assert output.toPlainText() == result.text
+    assert status.text() == f"Converted to {target}."
+    assert editor.toPlainText() == text
+
+
+@_LIMITS
+def test_convert_refuses_one_byte_over_the_limit(
+    qtbot, monkeypatch, target, limit
+) -> None:
+    window, editor, output, status = _convert_window(qtbot, target)
+    output.setPlainText("previous\n")
+    text = render_python_literal(limit + 1)
+    editor.setPlainText(text)
+    monkeypatch.setattr(main_window_module, "convert_python", _refuse_to_convert)
+    _action(window, "Convert from Python").trigger()
+
+    assert output.toPlainText() == "previous\n"
+    assert editor.toPlainText() == text
+    assert status.text() == convert_python_too_large_message(si_size(limit + 1))
+
+
+@pytest.mark.parametrize(
+    ("target", "size", "message"),
+    [
+        (
+            "JSON",
+            3_300_000,
+            "This document is too large to convert from Python (3.3 MB). "
+            "The limit is about 1 MB for JSON or about 192 KB for YAML.",
+        ),
+        (
+            "YAML",
+            250_000,
+            "This document is too large to convert from Python (250 KB). "
+            "The limit is about 1 MB for JSON or about 192 KB for YAML.",
+        ),
+    ],
+)
+def test_size_message_names_the_size_and_both_limits(
+    qtbot, monkeypatch, target, size, message
+) -> None:
+    window, editor, output, status = _convert_window(qtbot, target)
+    output.setPlainText("previous\n")
+    editor.setPlainText(render_python_literal(size))
+    monkeypatch.setattr(main_window_module, "convert_python", _refuse_to_convert)
+    _action(window, "Convert from Python").trigger()
+    assert status.text() == message
+    assert output.toPlainText() == "previous\n"
+
+
+def test_size_is_utf8_bytes_of_input(qtbot, monkeypatch) -> None:
+    window, editor, output, status = _convert_window(qtbot, "YAML")
+    output.setPlainText("previous\n")
+    row = "    '" + "é" * 50 + "',\n"
+    text = "[\n" + row * 2000 + "]\n"
+    assert len(text) < PYTHON_TO_YAML_BYTES < len(text.encode("utf-8"))
+    editor.setPlainText(text)
+    monkeypatch.setattr(main_window_module, "convert_python", _refuse_to_convert)
+    _action(window, "Convert from Python").trigger()
+    size = si_size(len(text.encode("utf-8")))
+    assert status.text() == convert_python_too_large_message(size)
+    assert output.toPlainText() == "previous\n"
+
+
+@pytest.mark.perf
+@_LIMITS
+def test_convert_at_the_limit_is_within_budget(perf_budget, target, limit) -> None:
+    # The same work as the size bench rows python_to_json and python_to_yaml.
+    # Showing the result in Output costs the same as after a Format.
+    text = render_python_literal(limit)
+    assert isinstance(convert_python(text, target), ConvertResult)
+    budget = _CONVERT_YAML_BUDGET_S if target == "YAML" else _CONVERT_BUDGET_S
+    perf_budget.within(
+        budget,
+        lambda: convert_python(text, target),
+        fixture=f"{si_size(limit)} plain-catalog Python literal to {target}",
+    )
 
 
 def _menu(window, title: str) -> QMenu:
