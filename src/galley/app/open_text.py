@@ -48,6 +48,14 @@ def opened_text(file_name: str, size: str) -> str:
     return f"Opened {file_name} ({size})"
 
 
+def opened_first_text(count: int) -> str:
+    """Status after a drop of several files, when only the first opens."""
+    return f"Opened the first of {count} files."
+
+
+DROP_WHILE_FORMATTING_TEXT = "Can't open a file while formatting."
+
+
 def input_window_title(file_name: str) -> str:
     """Window title for a file loaded into Input."""
     return f"{file_name} — Galley"

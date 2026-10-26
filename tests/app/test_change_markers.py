@@ -37,6 +37,7 @@ from galley.app.theme import (
     contrast_ratio,
     error_color,
     find_highlight_color,
+    find_match_colors,
     is_dark,
     mix,
     problem_line_tint,
@@ -185,6 +186,8 @@ def test_each_tint_differs_from_selection_find_error_and_band(
     others = {
         "selection": composite(scheme.color(QPalette.ColorRole.Highlight), base),
         "find": find_highlight_color(),
+        "current find match": find_match_colors(scheme).current,
+        "other find match": find_match_colors(scheme).other,
         "error": problem_line_tint(scheme),
         "current-line band": composite(scheme.color(QPalette.ColorRole.Midlight), base),
         "Base": base,
@@ -273,6 +276,73 @@ def test_a_problem_outranks_a_change_on_the_same_line(qtbot, scheme: QPalette) -
     assert _bands(both) == {1: changed, 2: problem_line_tint(palette).rgb(), 3: changed}
     hit = both.marker_at(_marker_point(both, 2))
     assert hit is not None and hit.kind == PROBLEM_MARKERS
+
+
+# --- Layers ---------------------------------------------------------------
+# Eric's order, bottom to top: change tint, problem tint, Find highlight.
+
+_UNDER_FIND = ["problem", *_KINDS]
+# Line 2's run of spaces is the match, so no glyph sits where it is sampled.
+_FIND_TEXT = "x\nx        y\nx\n"
+_FIND_START, _FIND_END = 3, 11
+
+
+def _find_over(qtbot, under: str, *, current: bool) -> CodeEditor:
+    editor = _editor(qtbot, _FIND_TEXT)
+    if under == "problem":
+        editor.set_problem_messages({2: "Missing comma."})
+    else:
+        side = sorted(CHANGE_TINT_SIDES[under])[0]
+        editor.set_change_tints(side, [(2, 2, under)])
+    editor.set_find_matches([_FIND_START], [_FIND_END], 0 if current else -1)
+    return editor
+
+
+def test_a_find_match_is_the_top_layer_in_the_selections(qtbot) -> None:
+    editor = _editor(qtbot, _FIND_TEXT)
+    editor.set_change_tints("right", [(1, 3, "changed")])
+    editor.set_problem_messages({2: "Missing comma."})
+    editor.set_find_matches([_FIND_START], [_FIND_END], 0)
+
+    palette = editor.palette()
+    backgrounds = [
+        selection.format.background().color().rgb()
+        for selection in editor.extraSelections()
+    ]
+    changed = change_tint("changed", palette).rgb()
+    assert backgrounds == [
+        changed,
+        problem_line_tint(palette).rgb(),
+        changed,
+        find_match_colors(palette).current.rgb(),
+    ]
+
+
+@pytest.mark.parametrize("current", [True, False], ids=["current", "other"])
+@pytest.mark.parametrize("under", _UNDER_FIND)
+def test_a_find_match_is_readable_on_every_tint(
+    qtbot, scheme: QPalette, under: str, current: bool
+) -> None:
+    editor = _find_over(qtbot, under, current=current)
+    palette = editor.palette()
+    colors = find_match_colors(palette)
+    tint = (
+        problem_line_tint(palette)
+        if under == "problem"
+        else change_tint(under, palette)
+    )
+    image = editor.viewport().grab().toImage()
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition((_FIND_START + _FIND_END) // 2)
+    inside = editor.cursorRect(cursor).center() + QPoint(2, 0)
+    cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+    past = editor.cursorRect(cursor).center() + QPoint(12, 0)
+
+    fill = image.pixelColor(inside)
+    assert fill.rgb() == (colors.current if current else colors.other).rgb()
+    assert image.pixelColor(past).rgb() == tint.rgb()
+    ratio = contrast_ratio(colors.ink, fill)
+    assert ratio >= TEXT_MIN_CONTRAST, f"Find ink on {under}: {ratio:.2f}:1"
 
 
 # --- Tints ----------------------------------------------------------------

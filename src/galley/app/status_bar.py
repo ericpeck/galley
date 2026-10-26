@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QStatusBar, QWi
 from galley.app.fonts import ui_font
 from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style, progress_style, status_bar_style
+from galley.core.formats import FORMAT_LABELS
 
 SPINNER_WIDTH_PX = 80
 PROGRESS_WIDTH_PX = 160
@@ -33,7 +34,7 @@ PROGRESS_ACCESSIBLE_NAME = "Formatting progress"
 
 # The widest text each slot expects. The slot reserves that width up front.
 COUNTS_RESERVE = ("99999 differences",)
-_FORMAT_NAMES = ("JSON", "YAML", "Python")
+_FORMAT_NAMES = (*FORMAT_LABELS, "Python")
 INFO_RESERVE = (
     *(f"{left} → {right}" for left in _FORMAT_NAMES for right in _FORMAT_NAMES),
     "Ln 99999, Col 999",
@@ -177,12 +178,19 @@ class StatusBar(QStatusBar):
     def info_text(self) -> str:
         return self._direction.text()
 
-    def set_busy(self, busy: Busy, name: str = SPINNER_ACCESSIBLE_NAME) -> None:
+    def set_busy(
+        self,
+        busy: Busy,
+        name: str = SPINNER_ACCESSIBLE_NAME,
+        progress_name: str = PROGRESS_ACCESSIBLE_NAME,
+    ) -> None:
         """Show the spinner, the progress bar with Cancel, or neither.
 
-        ``name`` is the spinner's accessible name, such as ``Opening``.
+        ``name`` is the spinner's accessible name, such as ``Opening``, and
+        ``progress_name`` the progress bar's, such as ``Copying progress``.
         """
         self._spinner.setAccessibleName(name)
+        self._progress.setAccessibleName(progress_name)
         if busy is Busy.PROGRESS:
             self._progress.show()
             self._spinner.hide()

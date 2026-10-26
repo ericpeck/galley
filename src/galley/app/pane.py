@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.editor import CodeEditor
+from galley.app.find_bar import FindBar
 from galley.app.fonts import ui_font
 from galley.app.format_picker import FormatComboBox, PopOutButton
 from galley.app.open_file import InputDocument
@@ -28,6 +29,7 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
+from galley.core.formats import FORMAT_LABELS
 
 
 class PaneKind(Enum):
@@ -94,6 +96,11 @@ class PaneWidget(QWidget):
         self.editor.setObjectName(f"{spec.name}Editor")
         self.editor.setAccessibleName(f"{spec.title} editor")
 
+        # Only Output offers Keys only (#62): Input may not parse.
+        self.find_bar = FindBar(
+            self.editor, spec.name, keys_option=spec.kind is PaneKind.RESULT
+        )
+
         self.tab_strip = QWidget()
         self.tab_strip.setObjectName(f"{spec.name}TabStrip")
         self._build_tab_strip()
@@ -111,6 +118,7 @@ class PaneWidget(QWidget):
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         layout.addWidget(self.tab_strip)
+        layout.addWidget(self.find_bar)
         layout.addWidget(self.editor, 1)
         layout.addWidget(footer)
 
@@ -220,6 +228,17 @@ class PaneWidget(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_drop_highlight(self, on: bool) -> None:
+        """Show the focus-style ring while a file is dragged over (#86)."""
+        if bool(self.property("paneDropTarget")) is on:
+            return
+        self.setProperty("paneDropTarget", on)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def drop_highlighted(self) -> bool:
+        return bool(self.property("paneDropTarget"))
+
     def set_document(self, document: InputDocument | None) -> None:
         """Record the file now in this pane, or None for typed or pasted text."""
         self.document = document
@@ -283,7 +302,7 @@ class PaneWidget(QWidget):
         self.format_combo = FormatComboBox()
         self.format_combo.setObjectName(f"{self.spec.name}Format")
         self.format_combo.setAccessibleName(accessible_name)
-        self.format_combo.addItems(["JSON", "YAML"])
+        self.format_combo.addItems(FORMAT_LABELS)
         self.format_combo.currentTextChanged.connect(self.format_changed.emit)
         return self.format_combo
 

@@ -132,6 +132,18 @@ def _stroke(painter: QPainter, name: str) -> bool:
         painter.drawEllipse(3, 3, 7, 7)
         painter.drawLine(9, 9, 13, 13)
         return True
+    if name == "Previous match":
+        painter.drawLine(4, 10, 8, 6)
+        painter.drawLine(8, 6, 12, 10)
+        return True
+    if name == "Next match":
+        painter.drawLine(4, 6, 8, 10)
+        painter.drawLine(8, 10, 12, 6)
+        return True
+    if name == "Close find bar":
+        painter.drawLine(5, 5, 11, 11)
+        painter.drawLine(5, 11, 11, 5)
+        return True
     if name == "Convert from Python":
         painter.drawLine(6, 4, 3, 8)
         painter.drawLine(3, 8, 6, 12)

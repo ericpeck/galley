@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from galley.core.formats import format_for_extension, sniff_format
+
 # Hard cap on the file size Open accepts, checked with stat() before any
 # bytes are read. 1 MB is 1_000_000 bytes, the SI unit the status bar
 # shows. Format keeps its own size check.
@@ -55,8 +57,9 @@ class LoadError(Exception):
 class LoadedDocument:
     """A file ready for Input.
 
-    ``text`` has LF newlines and no byte order mark. ``fmt`` is ``JSON``,
-    ``YAML``, or None when neither the extension nor the text settles it.
+    ``text`` has LF newlines and no byte order mark. ``fmt`` is a format
+    label, such as ``JSON``, or None when neither the extension nor the text
+    settles it.
     ``size`` is the file's size in bytes. ``had_bom`` and ``newline``
     record the original encoding details for a later Save.
     """
@@ -101,37 +104,14 @@ def read_document(path: Path, max_bytes: int = MAX_OPEN_BYTES) -> LoadedDocument
 
 
 def detect_format(path: Path, text: str) -> str | None:
-    """Return ``JSON`` or ``YAML`` for ``path``, or None when unsettled.
+    """Return the format label for ``path``, or None when unsettled.
 
-    ``.json``, ``.geojson``, ``.yaml``, and ``.yml`` win over the text.
-    ``.jsonc`` and ``.json5`` are not mapped, since the JSON parser rejects
-    their comments and trailing commas; they fall through. Otherwise the
+    An extension in the format table wins over the text. Otherwise the
     first meaningful line decides: an object or array opener is JSON, and
     a document marker, a list item, or a ``key:`` line is YAML.
     """
-    match path.suffix.casefold():
-        case ".json" | ".geojson":
-            return "JSON"
-        case ".yaml" | ".yml":
-            return "YAML"
-        case _:
-            return _sniff_format(text)
-
-
-def _sniff_format(text: str) -> str | None:
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith(("{", "[")):
-            return "JSON"
-        if line.startswith("---") or line.startswith("- "):
-            return "YAML"
-        key, colon, rest = line.partition(":")
-        if colon and key and (rest == "" or rest.startswith(" ")):
-            return "YAML"
-        return None
-    return None
+    fmt = format_for_extension(path.suffix) or sniff_format(text)
+    return None if fmt is None else fmt.label
 
 
 def _newline_style(text: str) -> str:

@@ -17,7 +17,8 @@ that child's temps are deleted.
 Compare runs on the same worker and queues as Format, one job at a time.
 While either kind of job is active, a second submit of either kind is
 ignored. Cancel kills a compare the same way it kills a Format, and the
-compare's result is dropped with that child's queues.
+compare's result is dropped with that child's queues. Copy As jobs for a
+large Output share the worker the same way.
 """
 
 import atexit
@@ -38,12 +39,16 @@ from galley.app.problem_text import (
     display_input_error,
     display_problem,
 )
+from galley.core.mask import CopyAsMode
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
     CompareEvent,
     CompareFailureEvent,
     CompareJob,
     CompareSide,
+    CopyAsEvent,
+    CopyAsFailureEvent,
+    CopyAsJob,
     FailureEvent,
     FormatJob,
     ProgressEvent,
@@ -175,6 +180,14 @@ class _CompareActive(_Active):
         super().__init__(job_id, None)
 
 
+class _CopyAsActive(_Active):
+    """Bookkeeping for a Copy As job. It has no destination and no temp."""
+
+    def __init__(self, job_id: int, mode: CopyAsMode) -> None:
+        super().__init__(job_id, None)
+        self.mode: CopyAsMode = mode
+
+
 @dataclass(frozen=True)
 class CompareFailure:
     """Why a compare did not finish, as ``compare_failed`` delivers it.
@@ -197,12 +210,17 @@ class ParseSession(QObject):
     succeeded = Signal(str)
     failed = Signal(str)
     problems_found = Signal(object)
-    # Compare: job id, then a ``DiffResult``, a ``CompareFailure``, or nothing.
+    # Compare: job id, then a ``CompareEvent`` (``result``, ``report``, and
+    # the formatted texts after ``reformat``), a ``CompareFailure``, or nothing.
     compare_finished = Signal(int, object)
     compare_failed = Signal(int, object)
     compare_cancelled = Signal(int)
     # The worker exited while comparing. A replacement has already started.
     compare_stopped = Signal(int)
+    # Copy As: job id, then a ``CopyAsResult`` or a ``CopyAsFailureEvent``.
+    # A worker that exits mid-copy is a failure too.
+    copy_as_finished = Signal(int, object)
+    copy_as_failed = Signal(int, object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -217,7 +235,7 @@ class ParseSession(QObject):
         self._reaped_process: BaseProcess | None = None
         self._resource: _RunningWorker | None = None
         self._active: _Active | None = None
-        self._pending: FormatJob | CompareJob | None = None
+        self._pending: FormatJob | CompareJob | CopyAsJob | None = None
         self._report_abandoned_reap = False
         self._job_ids = 0
         self._closing = False
@@ -296,6 +314,7 @@ class ParseSession(QObject):
         chunk_size: int = WRITE_CHUNK_SIZE,
         chunk_pause_s: float = 0.0,
         fault: str | None = None,
+        sort_keys: bool = False,
     ) -> None:
         """Send one job. A second submit while a job is active is ignored."""
         if self._shut_down or self._active is not None:
@@ -320,6 +339,7 @@ class ParseSession(QObject):
             chunk_size=chunk_size,
             chunk_pause_s=chunk_pause_s,
             fault=fault,
+            sort_keys=sort_keys,
         )
         active = _Active(job.job_id, destination)
         active.temp_path = temp_path
@@ -338,6 +358,7 @@ class ParseSession(QObject):
         right_text: str,
         right_format: str,
         *,
+        reformat: bool = False,
         hold_s: float = 0.0,
     ) -> int | None:
         """Send one compare job and return its id.
@@ -345,7 +366,8 @@ class ParseSession(QObject):
         Returns ``None`` and sends nothing while a Format or a compare is
         active, the same way a second :meth:`submit` is ignored. A compare
         that has to wait out a reap deadline stays quiet and then runs on
-        the replacement. ``hold_s`` is for tests (see ``CompareJob``).
+        the replacement. ``reformat`` formats both sides in the same job and
+        never sorts keys; ``hold_s`` is for tests (see ``CompareJob``).
         """
         if self._shut_down or self._active is not None:
             return None
@@ -359,8 +381,29 @@ class ParseSession(QObject):
             right_text=right_text,
             right_format=right_format,
             hold_s=hold_s,
+            reformat=reformat,
         )
         self._active = _CompareActive(job.job_id)
+        self._pending = job
+        self._report_abandoned_reap = False
+        if self._process is None and not self._retired:
+            self.start()
+        self._flush_pending()
+        return job.job_id
+
+    def submit_copy_as(self, text: str, fmt: str, mode: CopyAsMode) -> int | None:
+        """Send one Copy As job and return its id.
+
+        Returns ``None`` and sends nothing while another job is active, the
+        same way :meth:`submit_compare` does.
+        """
+        if self._shut_down or self._active is not None:
+            return None
+        if not self._retired:
+            self._replace_dead_worker()
+        self._job_ids += 1
+        job = CopyAsJob(job_id=self._job_ids, text=text, fmt=fmt, mode=mode)
+        self._active = _CopyAsActive(job.job_id, mode)
         self._pending = job
         self._report_abandoned_reap = False
         if self._process is None and not self._retired:
@@ -576,6 +619,9 @@ class ParseSession(QObject):
             _release_without_join(resource)
         if isinstance(active, _CompareActive) and not self._closing:
             self.compare_stopped.emit(active.job_id)
+        elif isinstance(active, _CopyAsActive) and not self._closing:
+            stopped = CopyAsFailureEvent(active.job_id, active.mode, False)
+            self.copy_as_failed.emit(active.job_id, stopped)
         elif had_job and not self._closing:
             self.failed.emit(FORMATTER_STOPPED)
         if not self._closing and not self._shut_down:
@@ -633,6 +679,10 @@ class ParseSession(QObject):
                 self._handle_compare(event)
             elif isinstance(event, CompareFailureEvent):
                 self._handle_compare_failure(event)
+            elif isinstance(event, CopyAsEvent):
+                self._handle_copy_as(event)
+            elif isinstance(event, CopyAsFailureEvent):
+                self._handle_copy_as_failure(event)
 
     def _handle_progress(self, event: ProgressEvent) -> None:
         active = self._active
@@ -688,7 +738,7 @@ class ParseSession(QObject):
             return
         self._active = None
         self._pending = None
-        self.compare_finished.emit(event.job_id, event.result)
+        self.compare_finished.emit(event.job_id, event)
 
     def _handle_compare_failure(self, event: CompareFailureEvent) -> None:
         if not self._expects_compare(event.job_id):
@@ -697,6 +747,24 @@ class ParseSession(QObject):
         self._pending = None
         failure = CompareFailure(event.side, _displayed_problems(event), event.message)
         self.compare_failed.emit(event.job_id, failure)
+
+    def _handle_copy_as(self, event: CopyAsEvent) -> None:
+        if not self._expects_copy_as(event.job_id):
+            return
+        self._active = None
+        self._pending = None
+        self.copy_as_finished.emit(event.job_id, event.result)
+
+    def _handle_copy_as_failure(self, event: CopyAsFailureEvent) -> None:
+        if not self._expects_copy_as(event.job_id):
+            return
+        self._active = None
+        self._pending = None
+        self.copy_as_failed.emit(event.job_id, event)
+
+    def _expects_copy_as(self, job_id: int) -> bool:
+        active = self._active
+        return isinstance(active, _CopyAsActive) and active.job_id == job_id
 
     def _expects_compare(self, job_id: int) -> bool:
         """True for the compare the session is waiting on. Older results are dropped."""

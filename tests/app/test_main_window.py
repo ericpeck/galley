@@ -72,6 +72,8 @@ STANDARD_SHORTCUTS = {
     "Paste": QKeySequence.StandardKey.Paste,
     "Select All": QKeySequence.StandardKey.SelectAll,
     "Find…": QKeySequence.StandardKey.Find,
+    "Find Next": QKeySequence.StandardKey.FindNext,
+    "Find Previous": QKeySequence.StandardKey.FindPrevious,
     "Find and Replace…": QKeySequence.StandardKey.Replace,
     "Open file…": QKeySequence.StandardKey.Open,
     "Close": QKeySequence.StandardKey.Close,
@@ -161,17 +163,20 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Quit",
     ]
-    assert _labels(_menu(window, "File")) == ["Open file…"]
+    assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
     assert _labels(_menu(window, "Edit")) == [
         "Undo",
         "Redo",
         "|",
         "Cut",
         "Copy",
+        "Copy As",
         "Paste",
         "Select All",
         "|",
         "Find…",
+        "Find Next",
+        "Find Previous",
         "Find and Replace…",
         "|",
         "Escape as String",
@@ -179,6 +184,12 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Format",
         "Convert from Python",
+    ]
+    edit = _menu(window, "Edit")
+    assert _labels(_submenu(edit, "Copy As")) == [
+        "Original",
+        "Masked",
+        "Random fake",
     ]
     view = _menu(window, "View")
     assert _labels(view) == [

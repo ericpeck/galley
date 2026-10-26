@@ -8,6 +8,10 @@ from typing import NamedTuple
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QResizeEvent,
@@ -37,6 +41,17 @@ from galley.app.appearance import (
     MODE_SYSTEM,
     application_appearance,
 )
+from galley.app.copy_as import (
+    COPY_AS_BUSY_MESSAGE,
+    COPY_AS_BUSY_NAME,
+    COPY_AS_FAILED_MESSAGE,
+    COPY_AS_PROGRESS_NAME,
+    COPY_AS_TITLE,
+    COPY_CANCELED_MESSAGE,
+    MASK_HELP,
+    copied_text,
+    copy_as_inline_limit,
+)
 from galley.app.editor import CodeEditor, fold_status_text
 from galley.app.escape_string import (
     StringResult,
@@ -46,6 +61,7 @@ from galley.app.escape_string import (
     unescape_input,
     unescape_too_large_message,
 )
+from galley.app.file_drop import dropped_files
 from galley.app.fonts import CODE_POINT_SIZE, ui_font
 from galley.app.icons import toolbar_icon
 
@@ -78,8 +94,10 @@ from galley.app.open_file import (
     save_last_open_dir,
 )
 from galley.app.open_text import (
+    DROP_WHILE_FORMATTING_TEXT,
     input_window_title,
     open_error_text,
+    opened_first_text,
     opened_text,
     opening_text,
     replace_input_text,
@@ -99,12 +117,15 @@ from galley.app.problems_settings import (
     STATE_OPEN,
     STRIP_WIDTH,
     load_problems_preferences,
+    load_sort_keys,
     load_split_sizes,
     load_stacked_panes,
     save_problems_preferences,
+    save_sort_keys,
     save_split_sizes,
     save_stacked_panes,
 )
+from galley.app.recent_files import RecentFilesMenu, remember_recent_file
 from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
 from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
@@ -123,12 +144,17 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
+from galley.core.formats import YAML, format_named
 from galley.core.load import LoadedDocument, LoadError
+from galley.core.mask import CopyAsMode, CopyAsResult
+from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
 
 NOT_YET_MESSAGE = "Not yet available."
 NOTHING_TO_FOLD = "nothing to fold"
 CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
+# Words, not only the pressed Sort keys button, say the output was sorted.
+SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
 FORMAT_ACCESSIBLE_NAME = "Format"
 FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
 FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
@@ -214,6 +240,7 @@ class MainWindow(QMainWindow):
         self._size_warning: QMessageBox | None = None
         self._replace_box: QMessageBox | None = None
         self._loading_path: Path | None = None
+        self._loading_of_files = 1
         self._open_job = 0
         self._reader = FileReader(self)
         self._reader.finished.connect(self._on_file_read)
@@ -234,14 +261,22 @@ class MainWindow(QMainWindow):
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
+        self._format_sorted = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
+        # The Copy As job on the worker, and what the status text needs.
+        self._copy_as_job: int | None = None
+        self._copy_as_started_s = 0.0
+        self._copy_as_reveal_timer = QTimer(self)
+        self._copy_as_reveal_timer.setSingleShot(True)
+        self._copy_as_reveal_timer.timeout.connect(self._show_copying)
         self._session = ParseSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
         self.setMinimumSize(900, 600)
         self.setAutoFillBackground(True)
+        self.setAcceptDrops(True)
         self._actions = ShellActions(self)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
@@ -268,6 +303,7 @@ class MainWindow(QMainWindow):
         self._apply_saved_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._restore_sort_keys()
         self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
@@ -379,6 +415,8 @@ class MainWindow(QMainWindow):
         file_menu = _add_menu(bar, "File")
         file_menu.setToolTipsVisible(True)
         file_menu.addAction(actions.open_file)
+        self._recent_menu = RecentFilesMenu(file_menu)
+        file_menu.addMenu(self._recent_menu)
 
         edit = _add_menu(bar, "Edit")
         edit.addAction(actions.undo)
@@ -386,10 +424,22 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addAction(actions.cut)
         edit.addAction(actions.copy)
+        self._copy_as_menu = edit.addMenu(COPY_AS_TITLE)
+        self._copy_as_menu.setObjectName("menuCopyAs")
+        self._copy_as_menu.setToolTipsVisible(True)
+        for mode, item in actions.copy_as_actions().items():
+            if mode != "original":
+                # The macOS menu bar shows no tooltips, so the status bar
+                # carries the help too.
+                item.setToolTip(MASK_HELP)
+                item.setStatusTip(MASK_HELP)
+            self._copy_as_menu.addAction(item)
         edit.addAction(actions.paste)
         edit.addAction(actions.select_all)
         edit.addSeparator()
         edit.addAction(actions.find)
+        edit.addAction(actions.find_next)
+        edit.addAction(actions.find_previous)
         edit.addAction(actions.find_replace)
         edit.addSeparator()
         edit.addAction(actions.escape_string)
@@ -462,6 +512,7 @@ class MainWindow(QMainWindow):
         self._output_editor_menu = QMenu(self)
         self._output_editor_menu.setObjectName("outputEditorMenu")
         self._output_editor_menu.addActions(self._editor_menu.actions())
+        self._output_editor_menu.insertMenu(actions.paste, self._copy_as_menu)
         self._output_editor_menu.addSeparator()
         self._output_editor_menu.addAction(actions.fold)
         self._output_editor_menu.addAction(actions.unfold)
@@ -587,6 +638,8 @@ class MainWindow(QMainWindow):
         actions = self._actions
         actions.about.triggered.connect(self._show_about)
         actions.open_file.triggered.connect(self._open_file)
+        self._recent_menu.open_requested.connect(self.open_path)
+        self.open_finished.connect(self._remember_recent)
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
@@ -594,8 +647,13 @@ class MainWindow(QMainWindow):
         actions.redo.triggered.connect(self._redo)
         actions.cut.triggered.connect(self._cut)
         actions.copy.triggered.connect(self._copy)
+        for mode, item in actions.copy_as_actions().items():
+            item.triggered.connect(lambda _checked=False, m=mode: self._copy_as(m))
         actions.paste.triggered.connect(self._paste)
         actions.select_all.triggered.connect(self._select_all)
+        actions.find.triggered.connect(self._open_find)
+        actions.find_next.triggered.connect(self._find_next)
+        actions.find_previous.triggered.connect(self._find_previous)
         actions.word_wrap.toggled.connect(self._set_word_wrap)
         actions.show_whitespace.toggled.connect(self._set_show_whitespace)
         actions.bigger.triggered.connect(self._zoom_in)
@@ -608,6 +666,7 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.sort_keys.toggled.connect(save_sort_keys)
         actions.next_problem.triggered.connect(self._next_problem)
         actions.previous_problem.triggered.connect(self._previous_problem)
         actions.expand_all.triggered.connect(self._expand_all)
@@ -621,6 +680,8 @@ class MainWindow(QMainWindow):
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
         self._session.problems_found.connect(self._on_problems)
+        self._session.copy_as_finished.connect(self._on_copy_as_finished)
+        self._session.copy_as_failed.connect(self._on_copy_as_failed)
         self._problems_pane.jump_requested.connect(self._jump_to_problem)
         self._problems_pane.close_requested.connect(self._close_problems)
         self._problems_pane.minimize_requested.connect(self._minimize_problems)
@@ -682,11 +743,11 @@ class MainWindow(QMainWindow):
             pane.pop_out_button.sync_tool_tip()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Esc cancels the running format from whichever editor has focus."""
+        """Esc cancels the running format or large Copy As from any editor."""
         if not isinstance(watched, QObject):
             return False
         if (
-            self._formatting
+            (self._formatting or self._copy_as_job is not None)
             and event.type() == QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)
             and event.key() == Qt.Key.Key_Escape
@@ -728,6 +789,8 @@ class MainWindow(QMainWindow):
 
     def _format(self) -> None:
         if self._formatting or self._size_warning is not None:
+            return
+        if self._copy_as_job is not None:
             return
         if self._loading_path is not None:
             return
@@ -789,7 +852,13 @@ class MainWindow(QMainWindow):
         self._apply_deferred_reveal()
         self._accepted_job_id = None
         self._session.start()
-        self._session.submit(text, self._format_source, self._format_target)
+        self._format_sorted = self._actions.sort_keys.isChecked()
+        self._session.submit(
+            text,
+            self._format_source,
+            self._format_target,
+            sort_keys=self._format_sorted,
+        )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
             self._finish_format(FORMAT_NOT_STARTED_MESSAGE)
@@ -878,7 +947,13 @@ class MainWindow(QMainWindow):
         self._status.set_state(result.status)
 
     def _cancel_format(self) -> None:
-        """Drop the result, restore the previous output, then kill the worker."""
+        """Drop the result, restore the previous output, then kill the worker.
+
+        Cancel and Esc also stop a Copy As that runs on the worker.
+        """
+        if self._copy_as_job is not None:
+            self._cancel_copy_as()
+            return
         if not self._formatting:
             return
         self._restore_output()
@@ -1085,6 +1160,12 @@ class MainWindow(QMainWindow):
         action.blockSignals(False)
         self._apply_stacked_layout(stacked)
 
+    def _restore_sort_keys(self) -> None:
+        action = self._actions.sort_keys
+        action.blockSignals(True)
+        action.setChecked(load_sort_keys())
+        action.blockSignals(False)
+
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
         save_stacked_panes(stacked)
@@ -1206,10 +1287,14 @@ class MainWindow(QMainWindow):
         source = self._format_source.casefold()
         target = self._format_target.casefold()
         if source != target:
-            return "Converted"
-        if target == "yaml":
-            return "Valid YAML"
-        return "Valid JSON"
+            status = "Converted"
+        elif target == "yaml":
+            status = "Valid YAML"
+        else:
+            status = "Valid JSON"
+        if self._format_sorted:
+            return f"{status} {SORTED_KEYS_SUFFIX}"
+        return status
 
     def _focus_input(self) -> None:
         editor = self._input_pane.editor
@@ -1252,6 +1337,25 @@ class MainWindow(QMainWindow):
         if focused is not None:
             return focused
         return self._active_editor
+
+    def _find_pane(self) -> PaneWidget:
+        """The pane Find works in: the one with focus, else the last editor's."""
+        focused = QApplication.focusWidget()
+        for pane in (self._input_pane, self._output_pane):
+            if _is_inside(focused, pane):
+                return pane
+        if self._active_editor is self._output_pane.editor:
+            return self._output_pane
+        return self._input_pane
+
+    def _open_find(self) -> None:
+        self._find_pane().find_bar.open()
+
+    def _find_next(self) -> None:
+        self._find_pane().find_bar.find_next()
+
+    def _find_previous(self) -> None:
+        self._find_pane().find_bar.find_previous()
 
     def _editors(self) -> tuple[CodeEditor, CodeEditor]:
         return self._input_pane.editor, self._output_pane.editor
@@ -1297,7 +1401,7 @@ class MainWindow(QMainWindow):
         """True when a file may replace the source pane's text now.
 
         Never while a format job runs, a file is loading, or a sheet is up.
-        Menu, shortcut, button, and later drop and recents all ask this.
+        Menu, shortcut, button, Open Recent, and drop all ask this.
         """
         return not (
             self._formatting
@@ -1306,19 +1410,20 @@ class MainWindow(QMainWindow):
             or self._size_warning is not None
         )
 
-    def open_path(self, path: Path) -> None:
+    def open_path(self, path: Path, *, of_files: int = 1) -> None:
         """Load ``path`` into the source pane. Opening never formats.
 
         Every way of opening a file comes through here. Unsaved edits are
-        confirmed first.
+        confirmed first. ``of_files`` counts a drop of several files, of
+        which ``path`` is the first and the only one opened (#86).
         """
         if not self.can_open():
             return
         pane = self._source_pane()
         if input_needs_replace(pane.editor.toPlainText(), pane.document):
-            self._ask_replace_input(path)
+            self._ask_replace_input(path, of_files)
             return
-        self._start_loading(path)
+        self._start_loading(path, of_files)
 
     def cancel_open(self) -> None:
         """Drop the file being read. The read itself runs to its end."""
@@ -1329,6 +1434,45 @@ class MainWindow(QMainWindow):
         self._loading_path = None
         self._status.set_busy(Busy.IDLE)
         self._sync_format_button()
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._follow_file_drag(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._source_pane().set_drop_highlight(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Open the first dropped file. A format in progress refuses it."""
+        self._source_pane().set_drop_highlight(False)
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        if self._formatting:
+            self._status.set_state(DROP_WHILE_FORMATTING_TEXT)
+            return
+        self.open_path(files[0], of_files=len(files))
+
+    def _follow_file_drag(self, event: QDragMoveEvent) -> None:
+        """Take a file anywhere in the window and outline the source pane.
+
+        Every drop opens into the source pane, so it is outlined wherever
+        the file is. While a format runs the drag is still taken, so the
+        drop can say why it was refused, but the pane gets no outline (#86).
+        """
+        pane = self._source_pane()
+        files = dropped_files(event.mimeData())
+        if not files or not (self.can_open() or self._formatting):
+            pane.set_drop_highlight(False)
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        pane.set_drop_highlight(self.can_open())
 
     def _source_pane(self) -> PaneWidget:
         """The pane Open fills: the one whose spec is a source (#73)."""
@@ -1358,7 +1502,7 @@ class MainWindow(QMainWindow):
             return None
         return Path(filename)
 
-    def _ask_replace_input(self, path: Path) -> None:
+    def _ask_replace_input(self, path: Path, of_files: int = 1) -> None:
         """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
         box = QMessageBox(self)
         box.setObjectName("replaceInput")
@@ -1386,16 +1530,17 @@ class MainWindow(QMainWindow):
             if not accepted or not self.can_open():
                 self._return_focus_to_input()
                 return
-            self._start_loading(path)
+            self._start_loading(path, of_files)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_loading(self, path: Path) -> None:
+    def _start_loading(self, path: Path, of_files: int = 1) -> None:
         """Read ``path`` off the UI thread. Open and Format wait for it."""
         self._opened_status_timer.stop()
         self._open_job += 1
         self._loading_path = path
+        self._loading_of_files = of_files
         self._sync_format_button()
         self._open_reveal_timer.start(OPEN_REVEAL_MS)
         self.open_started.emit()
@@ -1447,11 +1592,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(input_window_title(path.name))
         self.setWindowFilePath(str(path))
         status = opened_text(path.name, si_size(loaded.size))
+        if self._loading_of_files > 1:
+            status = opened_first_text(self._loading_of_files)
         self._opened_status = status
         self._status.set_state(status, str(path))
         self._opened_status_timer.start(OPENED_STATUS_MS)
         self.open_finished.emit(document)
         self._return_focus_to_input()
+
+    def _remember_recent(self, document: InputDocument) -> None:
+        remember_recent_file(document.path)
+        self._recent_menu.rebuild()
 
     def _clear_opened_status(self) -> None:
         if self._formatting or self._status.state_text() != self._opened_status:
@@ -1466,6 +1617,9 @@ class MainWindow(QMainWindow):
         available = self.can_open()
         action.setEnabled(available)
         action.setToolTip(OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else "")
+        recent = self._recent_menu.menuAction()
+        recent.setEnabled(available)
+        recent.setToolTip(action.toolTip())
         open_button = self._source_pane().open_button
         if open_button is not None:
             open_button.setEnabled(available)
@@ -1473,6 +1627,108 @@ class MainWindow(QMainWindow):
 
     def _copy_output(self) -> None:
         QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
+
+    def _copy_as(self, mode: CopyAsMode) -> None:
+        """Copy Output, or its selection, as ``mode``. Output is not changed.
+
+        Original is the unmasked text as it is. Masked and Random fake are
+        built from it on the worker, unless it is tiny.
+        """
+        if not self._copy_as_available():
+            return
+        text = self._copy_as_source()
+        fmt = self._output_pane.format_name()
+        if mode == "original" or _utf8_size(text) < copy_as_inline_limit(fmt):
+            self._apply_copy_as(run_copy_as(CopyAsJob(0, text, fmt, mode)))
+            return
+        self._session.start()
+        job_id = self._session.submit_copy_as(text, fmt, mode)
+        if job_id is None:
+            self._status.set_state(COPY_AS_FAILED_MESSAGE)
+            return
+        self._copy_as_job = job_id
+        self._copy_as_started_s = _monotonic()
+        self._copy_as_reveal_timer.start(SPINNER_REVEAL_MS)
+        self._sync_format_button()
+
+    def _copy_as_source(self) -> str:
+        """The unmasked Output text Copy As starts from: the selection, or all.
+
+        Output never shows masked text yet. When the masking view ships,
+        this must keep returning the unmasked text (#66).
+        """
+        editor = self._output_pane.editor
+        cursor = editor.textCursor()
+        if cursor.hasSelection():
+            return cursor.selection().toPlainText()
+        return editor.toPlainText()
+
+    def _show_copying(self) -> None:
+        """Show the spinner, then the bar with Cancel, on Format's timings."""
+        if self._copy_as_job is None:
+            return
+        if _reveal_due(PROGRESS_BAR_REVEAL_MS, self._copy_as_started_s):
+            self._status.set_busy(
+                Busy.PROGRESS, COPY_AS_BUSY_NAME, COPY_AS_PROGRESS_NAME
+            )
+        else:
+            self._status.set_busy(Busy.SPINNER, COPY_AS_BUSY_NAME)
+            remaining = PROGRESS_BAR_REVEAL_MS - _elapsed_ms(self._copy_as_started_s)
+            self._copy_as_reveal_timer.start(max(0, int(remaining)))
+        self._status.set_state(COPY_AS_BUSY_MESSAGE)
+
+    def _cancel_copy_as(self) -> None:
+        """Drop the copy and kill the worker. The clipboard is not touched."""
+        self._end_copy_as_job()
+        self._status.set_state(COPY_CANCELED_MESSAGE)
+        self._session.cancel()
+
+    def _on_copy_as_finished(self, job_id: int, result: object) -> None:
+        if job_id != self._copy_as_job:
+            return
+        self._end_copy_as_job()
+        if isinstance(result, CopyAsResult):
+            self._apply_copy_as(CopyAsEvent(job_id, result))
+
+    def _on_copy_as_failed(self, job_id: int, failure: object) -> None:
+        if job_id != self._copy_as_job:
+            return
+        self._end_copy_as_job()
+        if isinstance(failure, CopyAsFailureEvent):
+            self._apply_copy_as(failure)
+
+    def _end_copy_as_job(self) -> None:
+        self._copy_as_job = None
+        self._copy_as_reveal_timer.stop()
+        self._status.set_busy(Busy.IDLE)
+        self._sync_format_button()
+
+    def _apply_copy_as(self, event: CopyAsEvent | CopyAsFailureEvent) -> None:
+        """Put a finished copy on the clipboard. A failure leaves it alone."""
+        if isinstance(event, CopyAsEvent):
+            result = event.result
+            QApplication.clipboard().setText(result.text)
+            self._status.set_state(copied_text(result.mode, result.count))
+            return
+        # Never show the error itself: it can quote the Output.
+        self._status.set_state(COPY_AS_FAILED_MESSAGE)
+
+    def _copy_as_available(self) -> bool:
+        """Copy As needs Output text and no running Format or Copy As job."""
+        return (
+            self._output_pane.editor.document().characterCount() > 1
+            and not self._formatting
+            and self._copy_as_job is None
+        )
+
+    def _sync_copy_as_actions(self) -> None:
+        available = self._copy_as_available()
+        for item in self._actions.copy_as_actions().values():
+            if item.isEnabled() != available:
+                item.setEnabled(available)
+        menu_action = self._copy_as_menu.menuAction()
+        if menu_action.isEnabled() != available:
+            menu_action.setEnabled(available)
 
     def _set_word_wrap(self, checked: bool) -> None:
         mode = (
@@ -1543,12 +1799,15 @@ class MainWindow(QMainWindow):
             text = self._input_pane.editor.toPlainText()
         has_input = not _is_blank(text)
         loading = self._loading_path is not None
+        # A large Copy As holds the worker, so Format waits for it.
+        copying = self._copy_as_job is not None
         available = has_input and not self._formatting and not loading
+        available = available and not copying
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
         button = self._format_button
-        button.setEnabled(has_input or self._formatting)
+        button.setEnabled((has_input and not copying) or self._formatting)
         if self._formatting:
             button.setText(FORMATTING_MESSAGE)
             button.setAccessibleName(FORMATTING_MESSAGE)
@@ -1566,6 +1825,7 @@ class MainWindow(QMainWindow):
         self._actions.unescape_string.setEnabled(available)
         self._sync_open_actions()
         self._sync_fold_actions()
+        self._sync_copy_as_actions()
 
     def _sync_fold_actions(self) -> None:
         """Fold commands work on Output while it has blocks and no job runs."""
@@ -1633,6 +1893,7 @@ class MainWindow(QMainWindow):
         copy_button = self._output_pane.copy_button
         if copy_button is not None:
             copy_button.setEnabled(not empty)
+        self._sync_copy_as_actions()
         self._output_pane.set_empty_visible(empty)
         if empty:
             self._output_pane.count_label.setText("")
@@ -1706,7 +1967,7 @@ def _utf8_size(text: str) -> int:
 
 
 def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         if _has_tab(text):
             return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
@@ -1714,7 +1975,7 @@ def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
 
 
 def _warning_bytes(source: str) -> int:
-    if source.casefold() == "yaml":
+    if format_named(source) is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
 
