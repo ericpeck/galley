@@ -337,7 +337,7 @@ def _format_text(job: FormatJob) -> tuple[str, int | None]:
 def _scan_folds(text: str, target: str) -> bytes:
     """Fold ranges for the Output, found here so the UI thread does not scan.
 
-    Only JSON and YAML Output folds. XML has no fold ranges yet.
+    Only JSON and YAML Output folds. XML and HTML have no fold ranges yet.
     """
     kind = format_named(target).name
     if kind == "yaml":

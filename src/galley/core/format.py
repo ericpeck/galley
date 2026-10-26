@@ -1,4 +1,4 @@
-"""JSON, YAML, and XML formatting.
+"""JSON, YAML, XML, and HTML formatting.
 
 Invalid UTF-8, documents nested past ``MAX_DEPTH``, and JSON lone-surrogate
 escapes raise ``InputError``. So does a YAML surrogate escape on its way to
@@ -23,7 +23,9 @@ C parser gives each alias of a scalar its own string object.
 
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
 It reaches ``format_document`` once the format table has an XML row, which
-#63 slice 3 adds with the picker item.
+#63 slice 3 adds with the picker item. HTML is formatted by
+``galley.core.html_format`` the same way, and is written only as HTML; its
+row comes with the picker item in slice 5.
 """
 
 import functools
@@ -73,6 +75,7 @@ from galley.core.errors import (
     utf8_input_error,
 )
 from galley.core.formats import format_named, targets_for
+from galley.core.html_format import format_html
 from galley.core.xml_format import format_xml
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
@@ -1089,12 +1092,13 @@ def format_document(
     """Format ``text`` from ``source`` into ``target``.
 
     ``source`` and ``target`` are format names (case-insensitive). Same-format
-    calls go through ``format_json``, ``format_yaml``, and ``format_xml``, so
-    located ``InputError`` checks stay exactly those functions. A pair
-    ``targets_for`` does not list raises ``ValueError``. ``sort_keys`` orders
-    JSON and YAML output keys with :func:`sort_mapping_keys`; XML ignores it.
-    ``prepare`` rewrites the loaded JSON or YAML value before it is written.
-    XML does not load to a value, so it raises ``ValueError`` with ``prepare``.
+    calls go through ``format_json``, ``format_yaml``, ``format_xml``, and
+    ``format_html``, so located ``InputError`` checks stay exactly those
+    functions. A pair ``targets_for`` does not list raises ``ValueError``.
+    ``sort_keys`` orders JSON and YAML output keys with
+    :func:`sort_mapping_keys`; XML and HTML ignore it. ``prepare`` rewrites
+    the loaded JSON or YAML value before it is written. XML and HTML do not
+    load to a value, so they raise ``ValueError`` with ``prepare``.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
@@ -1104,6 +1108,8 @@ def format_document(
         _value_format(source)
     if source_kind == "xml":
         return format_xml(text)
+    if source_kind == "html":
+        return format_html(text)
     if source_kind == "json" and target_kind == "json":
         return format_json(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "yaml" and target_kind == "yaml":

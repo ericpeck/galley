@@ -6,6 +6,7 @@ JSON document reports every syntax error and repeated key: after
 ``json.loads`` fails, ``scan_json`` reads on past each error. Other YAML
 failures still stop at the first problem, so those stay a single code.
 Expat stops at the first XML error, so XML reports one ``xml_*`` code.
+HTML reports every tag that does not nest at once, as ``html_*`` codes.
 """
 
 import json
@@ -19,7 +20,11 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.tokens import KeyToken, ScalarToken
 
-from galley.core.errors import JSONDuplicateKeyError, XMLSyntaxError
+from galley.core.errors import (
+    HTMLStructureError,
+    JSONDuplicateKeyError,
+    XMLSyntaxError,
+)
 from galley.core.json_recover import Scan, Slip, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
@@ -55,6 +60,8 @@ ProblemCode = Literal[
     "xml_after_root",
     "xml_no_root",
     "xml_other",
+    "html_unexpected_close",
+    "html_unclosed",
 ]
 
 
@@ -64,7 +71,8 @@ class Problem:
 
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
-    For XML it is the element, attribute, entity, or prefix named.
+    For XML it is the element, attribute, entity, or prefix named. For
+    HTML it is the tag name as written.
     ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
     when the problem was found after the JSON scan guessed at a repair,
     so an earlier problem may have caused it.
@@ -92,7 +100,8 @@ def collect_problems(
     YAML leading tabs are collected up front and the parser is not asked
     to continue. Repeated JSON keys give one problem per key and line. A
     JSON syntax error gives every problem ``scan_json`` finds, in text
-    order. Any other failure contributes at most one problem.
+    order, and HTML gives every tag that does not nest. Any other failure
+    contributes at most one problem.
     """
     if source.strip().casefold() == "yaml":
         tabs = tuple(Problem("yaml_tab", line) for line in leading_tab_lines(text))
@@ -104,6 +113,8 @@ def collect_problems(
         return duplicate_key_problems(exc)
     if isinstance(exc, json.JSONDecodeError):
         return json_problems(exc, text)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)
     found = classify_failure(exc, text)
     if found is None:
         return ()
@@ -136,6 +147,14 @@ def duplicate_key_problems(exc: JSONDuplicateKeyError) -> tuple[Problem, ...]:
                 "json_duplicate", duplicate.lineno, duplicate.key, duplicate.colno
             )
     return tuple(found.values())
+
+
+def html_problems(exc: HTMLStructureError) -> tuple[Problem, ...]:
+    """One problem per tag that does not nest, in text order."""
+    return tuple(
+        Problem(found.code, found.lineno, found.token, found.colno)
+        for found in exc.problems
+    )
 
 
 def json_problems(exc: json.JSONDecodeError, text: str) -> tuple[Problem, ...]:
@@ -189,6 +208,8 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
         return _classify_yaml(exc, text)
     if isinstance(exc, XMLSyntaxError):
         return Problem(exc.code, exc.lineno, exc.token, exc.colno)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)[0]
     return None
 
 
