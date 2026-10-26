@@ -24,7 +24,7 @@ from galley.core.errors import (
     NotJSONValueError,
 )
 from galley.core.format import (
-    _normalize_format,
+    _value_format,
     format_document,
     load_document,
     yaml_json_value,
@@ -66,8 +66,9 @@ def escape_document(text: str | bytes, source: str) -> str:
     ``source`` is ``json`` or ``yaml``. The text passes the same checks as
     Format and raises the same errors. YAML is loaded the way Format to JSON
     loads it, so a surrogate escape raises the same ``bad_escape`` error.
+    Any other format, such as XML, raises ``ValueError``.
     """
-    if _normalize_format(source) == "json":
+    if _value_format(source) == "json":
         value = load_document(text, "json")
     else:
         value = yaml_json_value(text)
@@ -92,8 +93,10 @@ def unescape_document(text: str, target: str) -> str:
     Whitespace around the literal is allowed. The string's contents pass
     the same checks Format applies to JSON, nesting depth and lone
     surrogates included, and are written the way Format writes ``target``.
+    A ``target`` that does not load to a value, such as XML, raises
+    ``ValueError``.
     """
-    _normalize_format(target)
+    _value_format(target)
     try:
         inner = json.loads(text)
     except (json.JSONDecodeError, RecursionError):

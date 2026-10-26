@@ -5,20 +5,26 @@ import multiprocessing
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from queue import Empty
 
-from galley.core.errors import InputError
+from tests.core.xml_row import run_worker_with_xml_row
+
+from galley.core.errors import MAX_DEPTH, InputError
 from galley.core.format import format_json
+from galley.core.problems import Problem
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
     WRITE_PROGRESS_EVERY_CHUNKS,
     FailureEvent,
     FormatJob,
+    ProgressEvent,
     SuccessEvent,
     run_worker,
     unlink_temp,
 )
+from galley.core.xml_format import format_xml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKER_PATH = ROOT / "src" / "galley" / "core" / "worker.py"
@@ -170,11 +176,13 @@ def test_worker_module_does_not_replace_the_destination() -> None:
     assert replaced == []
 
 
-def _run_job(job: FormatJob, timeout: float = 30.0) -> list[object]:
+def _run_job(
+    job: FormatJob, timeout: float = 30.0, target: Callable[..., None] = run_worker
+) -> list[object]:
     ctx = multiprocessing.get_context("spawn")
     jobs = ctx.Queue()
     events = ctx.Queue()
-    process = ctx.Process(target=run_worker, args=(jobs, events))
+    process = ctx.Process(target=target, args=(jobs, events))
     process.start()
     collected: list[object] = []
     try:
@@ -204,3 +212,95 @@ def _run_job(job: FormatJob, timeout: float = 30.0) -> list[object]:
         events.cancel_join_thread()
         jobs.close()
         events.close()
+
+
+def _run_xml_job(job: FormatJob) -> list[object]:
+    """Run one job in a spawn child whose table has the slice 3 XML row."""
+    return _run_job(job, target=run_worker_with_xml_row)
+
+
+def test_worker_formats_xml_with_no_fold_ranges() -> None:
+    text = '<?xml version="1.0"?><r><a x="1"/><b>t</b></r>'
+    events = _run_xml_job(FormatJob(job_id=3, text=text, source="xml", target="XML"))
+    success = events[-1]
+    assert isinstance(success, SuccessEvent)
+    assert success.text == format_xml(text)
+    assert success.folds == b""
+
+
+def test_worker_xml_problem_crosses_spawn() -> None:
+    text = "<r>\n  <a>\n  </b>\n</r>\n"
+    events = _run_xml_job(FormatJob(job_id=4, text=text, source="xml", target="xml"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.error is None
+    assert failure.message == "xml_mismatched_tag"
+    assert failure.problems == (Problem("xml_mismatched_tag", 3, "a", 3),)
+    assert failure.problems[0].colno == 3
+
+
+def test_worker_xml_too_deep_crosses_spawn() -> None:
+    text = "<a>" * (MAX_DEPTH + 1) + "</a>" * (MAX_DEPTH + 1)
+    events = _run_xml_job(FormatJob(job_id=5, text=text, source="xml", target="xml"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert isinstance(failure.error, InputError)
+    assert failure.error.kind == "too_deep"
+    assert failure.error.details == {"depth": MAX_DEPTH + 1}
+
+
+def test_worker_without_the_xml_row_rejects_an_xml_job() -> None:
+    events = _run_job(FormatJob(job_id=8, text="<a/>", source="xml", target="xml"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == "Unsupported format: xml"
+
+
+def test_an_xml_job_cancelled_mid_write_leaves_the_destination(
+    tmp_path: Path,
+) -> None:
+    """Cancel kills the child, so the temp is the parent's to delete."""
+    destination = tmp_path / "out.xml"
+    original = b"<keep/>\n"
+    destination.write_bytes(original)
+    text = "<r>" + "<item><name>fake</name></item>" * 4000 + "</r>"
+    job = FormatJob(
+        job_id=6,
+        text=text,
+        source="xml",
+        target="xml",
+        destination=str(destination),
+        chunk_size=4096,
+        chunk_pause_s=0.2,
+    )
+    ctx = multiprocessing.get_context("spawn")
+    jobs = ctx.Queue()
+    events = ctx.Queue()
+    process = ctx.Process(target=run_worker_with_xml_row, args=(jobs, events))
+    process.start()
+    temp_path: str | None = None
+    try:
+        jobs.put(job)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            event = events.get(timeout=30)
+            assert not isinstance(event, (SuccessEvent, FailureEvent)), event
+            if isinstance(event, ProgressEvent) and 0 < event.written < event.total:
+                temp_path = event.temp_path
+                break
+        assert temp_path is not None
+        process.kill()
+        process.join(timeout=10)
+        assert process.exitcode is not None and process.exitcode != 0
+    finally:
+        if process.exitcode is None:
+            process.kill()
+            process.join(timeout=5)
+        jobs.cancel_join_thread()
+        events.cancel_join_thread()
+        jobs.close()
+        events.close()
+    assert Path(temp_path).exists()
+    unlink_temp(temp_path)
+    assert not Path(temp_path).exists()
+    assert destination.read_bytes() == original
