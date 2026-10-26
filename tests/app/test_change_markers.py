@@ -1,6 +1,9 @@
 """Compare slice 3b: diff kind colors, change markers, line tints, spans (#65)."""
 
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Iterator
 
 import pytest
@@ -471,6 +474,64 @@ def test_the_find_outline_draws_with_a_fold_closed(qtbot, scheme: QPalette) -> N
     tint = change_tint("changed", palette)
     match = (start, start + 8)
     _assert_outlined(editor, image, match, colors.current, colors.edge, tint)
+
+
+# A paint that never returns can't be stopped inside the test process, so
+# these paint in a child process with a hard limit.
+_PAINT_LIMIT_SECONDS = 10
+_OUTLINE_CHILD = """
+import sys
+from PySide6.QtWidgets import QApplication
+from galley.app.editor import CodeEditor
+from galley.app.theme import find_match_colors
+
+text, start, end = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+app = QApplication([])
+editor = CodeEditor()
+editor.resize(420, 200)
+editor.show()
+editor.setPlainText(text)
+editor.set_change_tints("left", [(2, 2, "changed")])
+editor.set_find_matches([start], [end], 0)
+app.processEvents()
+image = editor.viewport().grab().toImage()
+edge = find_match_colors(editor.palette()).edge.rgb()
+print(sum(
+    image.pixelColor(x, y).rgb() == edge
+    for x in range(image.width())
+    for y in range(image.height())
+))
+"""
+
+
+def _outline_pixels(text: str, start: int, end: int) -> int:
+    """Outline pixels when one Find match is painted, in a child process."""
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _OUTLINE_CHILD, text, str(start), str(end)],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=_PAINT_LIMIT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"painting the Find outline hung past {_PAINT_LIMIT_SECONDS} s")
+    assert done.returncode == 0, done.stderr
+    return int(done.stdout.split()[-1])
+
+
+def test_a_find_match_in_right_to_left_text_paints_its_outline() -> None:
+    # Hebrew for "hello world"; the match is the second word.
+    text = "x\n\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd\nx\n"
+    start = text.index("\u05e2")
+    assert _outline_pixels(text, start, start + 4) > 0
+
+
+def test_a_find_match_on_a_lone_combining_accent_paints() -> None:
+    text = "x\n\u0301\nx\n"
+    start = text.index("\u0301")
+    assert _outline_pixels(text, start, start + 1) >= 0
 
 
 def test_the_find_outline_follows_a_scheme_switch(qtbot, install_scheme) -> None:

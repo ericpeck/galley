@@ -1256,17 +1256,20 @@ class CodeEditor(QPlainTextEdit):
                         line = layout.lineAt(row)
                         if line.textStart() >= last:
                             break
+                        row += 1
                         left = max(first, line.textStart())
                         right = min(last, line.textStart() + line.textLength())
-                        x1 = line.cursorToX(left)[0]
-                        x2 = line.cursorToX(right)[0]
+                        # Right-to-left text puts the end left of the start.
+                        x1, x2 = sorted(
+                            (line.cursorToX(left)[0], line.cursorToX(right)[0])
+                        )
                         if x2 <= x1:
+                            # Nothing to trace, such as a lone combining mark.
                             continue
                         # Aligned outward, as Qt fills the match.
                         box = QRectF(x1, line.y(), x2 - x1, line.height())
                         box = box.translated(origin).toAlignedRect()
                         painter.drawRect(box.adjusted(0, 0, -1, -1))
-                        row += 1
                 block = block.next()
         painter.end()
 
