@@ -1267,9 +1267,11 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     ``bad_escape`` ``InputError`` at its escape in ``text``. JSON output
     can't hold a lone surrogate, and JSON input rejects one the same way.
     ``prepare`` goes to ``format_yaml``, so the rendered text is rewritten.
+    A reload too deep for ruamel then walks the rendered text, not ``text``,
+    so a value ``prepare`` replaced can't come back.
     """
     rendered = format_yaml(text, prepare=prepare)
-    value = _load_rendered_yaml(text, rendered)
+    value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
     return value

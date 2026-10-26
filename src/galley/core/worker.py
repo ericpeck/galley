@@ -6,27 +6,41 @@ the destination and never replaces that destination; the UI process commits.
 A ``CompareJob`` loads two documents and diffs them. It has no output file,
 so it writes no temp. A ``FormatJob`` with ``mask`` set formats through
 ``mask_document``. If masking fails, the job fails and sends no text, so
-unmasked output never reaches the parent while masking is on.
+unmasked output never reaches the parent while masking is on. Any other
+failure of a masked job is rebuilt from its kind, key name and place, so
+no value or quoted source line reaches the parent either.
 """
 
+import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
 from typing import BinaryIO, Literal
 
+from ruamel.yaml.constructor import DuplicateKeyError
+from ruamel.yaml.error import MarkedYAMLError
+
 from galley.core.diff import DiffResult, diff, load_document
-from galley.core.errors import InputError, NotJSONValueError
+from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.formats import format_named
-from galley.core.mask import MaskError, MaskRules, mask_document
+from galley.core.mask import MASK, MaskError, MaskRules, looks_personal, mask_document
 from galley.core.problems import Problem, collect_problems
 
 # The message a failed mask step sends. It is fixed, so it never quotes a
 # value from the document. The banner words are chosen in the app.
 MASK_FAILURE_MESSAGE = "Masking failed."
+
+# What a masked job's failure may keep: the escape a ``bad_escape`` names,
+# brackets, and the key a duplicate repeats unless it looks personal.
+_ESCAPE_RE = re.compile(r"\\[uU][0-9A-Fa-f]{4,8}")
+_BRACKETS = frozenset("{}[]")
+_DUPLICATE_CODES = frozenset({"json_duplicate", "yaml_duplicate"})
+_CAMEL_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 TEMP_PREFIX = ".galley-"
 TEMP_SUFFIX = ".tmp"
@@ -202,6 +216,8 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     event_queue.put(ProgressEvent(job.job_id, "read", 0, 0, None))
     early = collect_problems(job.text, job.source)
     if early:
+        if job.mask is not None:
+            early = _masked_problems(early)
         event_queue.put(FailureEvent(job.job_id, "", None, None, early))
         return
     try:
@@ -210,7 +226,7 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
         event_queue.put(FailureEvent(job.job_id, MASK_FAILURE_MESSAGE, None))
         return
     except Exception as exc:
-        event_queue.put(_failure_event(job, exc, None))
+        event_queue.put(_job_failure(job, exc, None))
         return
     folds = _scan_folds(text, job.target)
     payload = text.encode("utf-8")
@@ -221,7 +237,7 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     try:
         temp_path = _write_output(job, payload, event_queue)
     except Exception as exc:
-        event_queue.put(_failure_event(job, exc, temp_path))
+        event_queue.put(_job_failure(job, exc, temp_path))
         return
     if job.fault == FAULT_AFTER_TEMP:
         event_queue.put(FailureEvent(job.job_id, "forced failure", temp_path))
@@ -330,6 +346,118 @@ def _failure_message(exc: Exception) -> str:
     if message:
         return message
     return exc.__class__.__name__
+
+
+def _job_failure(job: FormatJob, exc: Exception, temp_path: str | None) -> FailureEvent:
+    if job.mask is None:
+        return _failure_event(job, exc, temp_path)
+    return _masked_failure(job, exc, temp_path)
+
+
+def _masked_failure(
+    job: FormatJob, exc: Exception, temp_path: str | None
+) -> FailureEvent:
+    """The failure a masked job sends: no value and no quoted source line.
+
+    Parser messages quote the document, such as ruamel's ``original value:
+    "…"`` and the line under it, so the message is rebuilt from the error's
+    kind, the key a duplicate repeats, and the line and column, as in
+    ``duplicate_key "password" at line 2, column 1``. The kind is a name,
+    like ``InputError.kind``; the app chooses the words. Problems and
+    ``InputError`` details keep only what can't hold a value.
+    """
+    plain = _failure_event(job, exc, temp_path)
+    problems = _masked_problems(plain.problems)
+    error = None if plain.error is None else _masked_error(plain.error)
+    return FailureEvent(
+        job.job_id,
+        _masked_message(exc, problems),
+        temp_path,
+        error,
+        problems,
+        not_json_value=plain.not_json_value,
+    )
+
+
+def _masked_problems(problems: tuple[Problem, ...]) -> tuple[Problem, ...]:
+    return tuple(
+        Problem(
+            problem.code,
+            problem.lineno,
+            _masked_token(problem),
+            problem.colno,
+            problem.uncertain,
+        )
+        for problem in problems
+    )
+
+
+def _masked_token(problem: Problem) -> str:
+    token = problem.token
+    if not token or token in _BRACKETS:
+        return token
+    if problem.code in _DUPLICATE_CODES and not looks_personal(token):
+        return token
+    return MASK
+
+
+def _masked_error(error: InputError) -> InputError:
+    details = {
+        name: value
+        for name, value in error.details.items()
+        if isinstance(value, (int, float))
+        or (isinstance(value, str) and _ESCAPE_RE.fullmatch(value))
+    }
+    return InputError(
+        error.kind, lineno=error.lineno, colno=error.colno, details=details
+    )
+
+
+def _masked_message(exc: Exception, problems: tuple[Problem, ...]) -> str:
+    if isinstance(exc, OSError):
+        # A file the job couldn't write: its path, not document text.
+        return _failure_message(exc)
+    key = next(
+        (p.token for p in problems if p.code in _DUPLICATE_CODES and p.token), ""
+    )
+    named = f' "{key}"' if key else ""
+    return _failure_kind(exc) + named + _failure_place(exc, problems)
+
+
+def _failure_kind(exc: Exception) -> str:
+    """The kind of failure, from fixed text only."""
+    if isinstance(exc, (JSONDuplicateKeyError, DuplicateKeyError)):
+        return "duplicate_key"
+    if isinstance(exc, json.JSONDecodeError):
+        # The json module's own fixed wording, such as "Expecting value".
+        return exc.msg
+    if isinstance(exc, InputError):
+        return exc.kind
+    if isinstance(exc, NotJSONValueError):
+        # Names only a type: "JSON can't hold a date value".
+        return _failure_message(exc)
+    if isinstance(exc, MarkedYAMLError):
+        # ScannerError is yaml_scanner_error.
+        return "yaml_" + _CAMEL_RE.sub("_", type(exc).__name__).lower()
+    return type(exc).__name__
+
+
+def _failure_place(exc: Exception, problems: tuple[Problem, ...]) -> str:
+    """`` at line L, column C`` from the parser, else from the first problem."""
+    line: int | None = None
+    column: int | None = None
+    mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+    if isinstance(exc, MarkedYAMLError) and mark is not None:
+        line, column = mark.line + 1, mark.column + 1
+    elif isinstance(getattr(exc, "lineno", None), int):
+        line, column = exc.lineno, getattr(exc, "colno", None)
+    elif problems:
+        line, column = problems[0].lineno, problems[0].colno
+    if line is None:
+        return ""
+    if column:
+        return f" at line {line}, column {column}"
+    return f" at line {line}"
 
 
 def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:

@@ -7,8 +7,11 @@ with ``mask`` set, and ``submit`` sends a masked job to the real worker.
 
 A ``QTimer`` heartbeat ticks on the UI thread from just before ``submit``
 until ``succeeded`` arrives. The largest gap between ticks is how long the
-UI thread was blocked. Isaac's budget is 0.1 s for each job. Every value is
-fake (``tests/core/mask_rows.py``).
+UI thread was blocked. Isaac's budget is 0.1 s for each job. The number
+checked is always a job's largest gap: in gate mode the median of the timed
+runs' largest gaps, as ``perf_budget`` checks any timing, and in strict mode
+the largest gap of all, since a median could hide one long freeze. Every
+value is fake (``tests/core/mask_rows.py``).
 """
 
 import functools
@@ -24,7 +27,7 @@ from tests.core.mask_rows import (
     text_of_size,
     yaml_text,
 )
-from tests.perf import TIMED_RUNS, WARMUP_RUNS, Timing
+from tests.perf import STRICT, TIMED_RUNS, WARMUP_RUNS, Timing, current_mode
 
 import galley.app.parse_session as parse_session_module
 from galley.app.limits import YAML_BUSY_BYTES
@@ -67,10 +70,13 @@ def test_the_ui_thread_is_never_blocked_while_a_masked_job_runs(
         ]
     finally:
         session.shutdown()
-    # Like ``perf_budget.within``: the warmup run is left out, and the median
-    # of the timed runs' largest gaps is held to the budget.
+    # The warmup run is left out, as ``perf_budget.within`` leaves it out.
+    largest = Timing(tuple(gaps[WARMUP_RUNS:]))
+    if current_mode() == STRICT:
+        # A one-sample timing's median is that sample: the largest gap of all.
+        largest = Timing((max(largest.samples),))
     perf_budget.check(
-        Timing(tuple(gaps[WARMUP_RUNS:])),
+        largest,
         _BLOCK_BUDGET_S,
         fixture=f"{label} to {source}, masked: largest UI-thread gap",
     )

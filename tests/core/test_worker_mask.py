@@ -26,11 +26,14 @@ from tests.core.mask_rows import (
 )
 
 import galley.core.format as format_module
+import galley.core.worker as worker_module
 from galley.app.limits import JSON_BUSY_BYTES, YAML_BUSY_BYTES
 from galley.core import mask
+from galley.core.errors import InputError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.mask import MASK, MaskError, MaskRules, mask_document, mask_tree
+from galley.core.problems import Problem
 from galley.core.worker import (
     MASK_FAILURE_MESSAGE,
     FailureEvent,
@@ -314,14 +317,191 @@ def test_a_mask_failure_message_never_quotes_a_value(monkeypatch) -> None:
     ],
     ids=["json-syntax", "json-repeated-key", "json-escape", "yaml-tab", "yaml-syntax"],
 )
-def test_input_errors_match_masking_off(text: str, source: str) -> None:
+def test_input_errors_keep_their_problems_and_places(text: str, source: str) -> None:
     masked = _run_here(_job(text, source))[-1]
     plain = _run_here(_job(text, source, rules=None))[-1]
     assert isinstance(masked, FailureEvent)
     assert isinstance(plain, FailureEvent)
-    assert masked.message == plain.message
     assert masked.problems == plain.problems
+    assert [p.colno for p in masked.problems] == [p.colno for p in plain.problems]
     assert _error_fields(masked) == _error_fields(plain)
+    _assert_clean(masked)
+
+
+# A masked job's failure names the kind, key and place, never a value
+
+_REPEATED_PASSWORD = "user: pat\npassword: hunter22\npassword: fake-other-22\n"
+
+
+def _assert_clean(event: object, values: tuple[str, ...] = _SECRETS) -> None:
+    """No value in the event, its repr, or the bytes that cross spawn."""
+    shown = repr(event)
+    pickled = pickle.dumps(event)
+    if isinstance(event, FailureEvent) and event.error is not None:
+        shown += repr(event.error.details)
+    for value in values:
+        assert value not in shown, value
+        assert value.encode("utf-8") not in pickled, value
+
+
+@pytest.mark.parametrize("target", ["yaml", "json"])
+def test_a_repeated_yaml_key_names_the_key_and_place_but_no_value(
+    target: str,
+) -> None:
+    plain = _run_here(_job(_REPEATED_PASSWORD, "yaml", target, rules=None))[-1]
+    assert isinstance(plain, FailureEvent)
+    assert "hunter22" in plain.message  # ruamel quotes the value; mask off keeps it
+    events = _run_in_child([_job(_REPEATED_PASSWORD, "yaml", target)])
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == 'duplicate_key "password" at line 3, column 1'
+    assert failure.problems == (Problem("yaml_duplicate", 3, "password"),)
+    assert failure.error is None
+    for event in events:
+        _assert_clean(event, ("hunter22", "fake-other-22"))
+
+
+def test_a_repeated_json_key_names_the_key_and_place_but_no_value() -> None:
+    text = '{\n  "password": "hunter22",\n  "password": "fake-other-22"\n}'
+    failure = _run_in_child([_job(text, "json")])[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == 'duplicate_key "password" at line 3, column 3'
+    assert failure.problems == (Problem("json_duplicate", 3, "password"),)
+    _assert_clean(failure, ("hunter22", "fake-other-22"))
+
+
+@pytest.mark.parametrize(
+    ("text", "source", "target", "message"),
+    [
+        (
+            '{"password": "hunter22",}',
+            "json",
+            "json",
+            "Expecting property name enclosed in double quotes at line 1, column 25",
+        ),
+        (
+            '{"password": hunter22}',
+            "json",
+            "json",
+            "Expecting value at line 1, column 14",
+        ),
+        (
+            '{"password": "hunter22\\uD800"}',
+            "json",
+            "json",
+            "bad_escape at line 1, column 23",
+        ),
+        (
+            "password: hunter22\nlist: [a, b\n",
+            "yaml",
+            "yaml",
+            "yaml_parser_error at line",
+        ),
+        ("password: 'hunter22\n", "yaml", "yaml", "yaml_scanner_error at line"),
+        ("a: &x hunter22\nb: *y\n", "yaml", "yaml", "yaml_composer_error at line"),
+        (
+            "when: 2024-01-01\npassword: hunter22\n",
+            "yaml",
+            "json",
+            "JSON can't hold a date value",
+        ),
+    ],
+    ids=[
+        "json-trailing-comma",
+        "json-bare-word",
+        "json-escape",
+        "yaml-flow",
+        "yaml-quote",
+        "yaml-alias",
+        "yaml-date",
+    ],
+)
+def test_every_masked_failure_keeps_its_kind_but_no_value(
+    text: str, source: str, target: str, message: str
+) -> None:
+    failure = _run_here(_job(text, source, target))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message.startswith(message)
+    _assert_clean(failure, ("hunter22",))
+
+
+def test_a_repeated_key_that_looks_personal_is_masked_too() -> None:
+    text = "pat@example.com: 1\npat@example.com: 2\n"
+    failure = _run_here(_job(text, "yaml"))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.problems == (Problem("yaml_duplicate", 2, MASK),)
+    assert failure.message == f'duplicate_key "{MASK}" at line 2, column 1'
+    _assert_clean(failure)
+
+
+def test_input_error_details_keep_only_what_holds_no_value() -> None:
+    error = InputError(
+        "bad_escape",
+        lineno=1,
+        colno=9,
+        details={"escape": "\\uD800", "offset": 8, "text": "hunter22"},
+    )
+    cleaned = worker_module._masked_error(error)
+    assert (cleaned.kind, cleaned.lineno, cleaned.colno) == ("bad_escape", 1, 9)
+    assert cleaned.details == {"escape": "\\uD800", "offset": 8}
+
+
+def test_a_write_failure_keeps_its_path(tmp_path: Path) -> None:
+    missing = tmp_path / "gone" / "out.json"
+    job = _job(_JSON, "json", temp_path=str(missing))
+    failure = _run_here(job)[-1]
+    assert isinstance(failure, FailureEvent)
+    assert "out.json" in failure.message
+    _assert_clean(failure)
+
+
+# Deep YAML: past 256 levels Format walks parser events, not ruamel's loader
+
+_DEEP_LEAF = "{email: pat@example.com, name: Pat Example, note: keep me}"
+
+
+def _deep_yaml(depth: int) -> str:
+    return "{a: " * depth + _DEEP_LEAF + "}" * depth + "\n"
+
+
+@pytest.mark.parametrize("depth", [300, 500])
+@pytest.mark.parametrize("target", ["yaml", "json"])
+@pytest.mark.parametrize("engine", ["pure", "c"])
+def test_deep_yaml_is_masked_on_the_event_path(
+    monkeypatch, engine: str, target: str, depth: int
+) -> None:
+    if engine == "c":
+        _needs_clib()
+    else:
+        _pure_engine(monkeypatch)
+    walked: list[bool] = []
+    real = format_module._yaml_from_events
+
+    def spy(text: str | bytes, *, pure: bool = False) -> object:
+        walked.append(pure)
+        return real(text, pure=pure)
+
+    monkeypatch.setattr(format_module, "_yaml_from_events", spy)
+    success = _run_here(_job(_deep_yaml(depth), "yaml", target))[-1]
+    assert isinstance(success, SuccessEvent)
+    assert walked, "the deep path did not run"
+    assert success.masked_count == 2
+    assert "pat@example.com" not in success.text
+    assert "Pat Example" not in success.text
+    assert "keep me" in success.text
+    assert success.text.count(MASK) == 2
+
+
+def test_the_json_character_walk_is_masked_too(monkeypatch) -> None:
+    # The walk runs when the fast scan needs a line and column. Force it.
+    monkeypatch.setattr(
+        format_module,
+        "_json_fast_value",
+        lambda _source: format_module._CHARACTER_WALK,
+    )
+    masked = mask_document(_JSON, "json", "json")
+    assert masked.masked_count == _JSON_COUNT
+    _assert_hidden(masked.text)
 
 
 # Cancel
@@ -554,8 +734,9 @@ _JOB_JSON_BUDGET_S = 0.7
 # #112 writes YAML through ruamel's pure-Python emitter on every platform so
 # both engines give identical bytes. The team chose to accept the slowdown
 # (#115 tracks making the C emitter match), so YAML gets 1 s until #115
-# lands. This budget is that 1 s plus 0.05 s of masking, and drops to 0.6 s
-# when #115 restores the 0.5 s YAML budget.
+# lands. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
+# (192 KB at 0.2 s per MB), rounded up. It drops to 0.6 s when #115 restores
+# the 0.5 s YAML budget.
 _JOB_YAML_BUDGET_S = 1.1
 # 0.8 s to parse and format the line, plus 0.32 s of masking.
 _JOB_ONE_LINE_BUDGET_S = 1.2
