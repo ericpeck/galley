@@ -170,6 +170,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Cut",
         "Copy",
+        "Copy As",
         "Paste",
         "Select All",
         "|",
@@ -183,6 +184,12 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Format",
         "Convert from Python",
+    ]
+    edit = _menu(window, "Edit")
+    assert _labels(_submenu(edit, "Copy As")) == [
+        "Original",
+        "Masked",
+        "Random fake",
     ]
     view = _menu(window, "View")
     assert _labels(view) == [

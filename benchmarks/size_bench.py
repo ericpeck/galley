@@ -107,6 +107,13 @@ one ``<item>`` element per record, with attributes, nested elements, and
 text-only leaves. Its 0.5 s and 2 s points are where the XML busy and
 progress bands in ``galley.app.limits`` come from. It uses the JSON ladder.
 
+``copy_as_masked_json``, ``copy_as_fake_json``, ``copy_as_masked_yaml`` and
+``copy_as_fake_yaml`` time Copy As › Masked and › Random fake (#66) as
+shipped, ``mask.copy_as_text``, on the plain corpus with the JSON and YAML
+ladders above. Each call is timed whole, like the convert rows: the load,
+the rewrite and the write all run inside ``format_document``. These rows are
+in their own ``copy_as`` group, so the Format UI cutoffs do not use them.
+
     uv run python benchmarks/size_bench.py
     uv run python benchmarks/size_bench.py --corpus realistic
     uv run python benchmarks/size_bench.py --corpus all
@@ -146,6 +153,7 @@ from ruamel.yaml.main import CEmitter, CParser
 import galley.core
 from galley.core import format as core_format
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.mask import CopyAsMode, copy_as_text
 from galley.core.xml_format import format_xml, validate_xml
 
 BYTES_PER_MB = 1024 * 1024
@@ -524,7 +532,29 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             phases=_xml_phases,
         )
     )
+    scheduled.extend(
+        _copy_as_operation(source_format, mode)
+        for source_format in ("json", "yaml")
+        for mode in COPY_AS_MODES
+    )
     return scheduled, skipped
+
+
+# Copy As modes the bench times. Original copies the text as it is.
+COPY_AS_MODES: tuple[CopyAsMode, ...] = ("masked", "fake")
+
+
+def _copy_as_operation(source_format: str, mode: CopyAsMode) -> Operation:
+    def copy(text: str) -> str:
+        return copy_as_text(text, source_format, mode).text
+
+    return Operation(
+        operation_id=f"copy_as_{mode}_{source_format}",
+        group="copy_as",
+        source_format=source_format,
+        fn=copy,
+        phases=_whole_phases(copy),
+    )
 
 
 def _shipped_pure_operation(operation_id: str, *, corpus: str) -> Operation:

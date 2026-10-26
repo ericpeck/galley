@@ -9,6 +9,7 @@ including inside arrays with no keys. Text that only contains one, like
 three Copy As trees from the same rules. Serializing a tree is
 ``format.dump_value``. ``mask_document`` is Format with masking: it hands
 ``mask_tree`` to ``format_document`` as its ``prepare`` step.
+``copy_as_text`` does the same with ``copy_as_result``.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -413,13 +414,30 @@ def mask_document(
     not load to a value, such as XML, can't be masked and raises
     ``MaskError``, so it never shows unmasked.
     """
+    return _rewrite_document(
+        text, source, target, lambda value: mask_tree(value, rules), sort_keys
+    )
+
+
+def _rewrite_document(
+    text: str | bytes,
+    source: str,
+    target: str,
+    rewrite: Callable[[object], MaskResult],
+    sort_keys: bool = False,
+) -> MaskedDocument:
+    """Format ``text`` with ``rewrite`` as ``format_document``'s ``prepare`` step.
+
+    ``mask_document`` and ``copy_as_text`` share it, so Format with masking
+    and Copy As load, check and write a document the same way.
+    """
     fmt = format_named(source)
     if not fmt.loads_to_value:
         raise MaskError(f"{fmt.label} can't be masked")
     counts: list[int] = []
 
     def prepare(value: object) -> object:
-        result = mask_tree(value, rules)
+        result = rewrite(value)
         counts.append(result.masked_count)
         return result.value
 
@@ -445,10 +463,23 @@ def copy_as_tree(
     ``mask_tree`` would replace through ``fake_value`` instead, emails and
     phone numbers found by value included.
     """
+    return copy_as_result(value, mode, rules, rng).value
+
+
+def copy_as_result(
+    value: object,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> MaskResult:
+    """Return ``copy_as_tree`` with the number of scalars it replaced.
+
+    ``original`` replaces none, so its count is 0.
+    """
     if mode == "original":
-        return value
+        return MaskResult(value, 0)
     if mode == "masked":
-        return mask_tree(value, rules).value
+        return mask_tree(value, rules)
     if mode != "fake":
         raise ValueError(f"Unknown Copy As mode: {mode}")
     chooser = rng if rng is not None else random.SystemRandom()
@@ -456,7 +487,74 @@ def copy_as_tree(
     def replace(scalar: object, key: object) -> object:
         return fake_value(scalar, detect_kind(key, scalar), chooser)
 
-    return _rewrite(value, rules or MaskRules(), replace).value
+    return _rewrite(value, rules or MaskRules(), replace)
+
+
+@dataclass(frozen=True)
+class CopyAsResult:
+    """The text to put on the clipboard.
+
+    ``count`` is the number of values hidden (Masked) or replaced (Random
+    fake). It is 0 for Original.
+    """
+
+    mode: CopyAsMode
+    text: str
+    count: int
+
+
+class CopyAsError(Exception):
+    """Copy As built no text, so nothing may be copied.
+
+    ``mode`` is the copy that failed. ``invalid`` is True when the text did
+    not load as its format, and False when it loaded but masking or writing
+    it failed. The message names only the mode, the format and the error
+    type, never document text: a parse error quotes the line it failed on,
+    which can hold a value Masked or Random fake must hide. The original
+    error is ``__cause__``, for debugging only.
+    """
+
+    def __init__(self, mode: CopyAsMode, fmt: str, exc: Exception, *, invalid: bool):
+        step = "did not load" if invalid else "could not be masked or written"
+        super().__init__(
+            f"Copy As {mode}: the {fmt} text {step} ({type(exc).__name__})"
+        )
+        self.mode: CopyAsMode = mode
+        self.invalid = invalid
+
+
+def copy_as_text(
+    text: str,
+    fmt: str,
+    mode: CopyAsMode,
+    rules: MaskRules | None = None,
+    rng: random.Random | None = None,
+) -> CopyAsResult:
+    """Return the Copy As text for ``mode``. Every failure is a CopyAsError.
+
+    ``text`` is the Output, or a selection of it, and ``fmt`` its format
+    name (case-insensitive), for reading and writing. Original is ``text``
+    as it is. Masked and Random fake format it from ``fmt`` to ``fmt`` the
+    way ``mask_document`` does, with ``copy_as_result`` as the rewrite, so
+    the copy keeps the structure and format, and passes the same checks.
+    A format that does not load to a value, such as XML, fails. ``rng`` is
+    for tests; without one Random fake uses ``random.SystemRandom``.
+    """
+    if mode == "original":
+        return CopyAsResult(mode, text, 0)
+    loaded = False
+
+    def rewrite(value: object) -> MaskResult:
+        nonlocal loaded
+        loaded = True
+        return copy_as_result(value, mode, rules, rng)
+
+    try:
+        copied = _rewrite_document(text, fmt, fmt, rewrite)
+    except Exception as exc:
+        invalid = not loaded and not isinstance(exc, MaskError)
+        raise CopyAsError(mode, fmt, exc, invalid=invalid) from exc
+    return CopyAsResult(mode, copied.text, copied.masked_count)
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:
