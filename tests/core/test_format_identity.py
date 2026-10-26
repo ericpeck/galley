@@ -4,20 +4,17 @@ Erik's stop rule for #63: if any JSON or YAML output byte changes, stop.
 ``data/format_identity.json`` records, for every corpus document, what
 ``format_document`` gave on each source and target pair (a SHA-256 prefix of
 the output, or the error raised) and what ``detect_format`` sniffs from the
-text. It was written from ``main`` before the format table existed.
-
-The macOS leg runs with ``ruamel.yaml.clib`` and the Windows leg without it.
-Some JSON-to-YAML and YAML-to-JSON outputs differ between those two on
-``main``, so ``data/format_identity_pure.json`` holds the pure-Python value
-for each field that differs.
+text. It was written from ``main`` before the format table existed, and
+written again from ``main`` once #112 made both YAML engines give the same
+bytes. The test runs once per engine, the way ``test_yaml_engine_parity.py``
+does: ``c`` where ``ruamel.yaml.clib`` is installed, and ``pure`` with the C
+parser and emitter hidden, the way a Windows install runs.
 
 The corpus is ``data/format_corpus.json``, a frozen copy of the document-like
 string and bytes constants in the test suite, plus size-bench documents
 generated here (plain JSON, plain YAML, and every realistic YAML profile).
 
-Regenerate only for an output change a reviewer has agreed to, once with
-``uv sync`` and once with ``uv sync --no-install-package ruamel.yaml.clib``
-(then ``uv run --no-sync``)::
+Regenerate only for an output change a reviewer has agreed to::
 
     GALLEY_WRITE_FORMAT_IDENTITY=1 uv run pytest tests/core/test_format_identity.py
 """
@@ -29,6 +26,7 @@ import os
 from pathlib import Path
 
 import pytest
+import ruamel.yaml.main as ruamel_main
 from benchmarks.size_bench import (
     JSON_FOOTER_PREFIX,
     JSON_FOOTER_SUFFIX,
@@ -44,19 +42,18 @@ from benchmarks.size_bench import (
     render_realistic_yaml,
 )
 
+import galley.core.format as format_module
 from galley.core.errors import InputError
-from galley.core.format import _clib_available, format_document
+from galley.core.format import format_document
 from galley.core.load import detect_format
 
 _DATA = Path(__file__).parent / "data"
 _CORPUS = _DATA / "format_corpus.json"
 _GOLDEN = _DATA / "format_identity.json"
-_GOLDEN_PURE = _DATA / "format_identity_pure.json"
 _WRITE = os.environ.get("GALLEY_WRITE_FORMAT_IDENTITY") == "1"
 _PAIRS = (("json", "json"), ("json", "yaml"), ("yaml", "json"), ("yaml", "yaml"))
 _DIGEST_CHARS = 24
 _BENCH_BYTES = 24_000
-_UNORDERED_TAG = "!!set"
 _REALISTIC_PROFILES = (
     "natural",
     "reparse",
@@ -84,11 +81,6 @@ def _outcome(text: str | bytes, source: str, target: str) -> str:
         return f"InputError {exc.kind} {located} {details}"
     except Exception as exc:
         return f"{type(exc).__name__} {_digest(str(exc))}"
-    if isinstance(text, str) and _UNORDERED_TAG in text:
-        # A YAML set comes out in string-hash order, which changes with
-        # PYTHONHASHSEED on main too. Only its lines are compared.
-        lines = "\n".join(sorted(output.splitlines()))
-        return f"output-lines {_digest(lines)}"
     return f"output {_digest(output)}"
 
 
@@ -145,39 +137,26 @@ def _corpus(tmp: Path) -> dict[str, str | bytes]:
     return documents
 
 
-def _load(path: Path) -> Records:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write(path: Path, records: Records) -> None:
-    path.write_text(json.dumps(records, indent=1) + "\n", encoding="utf-8")
-
-
 def _expected() -> Records:
-    expected = _load(_GOLDEN)
-    if not _clib_available():
-        for key, fields in _load(_GOLDEN_PURE).items():
-            expected[key] = {**expected[key], **fields}
-    return expected
+    return json.loads(_GOLDEN.read_text(encoding="utf-8"))
 
 
-def _write_golden(actual: Records) -> None:
-    if _clib_available():
-        _write(_GOLDEN, actual)
-        return
-    base = _load(_GOLDEN)
-    overrides = {
-        key: {f: v for f, v in record.items() if base[key][f] != v}
-        for key, record in actual.items()
-        if record != base[key]
-    }
-    _write(_GOLDEN_PURE, overrides)
+@pytest.fixture(params=("c", "pure"))
+def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    if request.param == "c":
+        if not format_module._clib_available():
+            pytest.skip("ruamel.yaml.clib is not installed")
+        return "c"
+    monkeypatch.setattr(ruamel_main, "CParser", None)
+    monkeypatch.setattr(ruamel_main, "CEmitter", None)
+    monkeypatch.setattr(format_module, "_CLIB_READY", False)
+    return "pure"
 
 
-def test_json_and_yaml_output_bytes_are_unchanged(tmp_path: Path) -> None:
+def test_json_and_yaml_output_bytes_are_unchanged(tmp_path: Path, engine: str) -> None:
     actual = {key: _record(text) for key, text in _corpus(tmp_path).items()}
-    if _WRITE:
-        _write_golden(actual)
+    if _WRITE and engine == "c":
+        _GOLDEN.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")
         pytest.skip("wrote the format identity golden")
     expected = _expected()
     assert actual.keys() == expected.keys()

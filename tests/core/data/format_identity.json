@@ -188,7 +188,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\ud800\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\ud800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\ud800\"}",
   "yaml>yaml": "output 9b76c8bf8531c18e585193b8"
  },
  "tests/app/test_banner.py#24": {
@@ -372,7 +372,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9b76c8bf8531c18e585193b8"
  },
  "tests/app/test_compare_session.py#47": {
@@ -515,7 +515,7 @@
   "input": "d78c0c4f541163df6077eaed",
   "detect": null,
   "json>json": "output d78c0c4f541163df6077eaed",
-  "json>yaml": "output f84cf3b6b3dc6a6f578886e1",
+  "json>yaml": "output 525913985d3ad0bfb140b926",
   "yaml>json": "output d78c0c4f541163df6077eaed",
   "yaml>yaml": "output 525913985d3ad0bfb140b926"
  },
@@ -548,7 +548,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output b9f07b0fd6eb51283bff1e47"
  },
  "tests/app/test_escape_string.py#69": {
@@ -571,8 +571,8 @@
   "input": "8c0e8d3e7e450f2002900c51",
   "detect": "JSON",
   "json>json": "output b876623e1e5b5229a82dc976",
-  "json>yaml": "output fda63292b0c917249c1e8b3d",
-  "yaml>json": "ScannerError 51582a0ee5f45222762f55f5",
+  "json>yaml": "output 48a5fd60d489a02005682b21",
+  "yaml>json": "InputError bad_escape 1:37 {\"escape\": \"\\\\ud83d\"}",
   "yaml>yaml": "output fb1bd5ff867a5edf4a56b58c"
  },
  "tests/app/test_escape_string.py#72": {
@@ -971,7 +971,7 @@
   "input": "e912f309f63c824b255db720",
   "detect": "JSON",
   "json>json": "output 9b6ecd43c5eddb3fca80ec94",
-  "json>yaml": "output e7034bef2a96771eece73e51",
+  "json>yaml": "output e7a23006fade5c75bd87e0e7",
   "yaml>json": "output 9b6ecd43c5eddb3fca80ec94",
   "yaml>yaml": "output e7a23006fade5c75bd87e0e7"
  },
@@ -1051,7 +1051,7 @@
   "input": "7a0c50b92434b015545fe93a",
   "detect": null,
   "json>json": "output aef4c2b6bc276f26c7f7b784",
-  "json>yaml": "output 9b5aa65e4b088e9119ad1a77",
+  "json>yaml": "output f2653c071a2af0830536e648",
   "yaml>json": "output aef4c2b6bc276f26c7f7b784",
   "yaml>yaml": "output f2653c071a2af0830536e648"
  },
@@ -1787,7 +1787,7 @@
   "input": "60166444bc8a21ffd3a18309",
   "detect": null,
   "json>json": "output 14a8edce21f683ef5c6bc2d8",
-  "json>yaml": "output 2430ed8a76ff9fd786720a4b",
+  "json>yaml": "output 14a8edce21f683ef5c6bc2d8",
   "yaml>json": "output 14a8edce21f683ef5c6bc2d8",
   "yaml>yaml": "output 14a8edce21f683ef5c6bc2d8"
  },
@@ -1819,7 +1819,7 @@
   "input": "61ae9f3742a061a6bd22c74d",
   "detect": null,
   "json>json": "output 07bc85eb1d864d41c878169f",
-  "json>yaml": "output a20b7a3f87ea4aaa6a46007f",
+  "json>yaml": "output 1ea23362f4024e49d80bd225",
   "yaml>json": "output 07bc85eb1d864d41c878169f",
   "yaml>yaml": "output 1ea23362f4024e49d80bd225"
  },
@@ -2580,7 +2580,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output 3cc88d0bd25dbd1e06e2c865"
  },
  "tests/core/test_diff.py#323": {
@@ -2948,8 +2948,8 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 65b6d32b9b2140fc711bda7b",
-  "yaml>yaml": "output-lines db284a0fa298f975e59e8602"
+  "yaml>json": "NotJSONValueError bdb754114e5d43ce539770fe",
+  "yaml>yaml": "output a57ffa0ed8a8fa7de32e73f3"
  },
  "tests/core/test_diff.py#369": {
   "input": "d6471623a0a8bc962d28d712",
@@ -2964,7 +2964,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output 77a5ea243fea4289685e6b95"
  },
  "tests/core/test_diff.py#371": {
@@ -3284,7 +3284,7 @@
   "detect": "JSON",
   "json>json": "JSONDuplicateKeyError 2ed05986f12367dc95e1da56",
   "json>yaml": "JSONDuplicateKeyError 2ed05986f12367dc95e1da56",
-  "yaml>json": "ScannerError dcb7c9f62e2fa5eca7096c62",
+  "yaml>json": "InputError bad_escape 1:3 {\"escape\": \"\\\\ud83d\"}",
   "yaml>yaml": "output 881aa9880f181cf944a912f3"
  },
  "tests/core/test_duplicate_keys.py#411": {
@@ -3523,8 +3523,8 @@
   "input": "3444f4c1a664c05299ffd696",
   "detect": "JSON",
   "json>json": "output 7c898738adcbeb047dac8ee8",
-  "json>yaml": "output 7b893e583a48fe97422e31a7",
-  "yaml>json": "ScannerError c2a3b4b5e6aba67e460030b0",
+  "json>yaml": "output 3acb10d84b46eee92598bbe6",
+  "yaml>json": "InputError bad_escape 1:34 {\"escape\": \"\\\\ud83d\"}",
   "yaml>yaml": "output 7f038ab64bb6ad4c2541e3fe"
  },
  "tests/core/test_escape.py#441": {
@@ -3539,7 +3539,7 @@
   "input": "18a7d366b49b3b0b0f787895",
   "detect": "JSON",
   "json>json": "output 10d2396f9033a34e1f8327b8",
-  "json>yaml": "output 28a813af67dcbf1caf39272c",
+  "json>yaml": "output 83dea0bc1ed9042f340f97af",
   "yaml>json": "output 10d2396f9033a34e1f8327b8",
   "yaml>yaml": "output 83dea0bc1ed9042f340f97af"
  },
@@ -3619,7 +3619,7 @@
   "input": "f988d66cd1a312a0cd04bb73",
   "detect": "JSON",
   "json>json": "output 7d2c22988a776fd4246bbfb6",
-  "json>yaml": "output 6cc38f651a0385786f3959f2",
+  "json>yaml": "output 6892eb4cb6679e0d2afafe9c",
   "yaml>json": "output 7d2c22988a776fd4246bbfb6",
   "yaml>yaml": "output 6892eb4cb6679e0d2afafe9c"
  },
@@ -3627,7 +3627,7 @@
   "input": "fa3035280be98a2407244e8b",
   "detect": null,
   "json>json": "output fa3035280be98a2407244e8b",
-  "json>yaml": "output 5db0b2a6b2c8c009fea21e59",
+  "json>yaml": "output 1a50b6922bc25cf69ac857bc",
   "yaml>json": "output fa3035280be98a2407244e8b",
   "yaml>yaml": "output 1a50b6922bc25cf69ac857bc"
  },
@@ -3723,7 +3723,7 @@
   "input": "9677e6d5882998614156ddcc",
   "detect": "YAML",
   "json>json": "output 843e646fdf3d41deb65b8502",
-  "json>yaml": "output 53568c2d049a9ce33bbd7678",
+  "json>yaml": "output 843e646fdf3d41deb65b8502",
   "yaml>json": "output 843e646fdf3d41deb65b8502",
   "yaml>yaml": "output 843e646fdf3d41deb65b8502"
  },
@@ -3764,7 +3764,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 0877eb813ec9cdad1454997f"
  },
  "tests/core/test_escape.py#471": {
@@ -3772,8 +3772,8 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 65b6d32b9b2140fc711bda7b",
-  "yaml>yaml": "output-lines 32c8ddb546f67a259eed0841"
+  "yaml>json": "NotJSONValueError bdb754114e5d43ce539770fe",
+  "yaml>yaml": "output a98c2772423f643c7d1e0ea7"
  },
  "tests/core/test_escape.py#472": {
   "input": "70cb64242e353aa4e99ca035",
@@ -4283,8 +4283,8 @@
   "input": "5075bde7570d2b8b940e5977",
   "detect": "JSON",
   "json>json": "output 38c5824ddf8c6e330385ab97",
-  "json>yaml": "output 70110dfa0c453b6abad74b1e",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "json>yaml": "output a56ea9e49cf88c1fee351f74",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9ff9db0fc8a57135faa5cec7"
  },
  "tests/core/test_hostile.py#536": {
@@ -4420,7 +4420,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "yaml>yaml": "output 947143dddccf0ff436c3de22"
  },
  "tests/core/test_json_fast_path.py#553": {
@@ -4428,7 +4428,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
   "yaml>yaml": "output 947143dddccf0ff436c3de22"
  },
  "tests/core/test_json_fast_path.py#554": {
@@ -4436,7 +4436,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "yaml>yaml": "output 2861122b16b49c0e5b9349c2"
  },
  "tests/core/test_json_fast_path.py#555": {
@@ -4444,7 +4444,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\udc00\"}",
   "yaml>yaml": "output 2861122b16b49c0e5b9349c2"
  },
  "tests/core/test_json_fast_path.py#556": {
@@ -4452,7 +4452,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 2cd32314944b647a8e5ed5e6"
  },
  "tests/core/test_json_fast_path.py#557": {
@@ -4460,15 +4460,15 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "json>yaml": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDC00\"}",
   "yaml>yaml": "output 8bc7ad0afc29387a3a21e55a"
  },
  "tests/core/test_json_fast_path.py#558": {
   "input": "f337484882b1a2d18155007c",
   "detect": "JSON",
   "json>json": "output 38c5824ddf8c6e330385ab97",
-  "json>yaml": "output 70110dfa0c453b6abad74b1e",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "json>yaml": "output a56ea9e49cf88c1fee351f74",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\ud800\"}",
   "yaml>yaml": "output 9ff9db0fc8a57135faa5cec7"
  },
  "tests/core/test_json_fast_path.py#559": {
@@ -4476,15 +4476,15 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:20 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:20 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9db7a79f3fbf612fcb5b0581"
  },
  "tests/core/test_json_fast_path.py#560": {
   "input": "91145e3861883e51a5ddf3bc",
   "detect": "JSON",
   "json>json": "output 68992b12981b549c53d96b3b",
-  "json>yaml": "output edb7b1e4866ee810a6be86b0",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "json>yaml": "output 40a468085da339ebae8fa319",
+  "yaml>json": "InputError bad_escape 1:8 {\"escape\": \"\\\\uDBFF\"}",
   "yaml>yaml": "output c9fc6987f8b2e9215e23fe39"
  },
  "tests/core/test_json_fast_path.py#561": {
@@ -4508,7 +4508,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:10 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:10 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 78dcb98ca06e2feec8256b8a",
+  "yaml>json": "InputError bad_escape 1:10 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 42af2861ba0f1fa1b84442fc"
  },
  "tests/core/test_json_fast_path.py#564": {
@@ -4516,15 +4516,15 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 1:15 {\"escape\": \"\\\\uDC00\"}",
   "json>yaml": "InputError bad_escape 1:15 {\"escape\": \"\\\\uDC00\"}",
-  "yaml>json": "ScannerError 45e1e7f136d5da55efbfb2e9",
+  "yaml>json": "InputError bad_escape 1:15 {\"escape\": \"\\\\uDC00\"}",
   "yaml>yaml": "output f08de416b047c34aeb787822"
  },
  "tests/core/test_json_fast_path.py#565": {
   "input": "ef5844e4b776dbf567332d9e",
   "detect": "JSON",
   "json>json": "output 43bb59e020c8ff4f5b39e991",
-  "json>yaml": "output 4b7f644179fd5b1d7f914ec1",
-  "yaml>json": "ScannerError 78dcb98ca06e2feec8256b8a",
+  "json>yaml": "output 488b3275ce55f1096d3af6f1",
+  "yaml>json": "InputError bad_escape 1:10 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 58536ace4c0e376f7bb43b66"
  },
  "tests/core/test_json_fast_path.py#566": {
@@ -4547,7 +4547,7 @@
   "input": "329efc1625d7ab64dfa1f325",
   "detect": "JSON",
   "json>json": "output 38c5824ddf8c6e330385ab97",
-  "json>yaml": "output 70110dfa0c453b6abad74b1e",
+  "json>yaml": "output a56ea9e49cf88c1fee351f74",
   "yaml>json": "output 38c5824ddf8c6e330385ab97",
   "yaml>yaml": "output a56ea9e49cf88c1fee351f74"
  },
@@ -4580,7 +4580,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 2:9 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 2:9 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 2:9 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9b76c8bf8531c18e585193b8"
  },
  "tests/core/test_json_fast_path.py#573": {
@@ -4588,7 +4588,7 @@
   "detect": null,
   "json>json": "InputError bad_escape 1:2 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:2 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError dcb7c9f62e2fa5eca7096c62",
+  "yaml>json": "InputError bad_escape 1:2 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output a1e85beb6daa9f6c3618c803"
  },
  "tests/core/test_json_fast_path.py#574": {
@@ -4619,8 +4619,8 @@
   "input": "89dba925b566d3481e72f3ba",
   "detect": "JSON",
   "json>json": "output dc21e55feb76ee9bdf0b6766",
-  "json>yaml": "output 28d50448eca40539c35ddc0a",
-  "yaml>json": "ScannerError 1d07e81f931f7c264df8b993",
+  "json>yaml": "output e16775daa6512dc85bc1ea3e",
+  "yaml>json": "InputError bad_escape 1:11 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output b5ab107d8da62a151f6ad6b2"
  },
  "tests/core/test_json_fast_path.py#578": {
@@ -4628,7 +4628,7 @@
   "detect": "JSON",
   "json>json": "InputError bad_escape 2:9 {\"escape\": \"\\\\ud800\"}",
   "json>yaml": "InputError bad_escape 2:9 {\"escape\": \"\\\\ud800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 2:9 {\"escape\": \"\\\\ud800\"}",
   "yaml>yaml": "output 9b76c8bf8531c18e585193b8"
  },
  "tests/core/test_json_fast_path.py#579": {
@@ -5324,7 +5324,7 @@
   "detect": null,
   "json>json": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
   "json>yaml": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
-  "yaml>json": "TypeError db04536243d8605d4f11d988",
+  "yaml>json": "NotJSONValueError dfad9f75de253a0c765f215a",
   "yaml>yaml": "output fa96b538e9c3eba70e36fb22"
  },
  "tests/core/test_mask.py#666": {
@@ -5332,7 +5332,7 @@
   "detect": null,
   "json>json": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
   "json>yaml": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
-  "yaml>json": "TypeError db04536243d8605d4f11d988",
+  "yaml>json": "NotJSONValueError dfad9f75de253a0c765f215a",
   "yaml>yaml": "output edf188730b7dbe202f020d2a"
  },
  "tests/core/test_mask.py#667": {
@@ -5356,16 +5356,16 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 65b6d32b9b2140fc711bda7b",
-  "yaml>yaml": "output-lines 8adc605996f876363bfbc719"
+  "yaml>json": "NotJSONValueError bdb754114e5d43ce539770fe",
+  "yaml>yaml": "output e2a867f8e2c81825239bc9e0"
  },
  "tests/core/test_mask.py#670": {
   "input": "05b7374b28640ef6920c0374",
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 65b6d32b9b2140fc711bda7b",
-  "yaml>yaml": "output-lines eb9febe1d3be2a571a9e23bb"
+  "yaml>json": "NotJSONValueError bdb754114e5d43ce539770fe",
+  "yaml>yaml": "output 37411aedbada46475b4add05"
  },
  "tests/core/test_mask.py#671": {
   "input": "6badc6890c7526fc6898bf6b",
@@ -5676,7 +5676,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output 79ba6f12d86831d8d43e0506"
  },
  "tests/core/test_yaml_clib.py#710": {
@@ -5852,7 +5852,7 @@
   "detect": "YAML",
   "json>json": "InputError bad_escape 1:5 {\"escape\": \"\\\\uD800\"}",
   "json>yaml": "InputError bad_escape 1:5 {\"escape\": \"\\\\uD800\"}",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:5 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9b76c8bf8531c18e585193b8"
  },
  "tests/core/test_yaml_clib.py#732": {
@@ -5860,7 +5860,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ScannerError 093f535b8cc413ee3e80dc6c",
+  "yaml>json": "InputError bad_escape 1:5 {\"escape\": \"\\\\uD800\"}",
   "yaml>yaml": "output 9ff9db0fc8a57135faa5cec7"
  },
  "tests/core/test_yaml_clib.py#733": {
@@ -5940,7 +5940,7 @@
   "detect": null,
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ParserError 9d20fc81fdea2daa2511e404",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 9bc39fc33784b7f5d954ea38"
  },
  "tests/core/test_yaml_clib.py#743": {
@@ -6164,7 +6164,7 @@
   "detect": null,
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output 4ed59915fa18007da074c2e1"
  },
  "tests/core/test_yaml_clib.py#771": {
@@ -6348,7 +6348,7 @@
   "detect": null,
   "json>json": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
   "json>yaml": "JSONDecodeError e5f5d981fe7f0021f640f3e9",
-  "yaml>json": "TypeError 8f31cbfdd74b85a68f3a8a64",
+  "yaml>json": "NotJSONValueError 93289274940c1862d9e94df8",
   "yaml>yaml": "output 4ed59915fa18007da074c2e1"
  },
  "tests/core/test_yaml_clib.py#794": {
@@ -7092,7 +7092,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 8d4962a4265fc650ac6a46f3"
  },
  "size_bench/yaml-realistic-reparse": {
@@ -7100,7 +7100,7 @@
   "detect": null,
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output b2dfd73ba9349703e477d021"
  },
  "size_bench/yaml-realistic-clean": {
@@ -7108,7 +7108,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 0d614115892c68c128d986ed"
  },
  "size_bench/yaml-realistic-bare_tag": {
@@ -7116,7 +7116,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 6f585637ee7369f5a53a918a"
  },
  "size_bench/yaml-realistic-quoted_tab": {
@@ -7124,7 +7124,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output bb2e581fc5e3f9ffa3bc813e"
  },
  "size_bench/yaml-realistic-directive": {
@@ -7132,7 +7132,7 @@
   "detect": null,
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError ceb1e5f512c71b5666d3c875",
+  "yaml>json": "NotJSONValueError 53bca604ef7aefe425841c32",
   "yaml>yaml": "output 63bb401b1aaa4d2e65c164b6"
  }
 }
