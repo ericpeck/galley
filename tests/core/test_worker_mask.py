@@ -16,6 +16,7 @@ from queue import Empty
 
 import pytest
 import ruamel.yaml.main as ruamel_main
+from ruamel.yaml.error import MarkedYAMLError
 from tests.core.mask_rows import (
     MASKED_PER_ROW,
     ONE_LINE_CHARS,
@@ -34,7 +35,7 @@ from galley.core.errors import InputError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
 from galley.core.format import format_document
 from galley.core.mask import MASK, MaskError, MaskRules, mask_document, mask_tree
-from galley.core.problems import Problem
+from galley.core.problems import Problem, collect_problems
 from galley.core.worker import (
     MASK_FAILURE_MESSAGE,
     FailureEvent,
@@ -378,7 +379,7 @@ def test_a_repeated_json_key_names_the_key_and_place_but_no_value() -> None:
             '{"password": "hunter22",}',
             "json",
             "json",
-            "Expecting property name enclosed in double quotes at line 1, column 24",
+            "Expecting property name enclosed in double quotes at line 1, column 25",
         ),
         (
             '{"password": hunter22}',
@@ -507,17 +508,24 @@ def test_every_json_decoder_message_says_at_once() -> None:
         assert text.startswith(f"{message.removesuffix(' at')} at line "), text
 
 
-def test_every_json_decoder_message_names_the_first_problems_place() -> None:
-    places = {
-        message: (_place(failure.message), failure.problems[0])
-        for message, failure in _decoder_failures()
-    }
-    moved = {
-        message: (said, (first.lineno, first.colno))
-        for message, (said, first) in places.items()
-        if said != (first.lineno, first.colno)
-    }
+def test_every_json_decoder_message_names_its_own_place() -> None:
+    moved = {}
+    for (message, text), (_, failure) in zip(
+        _JSON_DECODE_FAILURES, _decoder_failures(), strict=True
+    ):
+        with pytest.raises(json.JSONDecodeError) as caught:
+            json.loads(text)
+        own = (caught.value.lineno, caught.value.colno)
+        if _place(failure.message) != own:
+            moved[message] = (_place(failure.message), own)
     assert moved == {}
+
+
+def test_a_raw_line_break_in_a_string_names_the_decoders_place() -> None:
+    failure = _run_here(_job('{"password": "hunter22\n"}', "json"))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == "Invalid control character at line 1, column 23"
+    _assert_clean(failure, ("hunter22",))
 
 
 @pytest.mark.parametrize(
@@ -539,6 +547,29 @@ def test_a_yaml_failure_names_the_first_problems_place(
     first = failure.problems[0]
     assert _place(failure.message) == (first.lineno, first.colno)
     _assert_clean(failure, ("hunter22", "fake-other-22", "1234"))
+
+
+def test_a_yaml_failure_with_two_problems_names_the_first() -> None:
+    # A running job reports tab indents before parsing, with no message, so
+    # this builds the message from the parser's error and both problems.
+    text = "password: hunter22\nnested:\n\tpin: 1234\n\tnote: fake-other-22\n"
+    with pytest.raises(MarkedYAMLError) as caught:
+        format_document(text, "yaml", "yaml")
+    problems = collect_problems(text, "yaml", caught.value)
+    assert [(p.code, p.lineno) for p in problems] == [("yaml_tab", 3), ("yaml_tab", 4)]
+    message = worker_module._masked_message(caught.value, problems)
+    assert message == "yaml_scanner_error at line 3"
+    for value in ("hunter22", "1234", "fake-other-22"):
+        assert value not in message
+
+
+def test_a_failure_with_no_problem_and_no_line_names_no_place() -> None:
+    failure = _run_here(_job("a: !!int x\n", "yaml"))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.problems == ()
+    assert failure.message
+    assert " at line" not in failure.message
+    _assert_clean(failure, ("hunter22",))
 
 
 # Deep YAML: past 256 levels Format walks parser events, not ruamel's loader

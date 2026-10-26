@@ -500,21 +500,26 @@ def _failure_kind(exc: Exception) -> str:
 
 
 def _failure_place(exc: Exception, problems: tuple[Problem, ...]) -> str:
-    """`` at line L, column C`` from the first problem, else from the parser.
+    """`` at line L, column C`` for a masked failure, or ``""`` with no line.
 
-    The first problem is the row the app shows for this failure, so the
-    message names the same place. A problem with no column (``colno`` 0,
-    as for YAML) gives the line alone. ``problem_mark`` is 0-based.
+    A YAML error takes its first problem, the row the app shows for it,
+    because that row can sit on an earlier line than the parser's mark.
+    YAML problems have no column (``colno`` 0), so then the line is named
+    alone. Without a problem, YAML takes its 0-based ``problem_mark``. JSON
+    decode, repeated-key and input errors take their own ``lineno`` and
+    ``colno``. Anything else takes its first problem.
     """
     line: int | None = None
     column: int | None = None
     mark = getattr(exc, "problem_mark", None)
-    if problems:
+    if isinstance(exc, MarkedYAMLError) and problems:
         line, column = problems[0].lineno, problems[0].colno
     elif isinstance(exc, MarkedYAMLError) and mark is not None:
         line, column = mark.line + 1, mark.column + 1
     elif isinstance(getattr(exc, "lineno", None), int):
         line, column = exc.lineno, getattr(exc, "colno", None)
+    elif problems:
+        line, column = problems[0].lineno, problems[0].colno
     if line is None:
         return ""
     if column:
