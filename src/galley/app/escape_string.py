@@ -12,7 +12,7 @@ from galley.app.problem_text import (
     display_problem,
     message_for,
 )
-from galley.core.errors import InputError, NotJSONValueError
+from galley.core.errors import InputError
 from galley.core.escape import (
     EscapeError,
     UnescapeError,
@@ -97,10 +97,8 @@ def escape_input(text: str, source: str) -> StringResult:
         return StringResult(None, "", tuple(display_problem(item) for item in early))
     try:
         escaped = escape_document(text, source)
-    except EscapeError:
-        return StringResult(None, NOT_JSON_VALUE_MESSAGE)
-    except NotJSONValueError as exc:
-        # A key or self-reference ``yaml_json_value`` caught before json.dumps.
+    except EscapeError as exc:
+        # Its text names a key or self-reference kind, or is json's own text.
         return StringResult(None, not_json_text(str(exc)))
     except InputError as exc:
         return StringResult(None, "", (display_input_error(exc),))
