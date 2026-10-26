@@ -99,9 +99,11 @@ from galley.app.problems_settings import (
     STATE_OPEN,
     STRIP_WIDTH,
     load_problems_preferences,
+    load_sort_keys,
     load_split_sizes,
     load_stacked_panes,
     save_problems_preferences,
+    save_sort_keys,
     save_split_sizes,
     save_stacked_panes,
 )
@@ -272,6 +274,7 @@ class MainWindow(QMainWindow):
         self._apply_saved_split()
         self._layout_problems()
         self._restore_stacked_panes()
+        self._restore_sort_keys()
         self._follow_editor_palette()
 
     def start_parse_worker(self) -> None:
@@ -612,6 +615,7 @@ class MainWindow(QMainWindow):
         actions.unescape_string.triggered.connect(self._unescape_string)
         actions.show_problems.toggled.connect(self._on_show_problems_toggled)
         actions.stack_panes.toggled.connect(self._on_stack_panes_toggled)
+        actions.sort_keys.toggled.connect(save_sort_keys)
         actions.next_problem.triggered.connect(self._next_problem)
         actions.previous_problem.triggered.connect(self._previous_problem)
         actions.expand_all.triggered.connect(self._expand_all)
@@ -1094,6 +1098,12 @@ class MainWindow(QMainWindow):
         action.setChecked(stacked)
         action.blockSignals(False)
         self._apply_stacked_layout(stacked)
+
+    def _restore_sort_keys(self) -> None:
+        action = self._actions.sort_keys
+        action.blockSignals(True)
+        action.setChecked(load_sort_keys())
+        action.blockSignals(False)
 
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
