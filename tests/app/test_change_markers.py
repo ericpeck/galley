@@ -290,6 +290,7 @@ _FIND_START, _FIND_END = 3, 11
 
 def _find_over(qtbot, under: str, *, current: bool) -> CodeEditor:
     editor = _editor(qtbot, _FIND_TEXT)
+    editor.set_whitespace_wanted(False)
     if under == "problem":
         editor.set_problem_messages({2: "Missing comma."})
     else:
@@ -358,36 +359,50 @@ def _runs(image: QImage, y: int) -> str:
     return " ".join(f"{name}×{count}" for name, count in runs)
 
 
-def _probe(editor: CodeEditor, position: int) -> QPoint:
-    """A point in the match at ``position``, 2 px below the line's top."""
+def _caret_x(editor: CodeEditor, position: int) -> int:
     cursor = QTextCursor(editor.document())
     cursor.setPosition(position)
-    rect = editor.cursorRect(cursor)
-    return QPoint(rect.center().x() + 2, rect.top() + 2)
+    return editor.cursorRect(cursor).center().x()
 
 
 def _assert_outlined(
-    image: QImage, inside: QPoint, fill: QColor, edge: QColor, beside: QColor
+    editor: CodeEditor,
+    image: QImage,
+    match: tuple[int, int],
+    fill: QColor,
+    edge: QColor,
+    beside: QColor,
 ) -> None:
-    """``edge`` bounds the fill around ``inside`` on its row and column, with
-    ``beside`` just past it to the left and right.
+    """A 1 px ``edge`` outline around the fill of ``match``, with ``beside``
+    just past it to the left and right.
 
-    The scan looks for the outline color rather than walking the fill:
-    glyph ink can cross the fill on any row. Windows CI's offscreen font
-    draws every character, spaces too, as a box.
+    The outline is found by its color and its neighbors, not by walking the
+    fill: glyph ink can cross the fill on any row. Windows CI's offscreen
+    font draws every character, spaces too, as a box.
     """
-    row = _runs(image, inside.y())
-    xs = [
-        x
-        for x in range(image.width())
-        if image.pixelColor(x, inside.y()).rgb() == edge.rgb()
-    ]
-    assert xs, row
-    left, right = xs[0], xs[-1]
-    assert left < inside.x() < right, row
-    assert image.pixelColor(left - 1, inside.y()).rgb() == beside.rgb(), row
-    assert image.pixelColor(right + 1, inside.y()).rgb() == beside.rgb(), row
-    between = {image.pixelColor(x, inside.y()).rgb() for x in range(left + 1, right)}
+    first, last = match
+    cursor = QTextCursor(editor.document())
+    cursor.setPosition((first + last) // 2)
+    rect = editor.cursorRect(cursor)
+    # 2 px below the line's top, clear of the current match's underline.
+    inside = QPoint(rect.center().x(), rect.top() + 2)
+    y = inside.y()
+    row = _runs(image, y)
+
+    def color(x: int) -> int:
+        return image.pixelColor(x, y).rgb()
+
+    xs = range(1, image.width() - 1)
+    lefts = [x for x in xs if color(x) == edge.rgb() and color(x - 1) == beside.rgb()]
+    rights = [x for x in xs if color(x) == edge.rgb() and color(x + 1) == beside.rgb()]
+    assert lefts and rights, row
+    left, right = lefts[0], rights[-1]
+    # 1 px wide: the pixel inside each outline is not the outline again.
+    assert color(left + 1) not in (edge.rgb(), beside.rgb()), row
+    assert color(right - 1) not in (edge.rgb(), beside.rgb()), row
+    assert abs(left - _caret_x(editor, first)) <= 1, (left, row)
+    assert abs(right + 1 - _caret_x(editor, last)) <= 1, (right, row)
+    between = {color(x) for x in range(left + 1, right)}
     assert fill.rgb() in between, row
     assert beside.rgb() not in between, row
     ys = [
@@ -398,6 +413,7 @@ def _assert_outlined(
     above = [y for y in ys if y < inside.y()]
     below = [y for y in ys if y > inside.y()]
     assert above and below, ys
+    assert above[-1] == rect.top(), (above, rect)
     for y in (above[-1] - 1, below[0] + 1):
         assert image.pixelColor(inside.x(), y).rgb() != fill.rgb(), y
 
@@ -423,8 +439,8 @@ def test_a_find_match_stands_out_3_to_1_from_every_tint(
     assert ratio >= EDGE_CONTRAST, f"Find outline on {under}: {ratio:.2f}:1"
 
     image = editor.viewport().grab().toImage()
-    inside = _probe(editor, (_FIND_START + _FIND_END) // 2)
-    _assert_outlined(image, inside, fill, colors.edge, tint)
+    match = (_FIND_START, _FIND_END)
+    _assert_outlined(editor, image, match, fill, colors.edge, tint)
 
 
 def test_the_find_outline_does_not_depend_on_the_middle_row(qtbot) -> None:
@@ -434,10 +450,9 @@ def test_the_find_outline_does_not_depend_on_the_middle_row(qtbot) -> None:
     colors = find_match_colors(palette)
 
     image = editor.viewport().grab().toImage()
-    inside = _probe(editor, (_FIND_START + _FIND_END) // 2)
-    _assert_outlined(
-        image, inside, colors.other, colors.edge, change_tint("changed", palette)
-    )
+    tint = change_tint("changed", palette)
+    match = (_FIND_START, _FIND_END)
+    _assert_outlined(editor, image, match, colors.other, colors.edge, tint)
 
 
 def test_the_find_outline_draws_with_a_fold_closed(qtbot, scheme: QPalette) -> None:
@@ -453,10 +468,9 @@ def test_the_find_outline_draws_with_a_fold_closed(qtbot, scheme: QPalette) -> N
     colors = find_match_colors(palette)
 
     image = editor.viewport().grab().toImage()
-    inside = _probe(editor, start + 4)
-    _assert_outlined(
-        image, inside, colors.current, colors.edge, change_tint("changed", palette)
-    )
+    tint = change_tint("changed", palette)
+    match = (start, start + 8)
+    _assert_outlined(editor, image, match, colors.current, colors.edge, tint)
 
 
 def test_the_find_outline_follows_a_scheme_switch(qtbot, install_scheme) -> None:
