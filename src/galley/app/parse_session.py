@@ -33,6 +33,7 @@ from queue import Empty
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from galley.app.banner import FORMATTER_STOPPED, banner_text
+from galley.app.escape_string import NOT_JSON_VALUE_MESSAGE
 from galley.app.problem_text import (
     DisplayProblem,
     display_input_error,
@@ -312,6 +313,7 @@ class ParseSession(QObject):
         chunk_size: int = WRITE_CHUNK_SIZE,
         chunk_pause_s: float = 0.0,
         fault: str | None = None,
+        sort_keys: bool = False,
     ) -> None:
         """Send one job. A second submit while a job is active is ignored."""
         if self._shut_down or self._active is not None:
@@ -336,6 +338,7 @@ class ParseSession(QObject):
             chunk_size=chunk_size,
             chunk_pause_s=chunk_pause_s,
             fault=fault,
+            sort_keys=sort_keys,
         )
         active = _Active(job.job_id, destination)
         active.temp_path = temp_path
@@ -826,7 +829,12 @@ def _displayed_problems(
 
 
 def _failure_text(event: FailureEvent) -> str:
-    """Banner sentence for a located error; other failures keep their message."""
+    """Banner sentence for a located error or a value JSON can't hold.
+
+    Other failures keep their message.
+    """
+    if event.not_json_value:
+        return NOT_JSON_VALUE_MESSAGE
     if event.error is None:
         return event.message
     return banner_text(event.error)

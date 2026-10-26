@@ -1,0 +1,5 @@
+<config><script xml:space="preserve">
+  <step>  one  </step>
+      <step/>
+</script><outer><inner xml:space="preserve">  <a/>
+  <b/></inner></outer><reset xml:space="default"><x/><y/></reset></config>

@@ -7,6 +7,7 @@ import random
 
 import pytest
 from ruamel.yaml import YAML
+from tests.core.mask_rows import MASKED_PER_ROW, ONE_MB, pretty_json, text_of_size
 
 from galley.core.format import format_document
 from galley.core.mask import (
@@ -251,3 +252,24 @@ def test_the_worker_loop_runs_copy_as_jobs() -> None:
     assert event.job_id == 9
     assert "pat.example@example.com" not in event.result.text
     assert events.empty()
+
+
+# Copy As › Masked on 1 MB (#66, Erik's status note of 2026-10-25). This
+# times ``run_copy_as``, the step the worker runs for a Copy As job: load,
+# mask and write. The queue transfer and the clipboard are not timed.
+_COPY_AS_MASKED_BUDGET_S = 0.2
+
+
+@pytest.mark.perf
+def test_copy_as_masked_on_1_mb_is_within_budget(perf_budget) -> None:
+    text, rows = text_of_size(ONE_MB, pretty_json)
+    job = CopyAsJob(1, text, "json", "masked")
+    event = run_copy_as(job)
+    assert isinstance(event, CopyAsEvent)
+    assert event.result.count == MASKED_PER_ROW * rows
+    assert "user0@example.com" not in event.result.text
+    perf_budget.within(
+        _COPY_AS_MASKED_BUDGET_S,
+        lambda: run_copy_as(job),
+        fixture="1 MB JSON, Copy As Masked, run_copy_as",
+    )

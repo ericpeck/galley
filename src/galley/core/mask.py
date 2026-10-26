@@ -7,7 +7,9 @@ that is, as a whole, an email address or a phone number, wherever it is,
 including inside arrays with no keys. Text that only contains one, like
 ``"email me at pat@example.com"``, is kept. ``copy_as_tree`` builds the
 three Copy As trees from the same rules. Serializing a tree is
-``format.dump_value``.
+``format.dump_value``. ``mask_document`` is Format with masking: it hands
+``mask_tree`` to ``format_document`` as its ``prepare`` step.
+``copy_as_text`` does the same with ``copy_as_result``.
 
 Key names are split into lowercase words by ``split_key`` (see there for
 the rule). A term in ``MASK_TERMS`` matches when one word, or several
@@ -35,7 +37,8 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
-from galley.core.format import dump_value, load_document
+from galley.core.format import format_document
+from galley.core.formats import format_named
 
 MASK = "•••"
 
@@ -287,6 +290,14 @@ class MaskResult:
     masked_count: int
 
 
+@dataclass(frozen=True)
+class MaskedDocument:
+    """Masked output text and how many values ``mask_tree`` replaced."""
+
+    text: str
+    masked_count: int
+
+
 def looks_like_email(text: str) -> bool:
     """Say whether ``text``, apart from spaces at either end, is an email.
 
@@ -387,6 +398,58 @@ def mask_tree(value: object, rules: MaskRules | None = None) -> MaskResult:
     return _rewrite(value, rules or MaskRules(), lambda _scalar, _key: MASK)
 
 
+def mask_document(
+    text: str | bytes,
+    source: str,
+    target: str,
+    rules: MaskRules | None = None,
+    *,
+    sort_keys: bool = False,
+) -> MaskedDocument:
+    """Format ``text`` from ``source`` into ``target`` with values masked.
+
+    This is ``format_document`` with ``mask_tree`` as its ``prepare`` step,
+    so the text passes the same checks and raises the same errors, and
+    ``sort_keys`` orders the masked output the same way. A format that does
+    not load to a value, such as XML, can't be masked and raises
+    ``MaskError``, so it never shows unmasked.
+    """
+    return _rewrite_document(
+        text, source, target, lambda value: mask_tree(value, rules), sort_keys
+    )
+
+
+def _rewrite_document(
+    text: str | bytes,
+    source: str,
+    target: str,
+    rewrite: Callable[[object], MaskResult],
+    sort_keys: bool = False,
+) -> MaskedDocument:
+    """Format ``text`` with ``rewrite`` as ``format_document``'s ``prepare`` step.
+
+    ``mask_document`` and ``copy_as_text`` share it, so Format with masking
+    and Copy As load, check and write a document the same way.
+    """
+    fmt = format_named(source)
+    if not fmt.loads_to_value:
+        raise MaskError(f"{fmt.label} can't be masked")
+    counts: list[int] = []
+
+    def prepare(value: object) -> object:
+        result = rewrite(value)
+        counts.append(result.masked_count)
+        return result.value
+
+    text_out = format_document(
+        text, source, target, sort_keys=sort_keys, prepare=prepare
+    )
+    if not counts:
+        raise MaskError("the document was not masked")
+    # A YAML retry masks the document again. The last count is the one shown.
+    return MaskedDocument(text_out, counts[-1])
+
+
 def copy_as_tree(
     value: object,
     mode: CopyAsMode,
@@ -470,24 +533,28 @@ def copy_as_text(
     """Return the Copy As text for ``mode``. Every failure is a CopyAsError.
 
     ``text`` is the Output, or a selection of it, and ``fmt`` its format
-    (``json`` or ``yaml``, case-insensitive), for reading and writing.
-    Original is ``text`` as it is. Masked and Random fake load it with
-    ``load_document``, rewrite it with ``copy_as_result`` and write it with
-    ``dump_value``, so the copy keeps the structure and format. ``rng`` is
+    name (case-insensitive), for reading and writing. Original is ``text``
+    as it is. Masked and Random fake format it from ``fmt`` to ``fmt`` the
+    way ``mask_document`` does, with ``copy_as_result`` as the rewrite, so
+    the copy keeps the structure and format, and passes the same checks.
+    A format that does not load to a value, such as XML, fails. ``rng`` is
     for tests; without one Random fake uses ``random.SystemRandom``.
     """
     if mode == "original":
         return CopyAsResult(mode, text, 0)
+    loaded = False
+
+    def rewrite(value: object) -> MaskResult:
+        nonlocal loaded
+        loaded = True
+        return copy_as_result(value, mode, rules, rng)
+
     try:
-        value = load_document(text, fmt)
+        copied = _rewrite_document(text, fmt, fmt, rewrite)
     except Exception as exc:
-        raise CopyAsError(mode, fmt, exc, invalid=True) from exc
-    try:
-        result = copy_as_result(value, mode, rules, rng)
-        copied = dump_value(result.value, fmt)
-    except Exception as exc:
-        raise CopyAsError(mode, fmt, exc, invalid=False) from exc
-    return CopyAsResult(mode, copied, result.masked_count)
+        invalid = not loaded and not isinstance(exc, MaskError)
+        raise CopyAsError(mode, fmt, exc, invalid=invalid) from exc
+    return CopyAsResult(mode, copied.text, copied.masked_count)
 
 
 def _rewrite(value: object, rules: MaskRules, replace: _Replace) -> MaskResult:

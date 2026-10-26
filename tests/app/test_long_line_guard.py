@@ -7,11 +7,10 @@ choices and applies them only while every line is under the gates in
 ``editor.py``. Fixtures are built in memory: nothing large is in the tree.
 """
 
-import gc
 import json
 import random
-import time
 
+import pytest
 from PySide6.QtGui import QAction, QTextCursor, QTextOption
 
 import galley.app.editor as editor_module
@@ -336,9 +335,8 @@ def test_random_edits_keep_the_gates_right(qtbot, monkeypatch) -> None:
         assert editor.display_limited() == (true_longest > 12)
 
 
-def test_a_keystroke_on_a_long_line_stays_under_budget(qtbot, qapp) -> None:
-    """1.6 MB on one line, both options wanted: a keystroke takes under 3 s."""
-    text = _one_line(_BUDGET_CHARS)
+def _long_line_with_both_wanted(qtbot, qapp, text: str) -> CodeEditor:
+    """The 1.6 MB line, both options wanted, the cursor in the middle."""
     editor = CodeEditor()
     qtbot.addWidget(editor)
     editor.resize(800, 600)
@@ -347,28 +345,34 @@ def test_a_keystroke_on_a_long_line_stays_under_budget(qtbot, qapp) -> None:
     editor.set_whitespace_wanted(True)
     editor.set_syntax_colors_wanted(True)
     editor.set_syntax_mode("JSON")
-
-    gc.collect()
-    started = time.perf_counter()
     editor.setPlainText(text)
     qapp.processEvents()
-    set_text_s = time.perf_counter() - started
-    _assert_both_limited(editor)
-
     cursor = editor.textCursor()
     cursor.setPosition(len(text) // 2)
     editor.setTextCursor(cursor)
-    samples: list[float] = []
-    for _ in range(3):
-        gc.collect()
-        started = time.perf_counter()
-        editor.insertPlainText(" ")
-        qapp.processEvents()
-        samples.append(time.perf_counter() - started)
-    best = min(samples)
-    print(
-        f"long-line guard: setText {set_text_s:.3f} s, keystroke best of 3 "
-        f"{best:.3f} s (samples {', '.join(f'{s:.3f}' for s in samples)})",
-        flush=True,
+    return editor
+
+
+def _type_a_space(editor: CodeEditor, qapp) -> None:
+    editor.insertPlainText(" ")
+    qapp.processEvents()
+
+
+def test_a_keystroke_on_a_long_line_keeps_both_limited(qtbot, qapp) -> None:
+    editor = _long_line_with_both_wanted(qtbot, qapp, _one_line(_BUDGET_CHARS))
+    _assert_both_limited(editor)
+    _type_a_space(editor, qapp)
+    _assert_both_limited(editor)
+
+
+@pytest.mark.perf
+def test_a_keystroke_on_a_long_line_stays_under_budget(
+    qtbot, qapp, perf_budget
+) -> None:
+    """1.6 MB on one line, both options wanted: a keystroke takes under 3 s."""
+    editor = _long_line_with_both_wanted(qtbot, qapp, _one_line(_BUDGET_CHARS))
+    perf_budget.within(
+        _KEYSTROKE_BUDGET_S,
+        lambda: _type_a_space(editor, qapp),
+        fixture="1.6 MB JSON on one line, whitespace and colors wanted",
     )
-    assert best <= _KEYSTROKE_BUDGET_S, samples

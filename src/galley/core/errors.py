@@ -92,6 +92,45 @@ class JSONDuplicateKeyError(ValueError):
         return (JSONDuplicateKeyError, (self.duplicates,))
 
 
+class XMLSyntaxError(ValueError):
+    """XML that expat rejected, or that declares an entity.
+
+    ``code`` is one of the ``xml_*`` names in ``problems.ProblemCode``.
+    ``lineno`` and ``colno`` are 1-based, with the column in code points.
+    ``token`` is the element, attribute, entity, or prefix the problem
+    names, or "" when it names none. The sentence is chosen in the app.
+    """
+
+    def __init__(self, code: str, *, lineno: int, colno: int, token: str = "") -> None:
+        super().__init__(code)
+        self.code = code
+        self.lineno = lineno
+        self.colno = colno
+        self.token = token
+
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        """Pickle the keyword fields too, as ``InputError`` does."""
+        return (
+            _restore_xml_syntax_error,
+            (self.code, self.lineno, self.colno, self.token),
+        )
+
+
+def _restore_xml_syntax_error(
+    code: str, lineno: int, colno: int, token: str
+) -> XMLSyntaxError:
+    """Rebuild an ``XMLSyntaxError`` after it crosses a process boundary."""
+    return XMLSyntaxError(code, lineno=lineno, colno=colno, token=token)
+
+
+class NotJSONValueError(ValueError):
+    """A YAML value JSON can't hold, such as a date, binary data, or a set.
+
+    Format to JSON raises it from the ``json.dumps`` hook, so it has no line.
+    The words shown to the user are chosen in ``galley.app``.
+    """
+
+
 def utf8_input_error(data: bytes, offset: int) -> InputError:
     """Build an ``invalid_utf8`` error for the byte at ``offset``.
 

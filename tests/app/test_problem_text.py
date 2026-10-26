@@ -1,4 +1,4 @@
-"""Plain-language problem sentences. No column and no character offset."""
+"""Plain-language problem sentences. The column is beside them, not in them."""
 
 import json
 
@@ -6,12 +6,19 @@ import pytest
 
 from galley.app.problem_text import (
     KEY_DISPLAY_LIMIT,
+    STOPPED_TEXT,
+    UNCERTAIN_SUFFIX,
     accessible_text,
+    announcement_text,
+    display_input_error,
+    display_problem,
     message_for,
+    place_text,
     problem_count_text,
     quoted_key,
+    shown_count_text,
 )
-from galley.core.errors import JSONDuplicateKeyError
+from galley.core.errors import JSONDuplicateKeyError, escape_error
 from galley.core.format import format_json, format_yaml
 from galley.core.problems import Problem, collect_problems
 
@@ -152,3 +159,44 @@ def test_duplicate_without_a_key_still_names_the_line() -> None:
         message_for(Problem("json_duplicate", 1, ""))
         == "Remove the repeated key on line 1."
     )
+
+
+def test_rows_place_the_line_and_column() -> None:
+    assert place_text(2, 9) == "Line 2, Col 9"
+    assert place_text(4, 0) == "Line 4"
+    row = display_problem(Problem("missing_comma", 2, colno=9))
+    assert (row.lineno, row.colno, row.uncertain) == (2, 9, False)
+    assert row.full_message() == "Missing comma at the end of line 2."
+
+
+def test_a_problem_after_a_guess_says_so_in_text_and_speech() -> None:
+    problem = Problem("trailing_comma", 5, colno=9, uncertain=True)
+    row = display_problem(problem)
+    assert row.message == "Trailing comma at the end of line 5."
+    assert row.full_message() == (
+        "Trailing comma at the end of line 5. (may be caused by an earlier error)"
+    )
+    assert accessible_text(problem) == f"Line 5: {row.full_message()}"
+    assert UNCERTAIN_SUFFIX == "(may be caused by an earlier error)"
+
+
+def test_list_notes_use_bills_wording() -> None:
+    assert shown_count_text(100, 240) == "Showing the first 100 of 240 problems."
+    stopped = display_problem(Problem("json_stopped", 7, colno=3))
+    assert stopped.is_note()
+    assert (
+        stopped.message == STOPPED_TEXT == "Galley stopped checking after this point."
+    )
+
+
+def test_the_announcement_names_the_count_and_the_first_error() -> None:
+    first = display_problem(Problem("missing_comma", 2, colno=9))
+    assert announcement_text(12, first) == (
+        "12 problems. First: Missing comma at the end of line 2, line 2"
+    )
+    assert announcement_text(1, first).startswith("1 problem. First: ")
+
+
+def test_an_input_error_row_keeps_its_column() -> None:
+    row = display_input_error(escape_error(3, 7, "\\uD800"))
+    assert (row.lineno, row.colno) == (3, 7)

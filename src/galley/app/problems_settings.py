@@ -1,4 +1,4 @@
-"""Remember Problems pane state, the Input / Output split, and stacking."""
+"""Remember Problems pane state, the Input / Output split, stacking, and Sort keys."""
 
 from PySide6.QtCore import QSettings
 
@@ -13,6 +13,7 @@ _STATE_KEY = "problems/state"
 _WIDTH_KEY = "problems/width"
 _STACKED_KEY = "view/stackPanes"
 _SPLIT_KEY = "view/splitSizes"
+_SORT_KEYS_KEY = "format/sortKeys"
 _STATES = frozenset({STATE_OPEN, STATE_MINIMIZED, STATE_CLOSED})
 
 
@@ -53,6 +54,18 @@ def save_stacked_panes(stacked: bool) -> None:
     """Store the pane layout so the next launch can restore it."""
     settings = problems_settings()
     settings.setValue(_STACKED_KEY, bool(stacked))
+    settings.sync()
+
+
+def load_sort_keys() -> bool:
+    """Return whether Sort keys was last saved on. A fresh install is off."""
+    return _as_bool(problems_settings().value(_SORT_KEYS_KEY, False))
+
+
+def save_sort_keys(sort_keys: bool) -> None:
+    """Store the Sort keys toggle so the next launch can restore it."""
+    settings = problems_settings()
+    settings.setValue(_SORT_KEYS_KEY, bool(sort_keys))
     settings.sync()
 
 

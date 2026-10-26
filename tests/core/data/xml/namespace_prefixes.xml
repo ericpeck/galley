@@ -1,0 +1,1 @@
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:geo="http://example.invalid/geo"   xmlns:x="urn:x"><geo:point x:kind="fake">1 2</geo:point><x:empty/><entry><geo:lat>0</geo:lat></entry></feed>

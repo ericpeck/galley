@@ -176,23 +176,33 @@ class ResultsList(QListWidget):
         self.viewport().installEventFilter(self)
 
     def set_rows(self, rows: Sequence[tuple[object, ResultRow]]) -> None:
-        """Replace the rows. Each pairs the data ``activated`` sends with a row."""
+        """Replace the rows. Each pairs the data ``activated`` sends with a row.
+
+        A row with ``None`` data is a note: it cannot be selected,
+        activated, or reached with the arrow keys.
+        """
         self.clear()
         self._rows = []
+        first: QListWidgetItem | None = None
         for data, row in rows:
             item = QListWidgetItem()
             item.setText(row.accessibleName())
             item.setData(Qt.ItemDataRole.UserRole, data)
             # Not editable: on macOS, Return opens an editor and skips itemActivated.
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            if data is None:
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             item.setSizeHint(QSize(0, ROW_HEIGHT))
             self.addItem(item)
             self.setItemWidget(item, row)
             self._rows.append((item, row))
-            row.pressed.connect(partial(self._press, item))
+            if data is not None:
+                row.pressed.connect(partial(self._press, item))
+                first = first or item
         self._sync_row_heights()
-        if self._rows:
-            self.setCurrentItem(self._rows[0][0])
+        if first is not None:
+            self.setCurrentItem(first)
         self._sync_selection()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
@@ -260,7 +270,9 @@ class ResultsList(QListWidget):
             item.setSizeHint(QSize(0, height))
 
     def _activate(self, item: QListWidgetItem) -> None:
-        self.activated.emit(item.data(Qt.ItemDataRole.UserRole))
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data is not None:
+            self.activated.emit(data)
 
     def _press(self, item: QListWidgetItem) -> None:
         self.setCurrentItem(item)

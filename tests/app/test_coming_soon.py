@@ -35,9 +35,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Pop out into window",
-    "Show window",
-    "Bring back",
     "Outdent",
 )
 _RELEASE_WORKFLOW = (
@@ -314,15 +311,25 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         for button in window.findChildren(QPushButton)
         if button.toolTip() == COMING_SOON
     ]
-    assert len(pushed) == 4
-    assert {button.objectName() for button in pushed if button.objectName()} == set()
+    assert len(pushed) == 6
+    assert {button.objectName() for button in pushed if button.objectName()} == {
+        "inputPopOut",
+        "outputPopOut",
+    }
     open_button = window.findChild(QPushButton, "emptyOpenButton")
     assert isinstance(open_button, QPushButton)
     assert open_button.isEnabled()
     assert open_button.toolTip() != COMING_SOON
     assert sorted(
         button.accessibleName() for button in pushed if button.accessibleName()
-    ) == ["Close", "Close", "New tab", "New tab"]
+    ) == [
+        "Close",
+        "Close",
+        "New tab",
+        "New tab",
+        "Pop out into window",
+        "Pop out into window",
+    ]
     buttons.extend(pushed)
 
     seen: set[str] = set()
@@ -355,7 +362,7 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     assert all(
         host is not None and host.property("comingSoonHost") is True for host in hosts
     )
-    assert seen == {"Find", "Indent", "Sort keys", "Minify", "Validate"}
+    assert seen == {"Indent", "Minify", "Validate"}
 
 
 def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
@@ -524,3 +531,53 @@ def test_indent_guides_are_coming_soon_and_off_stays_checked(qtbot) -> None:
     not_yet = not_yet_failure()
     assert not_yet is not None
     assert "Guides" not in not_yet
+
+
+def test_pop_out_is_coming_soon_without_a_status_message(qtbot) -> None:
+    """#91 D8: Pop out and its Window menu items are disabled and Coming soon."""
+    window = _show(qtbot)
+    actions = window._actions
+    assert "Pop out" in UNBUILT_ACTIONS
+    for action in (actions.pop_out, actions.show_window, actions.bring_back):
+        assert is_unbuilt(action)
+        assert action.property("unbuiltName") == "Pop out"
+        assert action.isVisible()
+        assert not action.isEnabled()
+        assert action.toolTip() == COMING_SOON
+        assert action not in actions._not_yet_actions()
+        assert action not in actions.stubs()
+    tab_menu = window.findChild(QMenu, "tabMenu")
+    assert isinstance(tab_menu, QMenu)
+    assert actions.pop_out in tab_menu.actions()
+
+    status = window.statusBar().currentMessage()
+    for name in ("input", "output"):
+        button = window.findChild(QPushButton, f"{name}PopOut")
+        assert isinstance(button, QPushButton)
+        assert button.isVisible()
+        assert not button.isEnabled()
+        assert button.text() == "Pop out"
+        assert button.accessibleName() == "Pop out into window"
+        assert button.accessibleDescription() == COMING_SOON
+        assert button.toolTip() == COMING_SOON
+        assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
+        QToolTip.hideText()
+        qtbot.mouseMove(window, QPoint(4, 4))
+        qtbot.mouseMove(button, QPoint(button.width() // 2, button.height() // 2))
+        qtbot.waitUntil(lambda: QToolTip.text() == COMING_SOON, timeout=2000)
+        qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    actions.pop_out.trigger()
+    actions.show_window.trigger()
+    actions.bring_back.trigger()
+    assert window.statusBar().currentMessage() == status
+    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
+
+
+def test_release_check_lists_pop_out_under_coming_soon_only() -> None:
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    assert "Pop out" in coming.splitlines()[0]
+    for name in ("Pop out", "Show window", "Bring back"):
+        assert name not in not_yet

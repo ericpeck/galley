@@ -209,6 +209,26 @@ def test_escape_reports_yaml_values_json_cannot_hold(qtbot) -> None:
 
 @pytest.mark.parametrize(
     "text",
+    ["!!binary aGVsbG8=\n", "file:\n  data: !!binary aGVsbG8=\n", "day: 2020-01-01\n"],
+)
+def test_format_to_json_reports_yaml_values_json_cannot_hold(qtbot, text: str) -> None:
+    """Format shows the sentence Escape shows, not the ``json`` error text."""
+    window = _show(qtbot)
+    source, output = _editors(window)
+    _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
+    _child(window, QComboBox, "outputFormat").setCurrentText("JSON")
+    output.setPlainText("previous\n")
+    source.setPlainText(text)
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: _status(window) == NOT_JSON_VALUE_MESSAGE, timeout=15000)
+    assert NOT_JSON_VALUE_MESSAGE == (
+        "This document has a value JSON can't hold, such as a date or binary data."
+    )
+    assert source.toPlainText() == text
+
+
+@pytest.mark.parametrize(
+    "text",
     [
         '{"nested": {"list": [1, {"deep": [true, null]}]}, "empty": {}, "none": []}',
         '{"quote": "\\"", "slash": "\\\\", "lines": "a\\nb\\tc\\r\\n"}',

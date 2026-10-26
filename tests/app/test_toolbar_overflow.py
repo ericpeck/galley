@@ -203,10 +203,8 @@ def test_overflow_menu_triggers_the_same_actions(qtbot) -> None:
 
 _UNBUILT_ICON_NAMES = (
     "Indent",
-    "Sort keys",
     "Minify",
     "Validate",
-    "Find…",
 )
 
 
