@@ -8,7 +8,6 @@ import dataclasses
 import json
 import multiprocessing
 import pickle
-import random
 import re
 import time
 from pathlib import Path
@@ -16,6 +15,15 @@ from queue import Empty
 
 import pytest
 import ruamel.yaml.main as ruamel_main
+from tests.core.mask_rows import (
+    MASKED_PER_ROW,
+    ONE_LINE_CHARS,
+    ONE_MB,
+    one_line,
+    pretty_json,
+    text_of_size,
+    yaml_text,
+)
 
 import galley.core.format as format_module
 from galley.app.limits import JSON_BUSY_BYTES, YAML_BUSY_BYTES
@@ -540,84 +548,31 @@ def test_a_format_that_does_not_load_to_a_value_is_never_shown(monkeypatch) -> N
 
 # Perf budgets (``uv run pytest -m perf``), Isaac's on #107. Each is the
 # #104 Convert budget at that size plus 0.2 s of masking per MB, timed from
-# the job going in to its result coming out of a warm worker.
+# the job going in to its result coming out of a warm worker. macOS and
+# Windows use the same numbers.
 _JOB_JSON_BUDGET_S = 0.7
 # #112 writes YAML through ruamel's pure-Python emitter on every platform so
-# both engines give identical bytes, and YAML has 1 s until #115 lands. This
-# budget is that 1 s plus 0.05 s of masking, and drops to 0.6 s with #115.
+# both engines give identical bytes. The team chose to accept the slowdown
+# (#115 tracks making the C emitter match), so YAML gets 1 s until #115
+# lands. This budget is that 1 s plus 0.05 s of masking, and drops to 0.6 s
+# when #115 restores the 0.5 s YAML budget.
 _JOB_YAML_BUDGET_S = 1.1
 # 0.8 s to parse and format the line, plus 0.32 s of masking.
 _JOB_ONE_LINE_BUDGET_S = 1.2
 # The mask step alone on 1 MB with the default keys (#66).
 _MASK_TREE_BUDGET_S = 0.2
-_ONE_MB = 1_000_000
-# The long-line guard's fixture size (``test_long_line_guard._BUDGET_CHARS``).
-_ONE_LINE_CHARS = 1_600_000
-_PERF_SEED = 66
-
-
-def _perf_rows(count: int, seed: int = _PERF_SEED) -> list[dict[str, object]]:
-    """Fake customer rows: every personal value is reserved or made up."""
-    rng = random.Random(seed)
-    words = ("alpha", "beta", "gamma", "delta", "río", "日本", "naïve", "zeta")
-    return [
-        {
-            "id": index,
-            "name": f"User {index}",
-            "email": f"user{index}@example.com",
-            "phone": f"555-01{rng.randrange(100):02d}",
-            "address": {
-                "street": f"{rng.randrange(1, 999)} Example Street",
-                "city": "Springfield",
-                "zip": "00000",
-            },
-            "plan": rng.choice(("free", "team", "business")),
-            "balance": round(rng.random() * 1000, 2),
-            "active": rng.random() < 0.5,
-            "tags": rng.sample(words, 3),
-            "note": " ".join(rng.choices(words, k=8)),
-        }
-        for index in range(count)
-    ]
-
-
-def _perf_text(target_bytes: int, render) -> tuple[str, int]:
-    """Grow the row count until ``render(rows)`` is at least ``target_bytes``."""
-    count = max(1, target_bytes // len(render(_perf_rows(1)).encode("utf-8")))
-    while True:
-        text = render(_perf_rows(count))
-        size = len(text.encode("utf-8"))
-        if size >= target_bytes:
-            return text, count
-        count += max(1, count * (target_bytes - size) // size) + 1
-
-
-def _pretty_json(rows: list[dict[str, object]]) -> str:
-    return format_document(json.dumps(rows), "json", "json")
-
-
-def _yaml(rows: list[dict[str, object]]) -> str:
-    return format_document(json.dumps(rows), "json", "yaml")
-
-
-def _one_line(rows: list[dict[str, object]]) -> str:
-    return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-
-
-# Each row masks name, email, phone and the three address values.
-_MASKED_PER_ROW = 6
 
 
 @pytest.mark.perf
 @pytest.mark.parametrize(
     ("label", "render", "size", "source", "budget"),
     [
-        ("1 MB JSON", _pretty_json, _ONE_MB, "json", _JOB_JSON_BUDGET_S),
-        ("192 KB YAML", _yaml, YAML_BUSY_BYTES, "yaml", _JOB_YAML_BUDGET_S),
+        ("1 MB JSON", pretty_json, ONE_MB, "json", _JOB_JSON_BUDGET_S),
+        ("192 KB YAML", yaml_text, YAML_BUSY_BYTES, "yaml", _JOB_YAML_BUDGET_S),
         (
             "1.6 MB minified JSON line",
-            _one_line,
-            _ONE_LINE_CHARS,
+            one_line,
+            ONE_LINE_CHARS,
             "json",
             _JOB_ONE_LINE_BUDGET_S,
         ),
@@ -627,15 +582,15 @@ _MASKED_PER_ROW = 6
 def test_a_masked_format_job_is_within_budget(
     perf_budget, label: str, render, size: int, source: str, budget: float
 ) -> None:
-    text, rows = _perf_text(size, render)
+    text, rows = text_of_size(size, render)
     assert size <= len(text.encode("utf-8")) < size * 11 // 10
-    if render is _one_line:
+    if render is one_line:
         assert "\n" not in text
     job = _job(text, source)
     with _WarmWorker() as worker:
         success = worker.run(job)
         assert isinstance(success, SuccessEvent)
-        assert success.masked_count == _MASKED_PER_ROW * rows
+        assert success.masked_count == MASKED_PER_ROW * rows
         assert "user0@example.com" not in success.text
         perf_budget.within(
             budget, lambda: worker.run(job), fixture=f"{label} to {source}, masked"
@@ -644,9 +599,9 @@ def test_a_masked_format_job_is_within_budget(
 
 @pytest.mark.perf
 def test_masking_1_mb_with_the_default_keys_is_within_budget(perf_budget) -> None:
-    text, rows = _perf_text(_ONE_MB, _pretty_json)
+    text, rows = text_of_size(ONE_MB, pretty_json)
     value = json.loads(text)
-    assert mask_tree(value).masked_count == _MASKED_PER_ROW * rows
+    assert mask_tree(value).masked_count == MASKED_PER_ROW * rows
     perf_budget.within(
         _MASK_TREE_BUDGET_S,
         lambda: mask_tree(value),
