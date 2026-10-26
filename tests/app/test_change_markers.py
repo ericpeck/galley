@@ -346,14 +346,6 @@ def test_a_find_match_is_readable_on_every_tint(
     assert ratio >= TEXT_MIN_CONTRAST, f"Find ink on {under}: {ratio:.2f}:1"
 
 
-def _walk(image: QImage, start: QPoint, step: QPoint, fill: QColor) -> QPoint:
-    """The first point from ``start`` along ``step`` that is not ``fill``."""
-    point = QPoint(start)
-    while image.pixelColor(point).rgb() == fill.rgb():
-        point += step
-    return point
-
-
 def _runs(image: QImage, y: int) -> str:
     """Row ``y`` as color runs, for a failure message."""
     runs: list[list] = []
@@ -367,12 +359,7 @@ def _runs(image: QImage, y: int) -> str:
 
 
 def _probe(editor: CodeEditor, position: int) -> QPoint:
-    """A point in the match at ``position``, 2 px below the line's top.
-
-    The middle row can hold ink inside a match, such as a whitespace dot,
-    and the current match's underline is at the bottom. Near the top there
-    is only the fill.
-    """
+    """A point in the match at ``position``, 2 px below the line's top."""
     cursor = QTextCursor(editor.document())
     cursor.setPosition(position)
     rect = editor.cursorRect(cursor)
@@ -382,22 +369,37 @@ def _probe(editor: CodeEditor, position: int) -> QPoint:
 def _assert_outlined(
     image: QImage, inside: QPoint, fill: QColor, edge: QColor, beside: QColor
 ) -> None:
-    """One ``edge`` pixel each side of the fill with ``beside`` past it, and
-    ``edge`` on the rows above and below the fill."""
+    """``edge`` bounds the fill around ``inside`` on its row and column, with
+    ``beside`` just past it to the left and right.
+
+    The scan looks for the outline color rather than walking the fill:
+    glyph ink can cross the fill on any row. Windows CI's offscreen font
+    draws every character, spaces too, as a box.
+    """
     row = _runs(image, inside.y())
-    assert image.pixelColor(inside).rgb() == fill.rgb(), row
-    for step in (QPoint(-1, 0), QPoint(1, 0)):
-        point = _walk(image, inside, step, fill)
-        assert image.pixelColor(point).rgb() == edge.rgb(), (step, row)
-        assert image.pixelColor(point + step).rgb() == beside.rgb(), (step, row)
-    top = _walk(image, inside, QPoint(0, -1), fill)
-    assert image.pixelColor(top).rgb() == edge.rgb(), _runs(image, top.y())
-    # Downward, the middle row and the underline can hold ink.
-    bottom = QPoint(inside)
-    while image.pixelColor(bottom).rgb() != edge.rgb():
-        bottom += QPoint(0, 1)
-        assert bottom.y() < image.height(), "no outline below the match"
-    assert image.pixelColor(bottom + QPoint(0, 1)).rgb() != fill.rgb()
+    xs = [
+        x
+        for x in range(image.width())
+        if image.pixelColor(x, inside.y()).rgb() == edge.rgb()
+    ]
+    assert xs, row
+    left, right = xs[0], xs[-1]
+    assert left < inside.x() < right, row
+    assert image.pixelColor(left - 1, inside.y()).rgb() == beside.rgb(), row
+    assert image.pixelColor(right + 1, inside.y()).rgb() == beside.rgb(), row
+    between = {image.pixelColor(x, inside.y()).rgb() for x in range(left + 1, right)}
+    assert fill.rgb() in between, row
+    assert beside.rgb() not in between, row
+    ys = [
+        y
+        for y in range(image.height())
+        if image.pixelColor(inside.x(), y).rgb() == edge.rgb()
+    ]
+    above = [y for y in ys if y < inside.y()]
+    below = [y for y in ys if y > inside.y()]
+    assert above and below, ys
+    for y in (above[-1] - 1, below[0] + 1):
+        assert image.pixelColor(inside.x(), y).rgb() != fill.rgb(), y
 
 
 @pytest.mark.parametrize("current", [True, False], ids=["current", "other"])
