@@ -27,6 +27,7 @@ It reaches ``format_document`` once the format table has an XML row, which
 #63 slice 3 adds with the picker item.
 """
 
+import datetime
 import functools
 import json
 import os
@@ -47,9 +48,10 @@ from ruamel.yaml.events import (
     SequenceStartEvent,
 )
 from ruamel.yaml.main import CEmitter, CParser
-from ruamel.yaml.nodes import MappingNode, ScalarNode
+from ruamel.yaml.nodes import MappingNode, ScalarNode, SequenceNode
 from ruamel.yaml.reader import ReaderError
 from ruamel.yaml.representer import SafeRepresenter
+from ruamel.yaml.tag import Tag
 from ruamel.yaml.tokens import (
     AliasToken,
     BlockEndToken,
@@ -344,8 +346,40 @@ def _set_member_key(member: object) -> tuple[int, str, str]:
     return (1, type(member).__name__, repr(member))
 
 
+@functools.cache
+def _shared_tag(tag: str) -> Tag:
+    """One ``Tag`` per tag string, so its URI is decoded once per process.
+
+    ruamel builds a new ``Tag`` for every node, and each one decodes its
+    URI the first time an emitter reads it. Only the parser changes a
+    ``Tag``, so dumps can share them.
+    """
+    return Tag(suffix=tag)
+
+
 class _BlockRepresenter(SafeRepresenter):
     """Safe representer that writes ``!!set`` members in a fixed order."""
+
+    def represent_scalar(
+        self, tag: object, value: object, style: object = None, anchor: object = None
+    ) -> ScalarNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_scalar(tag, value, style=style, anchor=anchor)
+
+    def represent_sequence(
+        self, tag: object, sequence: object, flow_style: object = None
+    ) -> SequenceNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_sequence(tag, sequence, flow_style=flow_style)
+
+    def represent_mapping(
+        self, tag: object, mapping: object, flow_style: object = None
+    ) -> MappingNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_mapping(tag, mapping, flow_style=flow_style)
 
     def represent_set(self, data: set[object]) -> MappingNode:
         members = dict.fromkeys(sorted(data, key=_set_member_key))
@@ -410,20 +444,41 @@ class _CBlockRepresenter(_BlockRepresenter):
 
     def represent_key(self, data: object) -> object:
         node = self.represent_data(data)
-        if isinstance(node, ScalarNode) and _keys_disagree(node):
+        if isinstance(node, ScalarNode) and _keys_disagree(data, node):
             raise _NeedsPureEmitter
         return node
 
 
-def _keys_disagree(node: ScalarNode) -> bool:
+# The pure emitter counts a key's ``!!`` tag toward the simple-key limit.
+# The tag comes from the key's type, which costs less than ``node.tag``.
+# ``bool`` is listed before ``int``, its base class.
+_KEY_TAG_LENGTHS = (
+    (str, len("!!str")),
+    (bool, len("!!bool")),
+    (int, len("!!int")),
+    (float, len("!!float")),
+    (type(None), len("!!null")),
+    (datetime.date, len("!!timestamp")),
+)
+
+
+def _keys_disagree(data: object, node: ScalarNode) -> bool:
     """Return True when only one emitter would write ``node`` as a simple key."""
     text = node.value
     if "\r" in text:
         return True
-    tag = node.tag or ""
-    pure_length = len(text) + len(tag) - len(_CORE_TAG_PREFIX) + len("!!")
+    tag_length = _key_tag_length(data, node)
+    pure_length = len(text) + tag_length
     c_length = len(text.encode("utf-8", "surrogatepass"))
     return (pure_length < _SIMPLE_KEY_LIMIT) != (c_length <= _SIMPLE_KEY_LIMIT)
+
+
+def _key_tag_length(data: object, node: ScalarNode) -> int:
+    for kind, length in _KEY_TAG_LENGTHS:
+        if isinstance(data, kind):
+            return length
+    tag = node.tag or ""
+    return len(tag) - len(_CORE_TAG_PREFIX) + len("!!")
 
 
 _CBlockRepresenter.add_representer(str, _CBlockRepresenter.represent_str)
