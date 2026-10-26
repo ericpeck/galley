@@ -200,6 +200,37 @@ def test_error_codes_with_their_lines(
     assert problems[0].colno == column
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["LF", "CRLF", "CR"])
+@pytest.mark.parametrize(
+    ("third_line", "code", "column"),
+    [
+        ("  </b>", "xml_mismatched_tag", 3),
+        ("  a & b", "xml_bad_token", 6),
+        ("  <c>&nbsp;</c>", "xml_undefined_entity", 6),
+    ],
+)
+def test_every_line_ending_counts_as_one_line(
+    newline: str, third_line: str, code: str, column: int
+) -> None:
+    """A bare CR is a line break, as it is for expat and the editor (#123)."""
+    text = newline.join(["<r>", "  <a>", third_line, "</a></r>", ""])
+    with pytest.raises(XMLSyntaxError) as caught:
+        format_xml(text)
+    assert (caught.value.code, caught.value.lineno, caught.value.colno) == (
+        code,
+        3,
+        column,
+    )
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["LF", "CRLF", "CR"])
+def test_too_deep_counts_every_line_ending(newline: str) -> None:
+    text = newline.join(["<a>"] * (MAX_DEPTH + 1)) + "</a>" * (MAX_DEPTH + 1)
+    with pytest.raises(InputError) as caught:
+        format_xml(text)
+    assert (caught.value.lineno, caught.value.colno) == (MAX_DEPTH + 1, 1)
+
+
 def test_columns_count_code_points() -> None:
     with pytest.raises(XMLSyntaxError) as caught:
         format_xml('<r>\n  😀😀<a b="1" b="2"/></r>')
