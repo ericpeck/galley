@@ -26,6 +26,7 @@ from tests.core.mask_rows import (
     text_of_size,
     yaml_text,
 )
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
 import galley.core.worker as worker_module
@@ -931,19 +932,13 @@ def test_a_format_that_does_not_load_to_a_value_is_never_shown(monkeypatch) -> N
 # the job going in to its result coming out of a warm worker. macOS and
 # Windows use the same numbers, except the YAML job on Windows below.
 _JOB_JSON_BUDGET_S = 0.7
-# #112 writes YAML through ruamel's pure-Python emitter on every platform so
-# both engines give identical bytes. The team chose to accept the slowdown
-# (#115 tracks making the C emitter match), so YAML gets 1 s until #115
-# lands, as ``_CONVERT_YAML_BUDGET_S`` in ``test_convert_from_python.py``
-# does. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
-# (192 KB at 0.2 s per MB), rounded up. When #115 restores the 0.5 s YAML
-# budget, it drops ``_CONVERT_YAML_BUDGET_S`` and this one (to 0.6 s).
-_JOB_YAML_BUDGET_S = 1.1
-# Windows only, for the same job (#115): after #112 moved YAML to the
-# pure-Python emitter, the Windows runner measured 1084 ms against the 1.1 s
-# above, too close for the strict nightly. Isaac set 1.6 s, about 1.5x that
-# measurement. When #115 lands, Isaac resets it from that PR's measurement.
-_JOB_YAML_WINDOWS_BUDGET_S = 1.6
+# The 0.5 s Convert budget at 192 KB plus about 0.05 s of masking (192 KB at
+# 0.2 s per MB), rounded up.
+_JOB_YAML_BUDGET_S = 0.6
+# Windows only, for the same job: the Windows runner is slower. Isaac's
+# rule from #108, the worst Windows CI median plus 25%: 567 ms x 1.25,
+# rounded up.
+_JOB_YAML_WINDOWS_BUDGET_S = 0.8
 _JOB_YAML_BUDGET_HERE_S = (
     _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S
 )
@@ -976,6 +971,8 @@ def test_a_masked_format_job_is_within_budget(
     assert size <= len(text.encode("utf-8")) < size * 11 // 10
     if render is one_line:
         assert "\n" not in text
+    if source == "yaml":
+        assert_c_emitter_writes(_masked_value(text))
     job = _job(text, source)
     with _WarmWorker() as worker:
         success = worker.run(job)
@@ -997,6 +994,18 @@ def test_masking_1_mb_with_the_default_keys_is_within_budget(perf_budget) -> Non
         lambda: mask_tree(value),
         fixture="1 MB JSON, default keys, mask_tree only",
     )
+
+
+def _masked_value(text: str) -> object:
+    """The value the masked YAML job writes for ``text``."""
+    return mask_tree(format_module.load_document(text, "yaml")).value
+
+
+def test_the_masked_yaml_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    text, _rows = text_of_size(YAML_BUSY_BYTES, yaml_text)
+    assert_c_emitter_writes(_masked_value(text))
 
 
 # Helpers

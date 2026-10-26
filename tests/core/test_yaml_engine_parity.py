@@ -10,9 +10,13 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 
 import pytest
 import ruamel.yaml.main as ruamel_main
+from ruamel.yaml import YAML
+from tests.core.mask_rows import pretty_json, text_of_size
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
 from galley.core.errors import InputError, NotJSONValueError
@@ -212,3 +216,195 @@ def test_set_order_is_the_same_under_any_hash_seed() -> None:
             input=_SET_TEXT,
         )
         assert completed.stdout == _SET_OUTPUT, seed
+
+
+# #115: with ruamel.yaml.clib the C emitter writes YAML, set up to give the
+# pure emitter's bytes. Values it can't match go to the pure emitter.
+def _fixture_values() -> list[object]:
+    values: list[object] = [json.loads(text) for text, _expected in _JSON_TO_YAML]
+    pure = YAML(typ="safe", pure=True)
+    for text in (_SET_TEXT, 'a: "\\uD800"\n', 'a: "\\\\uD800"\n', "a: 😀\n"):
+        values.append(pure.load(text))
+    for text, *_location in _SURROGATES:
+        values.append(pure.load(text))
+    return values
+
+
+def test_parity_fixtures_dump_the_same_bytes_with_either_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    for value in _fixture_values():
+        expected = format_module._dump_parsed(value, pure=True)
+        assert format_module._dump_yaml(value) == expected, value
+
+
+def _pure_emitter_calls(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    calls: list[object] = []
+    real = format_module._dump_parsed
+
+    def track(value: object, *, pure: bool) -> str:
+        calls.append(value)
+        return real(value, pure=pure)
+
+    monkeypatch.setattr(format_module, "_dump_parsed", track)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"name": "Ann", "note": "it's", "lines": "a\nb", "q": "'a': 1"},
+        {"é" * 60: 1, "k" * 122: 2, "k" * 129: 3},
+        ["plain", 1, 1.5, None, True, {"x": []}, "naïve 日本"],
+    ],
+)
+def test_the_c_emitter_writes_values_it_can_match(
+    value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    expected = format_module._dump_parsed(value, pure=True)
+    calls = _pure_emitter_calls(monkeypatch)
+    assert format_module._dump_yaml(value) == expected
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"emoji": "😀"},
+        {"astral key \U0010ffff": 1},
+        ["line\u2028separator"],
+        ["paragraph\u2029separator"],
+        ["next\x85line"],
+        {"lone": "\ud800"},
+        {"data": b"hello"},
+        {"key\rreturn": 1},
+        {"é" * 65: 1},
+        {"k" * 123: 1},
+    ],
+)
+def test_values_the_c_emitter_cannot_match_use_the_pure_emitter(
+    engine: str, value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = format_module._dump_parsed(value, pure=True)
+    calls = _pure_emitter_calls(monkeypatch)
+    assert format_module._dump_yaml(value) == expected
+    assert len(calls) == 1
+
+
+def test_dump_value_writes_with_the_c_emitter_when_clib_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    value = {"name": "Ann", "note": "it's", "orders": [1, 2.5, None, True]}
+    expected = format_module._dump_parsed(value, pure=True)
+
+    def refuse(value: object, *, pure: bool) -> str:
+        raise AssertionError("dump_value took the pure-Python emitter")
+
+    monkeypatch.setattr(format_module, "_dump_parsed", refuse)
+    assert format_module.dump_value(value, "yaml") == expected
+
+
+_JSON_TO_YAML_BYTES = 2_400_000
+# macOS arm64. Isaac's rule from #108, the worst CI median plus 25%:
+# 1,365.8 ms x 1.25, rounded up.
+_JSON_TO_YAML_BUDGET_S = 1.8
+# Windows only, for the same conversion: the Windows runner is slower. The
+# same rule: 1,597 ms x 1.25, rounded up.
+_JSON_TO_YAML_WINDOWS_BUDGET_S = 2.0
+_JSON_TO_YAML_BUDGET_HERE_S = (
+    _JSON_TO_YAML_WINDOWS_BUDGET_S
+    if sys.platform == "win32"
+    else _JSON_TO_YAML_BUDGET_S
+)
+
+
+@pytest.mark.perf
+def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
+    """#115's budget is for ruamel.yaml.clib, as Galley ships."""
+    if not format_module._clib_available():
+        pytest.skip("the 2.4 MB budget is for the C emitter")
+    text = _json_to_yaml_fixture()
+    assert_c_emitter_writes(json.loads(text))
+    expected = format_module._dump_parsed(json.loads(text), pure=True)
+    assert format_document(text, "json", "yaml") == expected
+    perf_budget.within(
+        _JSON_TO_YAML_BUDGET_HERE_S,
+        lambda: format_document(text, "json", "yaml"),
+        fixture="2.4 MB pretty JSON, fake customer rows, to YAML",
+    )
+
+
+def _json_to_yaml_fixture() -> str:
+    text, _rows = text_of_size(_JSON_TO_YAML_BYTES, pretty_json)
+    assert _JSON_TO_YAML_BYTES <= len(text.encode("utf-8")) < 2_500_000
+    return text
+
+
+def test_the_2_4_mb_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    assert_c_emitter_writes(json.loads(_json_to_yaml_fixture()))
+
+
+# A value the C emitter can't match is written by the pure emitter, byte for
+# byte what ``main`` wrote before #115. These texts are main's output at
+# c13cd80, written by its pure emitter.
+_LONG_KEY = "k" * 123
+_PURE_PATH_DOCUMENTS = (
+    (
+        {"emoji": "Order shipped 📦", "note": "it's done"},
+        "emoji: Order shipped 📦\nnote: it's done\n",
+    ),
+    (
+        {"data": b"fake attachment bytes", "name": "Ann"},
+        "data: !!binary |\n  ZmFrZSBhdHRhY2htZW50IGJ5dGVz\nname: Ann\n",
+    ),
+    ({_LONG_KEY: 1, "name": "Ann"}, f"? {_LONG_KEY}\n: 1\nname: Ann\n"),
+    (
+        {
+            "emoji": "Order shipped 📦 👍🏽",
+            "data": b"fake attachment bytes",
+            _LONG_KEY: "a key the two emitters count differently",
+            "nested": {
+                "note": "it's done",
+                "lines": "first\nsecond",
+                "day": date(2026, 10, 26),
+            },
+            "items": [1, 2.5, None, True, "plain"],
+        },
+        "emoji: Order shipped 📦 👍🏽\n"
+        "data: !!binary |\n"
+        "  ZmFrZSBhdHRhY2htZW50IGJ5dGVz\n"
+        f"? {_LONG_KEY}\n"
+        ": a key the two emitters count differently\n"
+        "nested:\n"
+        "  note: it's done\n"
+        '  lines: "first\\nsecond"\n'
+        "  day: 2026-10-26\n"
+        "items:\n"
+        "- 1\n"
+        "- 2.5\n"
+        "- null\n"
+        "- true\n"
+        "- plain\n",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    _PURE_PATH_DOCUMENTS,
+    ids=["astral", "binary", "long-key", "all-three"],
+)
+def test_pure_path_documents_keep_mains_bytes(
+    engine: str, value: object, expected: str
+) -> None:
+    if engine == "c":
+        with pytest.raises(format_module._NeedsPureEmitter):
+            format_module._c_emitter_dump(value)
+    assert format_module._dump_yaml(value) == expected
+    assert format_module.dump_value(value, "yaml") == expected
