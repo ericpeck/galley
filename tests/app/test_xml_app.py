@@ -42,6 +42,7 @@ from galley.app.status_message import StatusMessage
 from galley.core.problems import Problem
 
 NOT_AVAILABLE = "Not available for XML"
+SORT_KEYS_REASON = "Sort keys doesn't apply to XML"
 _XML = '<catalog><item id="1"><name>Widget</name></item></catalog>'
 _XML_FORMATTED = (
     '<catalog>\n  <item id="1">\n    <name>Widget</name>\n  </item>\n</catalog>\n'
@@ -151,15 +152,19 @@ def test_json_and_yaml_commands_grey_out_for_xml(qtbot) -> None:
     _choose(_pane(window, "input"), "XML")
 
     for name, action in _greyed(window).items():
+        reason = SORT_KEYS_REASON if name == "Sort keys" else NOT_AVAILABLE
         assert action.isVisible(), name
         assert not action.isEnabled(), name
-        assert action.toolTip() == NOT_AVAILABLE, name
-        assert action.statusTip() == NOT_AVAILABLE, name
-    for action in (window._actions.convert_python, window._actions.sort_keys):
+        assert action.toolTip() == reason, name
+        assert action.statusTip() == reason, name
+    for action, reason in (
+        (window._actions.convert_python, NOT_AVAILABLE),
+        (window._actions.sort_keys, SORT_KEYS_REASON),
+    ):
         button = _toolbar_button(window, action)
         assert not button.isEnabled()
-        assert button.toolTip() == NOT_AVAILABLE
-        assert button.accessibleDescription() == NOT_AVAILABLE
+        assert button.toolTip() == reason
+        assert button.accessibleDescription() == reason
 
 
 def test_commands_come_back_with_their_own_tips(qtbot) -> None:
@@ -173,7 +178,7 @@ def test_commands_come_back_with_their_own_tips(qtbot) -> None:
     actions = window._actions
     for name, action in _greyed(window).items():
         assert action.isEnabled(), name
-        assert action.toolTip() != NOT_AVAILABLE, name
+        assert action.toolTip() not in (NOT_AVAILABLE, SORT_KEYS_REASON), name
     assert actions.escape_string.toolTip() == "Escape as String"
     assert actions.copy_as_masked.toolTip() == MASK_HELP
     assert actions.copy_as_fake.statusTip() == MASK_HELP

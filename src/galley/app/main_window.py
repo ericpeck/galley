@@ -164,6 +164,8 @@ CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
 # Words, not only the pressed Sort keys button, say the output was sorted.
 SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
+# Sort keys has its own reason for a format without keys (Bill, #135).
+SORT_KEYS_NOT_APPLICABLE = "Sort keys doesn't apply to {label}"
 FORMAT_ACCESSIBLE_NAME = "Format"
 FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
 FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
@@ -1851,7 +1853,7 @@ class MainWindow(QMainWindow):
             item.setEnabled(available and not reason)
             set_not_available(item, reason)
         actions.sort_keys.setEnabled(not reason)
-        set_not_available(actions.sort_keys, reason)
+        set_not_available(actions.sort_keys, self._sort_keys_reason())
         self._toolbar.sync_not_available()
         self._sync_open_actions()
         self._sync_fold_actions()
@@ -1938,6 +1940,13 @@ class MainWindow(QMainWindow):
         """
         fmt = format_named(self._input_pane.format_name())
         return "" if fmt.loads_to_value else not_available_text(fmt.label)
+
+    def _sort_keys_reason(self) -> str:
+        """Why Sort keys is greyed out, or "". XML has no keys to sort."""
+        fmt = format_named(self._input_pane.format_name())
+        if fmt.loads_to_value:
+            return ""
+        return SORT_KEYS_NOT_APPLICABLE.format(label=fmt.label)
 
     def _follow_input_format(self) -> None:
         """Offer in Output only what the Input format writes (B1 on #63).
