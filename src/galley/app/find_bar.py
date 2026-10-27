@@ -52,6 +52,7 @@ NEXT_MATCH = "Next match"
 CLOSE_FIND_BAR = "Close find bar"
 MATCH_CASE = "Match case"
 KEYS_ONLY = "Keys only"
+KEYS_ONLY_TIP = "Match only object keys, not values"
 _FIELD_MIN_WIDTH = 120
 _FIELD_MAX_WIDTH = 320
 _ERROR_BORDER = 2
@@ -198,7 +199,7 @@ class FindBar(QWidget):
             self.keys_only = QCheckBox(KEYS_ONLY)
             self.keys_only.setObjectName(f"{name}FindKeysOnly")
             self.keys_only.setAccessibleName(KEYS_ONLY)
-            self.keys_only.setToolTip("Match object keys only, not values")
+            self.keys_only.setToolTip(KEYS_ONLY_TIP)
             self.keys_only.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             self.keys_only.toggled.connect(self._on_option_changed)
 

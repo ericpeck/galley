@@ -4,8 +4,11 @@ Settings live in the throwaway store from ``isolated_settings``.
 """
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QLabel, QMenu, QToolButton, QWidget
 
 from galley.app.editor import CodeEditor
@@ -75,6 +78,23 @@ def _first_format(qtbot, window) -> tuple[str, str]:
 def _restart(qtbot, window):
     window.close()
     return _show(qtbot)
+
+
+def _next_launch(tmp_path: Path) -> None:
+    """Point settings at a copy of the INI file, as a new launch reads it.
+
+    Qt keeps the values this process wrote in memory, typed as written, so
+    reading the same file back hands out a bool for a bool. A copy at a new
+    path is parsed from disk, where every value is text (#127).
+    """
+    written = Path(problems_settings().fileName())
+    store = tmp_path / "next-launch"
+    if written.exists():
+        # <store>/<organization>/<application>.ini, as Qt lays it out.
+        copy = store / written.parent.name / written.name
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(written, copy)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(store))
 
 
 def test_fresh_settings_default_to_off(qtbot) -> None:
@@ -170,6 +190,17 @@ def test_keyboard_and_accessible_names_are_unchanged(qtbot, saved: bool) -> None
 _MISSING = object()
 
 
+@pytest.mark.parametrize(("raw", "restored"), [(1, True), (2, True), (0, False)])
+def test_integer_stored_value_restores(raw: int, restored: bool) -> None:
+    """A store that keeps types, like this process's own cache, can hand out an
+    integer; nonzero is on (#127)."""
+    problems_settings().setValue(_KEY, raw)
+    stored = problems_settings().value(_KEY)
+    assert isinstance(stored, int)
+    assert stored == raw
+    assert load_sort_keys() is restored
+
+
 @pytest.mark.parametrize(
     ("raw", "restored"),
     [
@@ -177,22 +208,41 @@ _MISSING = object()
         ("false", False),
         # Not a value Galley writes: the fallback is off, the default.
         ("maybe", False),
+        # Other forms _as_bool accepts (#127).
+        (" TRUE ", True),
+        ("1", True),
+        ("yes", True),
         (True, True),
         (False, False),
         (_MISSING, False),
     ],
-    ids=["str-true", "str-false", "str-maybe", "bool-true", "bool-false", "missing"],
+    ids=[
+        "str-true",
+        "str-false",
+        "str-maybe",
+        "str-padded-upper-true",
+        "str-1",
+        "str-yes",
+        "bool-true",
+        "bool-false",
+        "missing",
+    ],
 )
 def test_raw_stored_value_restores_at_launch(
-    qtbot, raw: object, restored: bool
+    qtbot, tmp_path: Path, raw: object, restored: bool
 ) -> None:
-    """Windows QSettings can hand values back as strings; each form restores."""
-    settings = problems_settings()
+    """Windows QSettings can hand values back as strings; each form restores.
+
+    Every case is read from the file, so a bool comes back as text too.
+    """
     if raw is not _MISSING:
+        settings = problems_settings()
         settings.setValue(_KEY, raw)
-    settings.sync()
-    if isinstance(raw, str):
-        assert problems_settings().value(_KEY) == raw
+        settings.sync()
+    _next_launch(tmp_path)
+    if raw is not _MISSING:
+        expected_text = str(raw).lower() if isinstance(raw, bool) else raw
+        assert problems_settings().value(_KEY) == expected_text
     assert load_sort_keys() is restored
     window = _show(qtbot)
     assert window._actions.sort_keys.isChecked() is restored
