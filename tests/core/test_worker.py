@@ -9,10 +9,12 @@ from collections.abc import Callable
 from pathlib import Path
 from queue import Empty
 
+from tests.core.html_row import run_worker_with_html_row
 from tests.core.xml_row import run_worker_with_xml_row
 
 from galley.core.errors import MAX_DEPTH, InputError
 from galley.core.format import format_json
+from galley.core.html_format import format_html
 from galley.core.problems import Problem
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
@@ -212,6 +214,51 @@ def _run_job(
         events.cancel_join_thread()
         jobs.close()
         events.close()
+
+
+def _run_html_job(job: FormatJob) -> list[object]:
+    """Run one job in a spawn child whose table has the slice 5 HTML row."""
+    return _run_job(job, target=run_worker_with_html_row)
+
+
+def test_worker_formats_html_with_no_fold_ranges() -> None:
+    text = "<!DOCTYPE html><ul><li>one<li>two</ul><p>Fake <b>text</b></p>"
+    events = _run_html_job(FormatJob(job_id=3, text=text, source="html", target="HTML"))
+    success = events[-1]
+    assert isinstance(success, SuccessEvent)
+    assert success.text == format_html(text)
+    assert success.folds == b""
+
+
+def test_worker_html_problems_cross_spawn_all_at_once() -> None:
+    text = "<div>\n  <span>\n</div>\n</p>\n"
+    events = _run_html_job(FormatJob(job_id=4, text=text, source="html", target="html"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.error is None
+    assert failure.message == "html_unclosed"
+    assert failure.problems == (
+        Problem("html_unclosed", 2, "span", 3),
+        Problem("html_unexpected_close", 4, "p", 1),
+    )
+    assert [problem.colno for problem in failure.problems] == [3, 1]
+
+
+def test_worker_html_too_deep_crosses_spawn() -> None:
+    text = "<b>" * (MAX_DEPTH + 1)
+    events = _run_html_job(FormatJob(job_id=5, text=text, source="html", target="html"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert isinstance(failure.error, InputError)
+    assert failure.error.kind == "too_deep"
+    assert failure.error.details == {"depth": MAX_DEPTH + 1}
+
+
+def test_worker_without_the_html_row_rejects_an_html_job() -> None:
+    events = _run_job(FormatJob(job_id=8, text="<p>a", source="html", target="html"))
+    failure = events[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == "Unsupported format: html"
 
 
 def _run_xml_job(job: FormatJob) -> list[object]:
