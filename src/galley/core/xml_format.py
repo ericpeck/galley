@@ -58,10 +58,11 @@ _CONTINUATION = re.compile(rb"[\x80-\xbf]")
 _BAD_TOKEN_ERRORS = frozenset(
     {
         expat.errors.codes[expat.errors.XML_ERROR_INVALID_TOKEN],
-        expat.errors.codes[expat.errors.XML_ERROR_UNCLOSED_TOKEN],
         expat.errors.codes[expat.errors.XML_ERROR_PARTIAL_CHAR],
     }
 )
+# The text ends inside a tag, comment, or PI. Expat points at its ``<``.
+_UNFINISHED = expat.errors.codes[expat.errors.XML_ERROR_UNCLOSED_TOKEN]
 _ERROR_CODES = {
     expat.errors.codes[expat.errors.XML_ERROR_TAG_MISMATCH]: "xml_mismatched_tag",
     expat.errors.codes[expat.errors.XML_ERROR_DUPLICATE_ATTRIBUTE]: (
@@ -237,6 +238,8 @@ def _expat_error(
             where = opened[-1]
             return _located("xml_unclosed", data, where, _name_at(data, where + 1))
         return _located("xml_no_root", data, max(index, 0))
+    if code == _UNFINISHED:
+        return _located("xml_unfinished_tag", data, max(index, 0))
     if code in _BAD_TOKEN_ERRORS:
         index = max(index, 0)
         # Expat stops on the byte after a stray & or <. Point at the stray.

@@ -71,6 +71,8 @@ def _xml_text(problem: Problem) -> str:
         return f"Line {line} closes </{closing}>, but <{name}> is still open."
     if code == "xml_unclosed":
         return f"<{name}> opened on line {line} is never closed."
+    if code == "xml_unfinished_tag":
+        return f"The tag on line {line} isn't finished."
     if code == "xml_entity_declared":
         return f"Galley doesn't load DTD entities. Remove the <!ENTITY> on line {line}."
     if code == "xml_undefined_entity":

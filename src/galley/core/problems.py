@@ -52,6 +52,7 @@ ProblemCode = Literal[
     "yaml_other",
     "xml_mismatched_tag",
     "xml_unclosed",
+    "xml_unfinished_tag",
     "xml_bad_token",
     "xml_duplicate_attribute",
     "xml_undefined_entity",

@@ -165,6 +165,10 @@ def test_validate_checks_without_output() -> None:
         ("<r>\n  a < b\n</r>", "xml_bad_token", 2, 5, ""),
         ('<r a="<"/>', "xml_bad_token", 1, 7, ""),
         ("<r>\n  <a</r>", "xml_bad_token", 2, 5, ""),
+        # The text ends inside a tag: the column is the tag's <.
+        ('<item id="1', "xml_unfinished_tag", 1, 1, ""),
+        ('<r>\n  <item id="1', "xml_unfinished_tag", 2, 3, ""),
+        ("<r>\n</r", "xml_unfinished_tag", 2, 1, ""),
         ('<r>\n  <a x="1" y="2" x="3"/>\n</r>', "xml_duplicate_attribute", 2, 18, "x"),
         ("<r>\n  <a>&nbsp;</a>\n</r>", "xml_undefined_entity", 2, 6, "nbsp"),
         (

@@ -12,7 +12,13 @@ from PySide6.QtGui import (
     QDropEvent,
     QKeySequence,
 )
-from PySide6.QtWidgets import QApplication, QMainWindow, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QToolButton,
+    QWidget,
+)
 
 import galley.app.actions as actions_module
 from galley.app.actions import COMING_SOON, ShellActions
@@ -335,6 +341,31 @@ def test_an_xml_error_shows_in_the_gutter_and_problems(qtbot) -> None:
     assert _pane(window, "output").editor.toPlainText() == _XML_FORMATTED
 
 
+@pytest.mark.parametrize(
+    ("text", "line", "place", "message"),
+    [
+        # The text ends inside a tag: its line, and the column of its <.
+        ('<r>\n  <item id="1', 2, "Line 2, Col 3", "The tag on line 2 isn't finished."),
+        # Found only at the end of the text: the line alone (#131).
+        ("<!-- c -->\n", 2, "Line 2", "There's no root element."),
+    ],
+)
+def test_end_of_text_problems_show_their_place(
+    qtbot, text: str, line: int, place: str, message: str
+) -> None:
+    window = _show(qtbot)
+    _format_xml(qtbot, window, text, "1 problem")
+    problems = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(problems, ProblemsPane)
+    qtbot.waitUntil(problems.isVisible)
+    assert problems.lines() == [line]
+    assert problems.messages() == [message]
+    row = problems.list_widget().itemWidget(problems.list_widget().item(0))
+    assert row is not None
+    texts = [label.text() for label in row.findChildren(QLabel)]
+    assert f"Error · {place}" in texts
+
+
 def test_xml_size_bands_use_the_yaml_placeholders() -> None:
     assert (XML_BUSY_BYTES, XML_PROGRESS_BYTES, XML_WARNING_BYTES) == (
         YAML_BUSY_BYTES,
@@ -384,6 +415,7 @@ def test_the_empty_state_names_every_format(qtbot) -> None:
             "Line 3 closes </c>, but <b> is still open.",
         ),
         (Problem("xml_unclosed", 2, "b"), "<b> opened on line 2 is never closed."),
+        (Problem("xml_unfinished_tag", 3), "The tag on line 3 isn't finished."),
         (
             Problem("xml_entity_declared", 1),
             "Galley doesn't load DTD entities. Remove the <!ENTITY> on line 1.",
