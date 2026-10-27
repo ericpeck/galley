@@ -3,6 +3,8 @@
 Specs: Erik's slice 3 prompt and Bill's UI criteria on #63. Fake data only.
 """
 
+import typing
+
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
 from PySide6.QtGui import (
@@ -39,13 +41,18 @@ from galley.app.limits import (
 from galley.app.main import create_main_window
 from galley.app.main_window import _busy_progress_bytes, _warning_bytes
 from galley.app.pane import EMPTY_HEADING, PaneRole, PaneWidget
-from galley.app.problem_text import display_problem, message_for
+from galley.app.problem_text import _xml_text, display_problem, message_for
 from galley.app.problems_pane import ProblemsPane
 from galley.app.recent_files import remember_recent_file
 from galley.app.shortcuts import ESCAPE_AS_STRING, UNESCAPE_STRING
 from galley.app.status_bar import INFO_RESERVE
 from galley.app.status_message import StatusMessage
-from galley.core.problems import Problem
+from galley.core.problems import (
+    XML_PROBLEM_CODES,
+    Problem,
+    ProblemCode,
+    is_xml_code,
+)
 
 NOT_AVAILABLE = "Not available for XML"
 SORT_KEYS_REASON = "Sort keys doesn't apply to XML"
@@ -448,6 +455,28 @@ def test_xml_problem_sentences(problem: Problem, sentence: str) -> None:
     assert message_for(problem) == sentence
     row = display_problem(problem)
     assert row.accessible == f"Line {problem.lineno}: {sentence}"
+
+
+def test_every_xml_code_has_its_own_sentence() -> None:
+    every_code = typing.get_args(ProblemCode)
+    assert set(XML_PROBLEM_CODES) == {c for c in every_code if c.startswith("xml_")}
+    sentences = {}
+    for code in XML_PROBLEM_CODES:
+        problem = Problem(code, 4, "b", 2, found="c")
+        assert is_xml_code(code)
+        sentences[code] = _xml_text(problem, code)
+        assert message_for(problem) == sentences[code]
+    assert all(sentence.endswith(".") for sentence in sentences.values())
+    assert len(set(sentences.values())) == len(XML_PROBLEM_CODES)
+
+
+def test_an_unknown_xml_code_raises() -> None:
+    problem = Problem("xml_bogus", 1)  # type: ignore[arg-type]
+    assert not is_xml_code("xml_bogus")
+    with pytest.raises(AssertionError):
+        _xml_text(problem, "xml_bogus")  # type: ignore[arg-type]
+    with pytest.raises(AssertionError):
+        message_for(problem)
 
 
 def test_long_xml_names_are_cut_like_keys() -> None:

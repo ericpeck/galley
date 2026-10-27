@@ -9,7 +9,12 @@ from typing import assert_never
 
 from galley.app.banner import banner_text
 from galley.core.errors import InputError
-from galley.core.problems import Problem, ProblemCode
+from galley.core.problems import (
+    Problem,
+    ProblemCode,
+    XMLProblemCode,
+    is_xml_code,
+)
 
 # Longer keys are cut to this many characters and end with "…".
 KEY_DISPLAY_LIMIT = 40
@@ -56,16 +61,19 @@ def message_for(problem: Problem) -> str:
         return f"Missing colon after the key on line {line}."
     if code == "yaml_other":
         return f"Couldn't read this YAML on line {line}."
-    if code.startswith("xml_"):
-        return _xml_text(problem)
+    if is_xml_code(code):
+        return _xml_text(problem, code)
     assert_never(code)
 
 
-def _xml_text(problem: Problem) -> str:
-    """The sentence for an ``xml_*`` problem (#63, Bill's B4 wording)."""
+def _xml_text(problem: Problem, code: XMLProblemCode) -> str:
+    """The sentence for an XML problem (#63, Bill's B4 wording).
+
+    Each code has its own branch. A code missing here is a type error, and
+    an unknown one raises.
+    """
     line = problem.lineno
     name = _xml_name(problem.token)
-    code = problem.code
     if code == "xml_mismatched_tag":
         closing = _xml_name(problem.found)
         return f"Line {line} closes </{closing}>, but <{name}> is still open."
@@ -73,12 +81,17 @@ def _xml_text(problem: Problem) -> str:
         return f"<{name}> opened on line {line} is never closed."
     if code == "xml_unfinished_tag":
         return f"The tag on line {line} isn't finished."
-    if code == "xml_entity_declared":
-        return f"Galley doesn't load DTD entities. Remove the <!ENTITY> on line {line}."
-    if code == "xml_undefined_entity":
-        return f"Unknown entity &{name}; on line {line}."
+    if code == "xml_bad_token":
+        return (
+            f"Unexpected character on line {line}. "
+            "Write < as &lt; and & as &amp; in text."
+        )
     if code == "xml_duplicate_attribute":
         return f"Attribute {name} appears twice in this tag."
+    if code == "xml_undefined_entity":
+        return f"Unknown entity &{name}; on line {line}."
+    if code == "xml_entity_declared":
+        return f"Galley doesn't load DTD entities. Remove the <!ENTITY> on line {line}."
     if code == "xml_unbound_prefix":
         return f"Prefix {name} isn't declared. Add an xmlns:{name} attribute."
     if code == "xml_after_root":
@@ -87,12 +100,9 @@ def _xml_text(problem: Problem) -> str:
         )
     if code == "xml_no_root":
         return "There's no root element."
-    if code == "xml_bad_token":
-        return (
-            f"Unexpected character on line {line}. "
-            "Write < as &lt; and & as &amp; in text."
-        )
-    return f"Couldn't read this XML on line {line}."
+    if code == "xml_other":
+        return f"Couldn't read this XML on line {line}."
+    assert_never(code)
 
 
 def _xml_name(name: str) -> str:

@@ -14,7 +14,7 @@ import re
 from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -33,6 +33,23 @@ _STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
 _CLOSERS = {"[": "]", "{": "}"}
 _NEWLINE = re.compile("\n")
 
+# Every code the XML check reports. A type checker sees the app's sentence
+# for each one, since that function ends in ``assert_never`` (#135).
+XMLProblemCode = Literal[
+    "xml_mismatched_tag",
+    "xml_unclosed",
+    "xml_unfinished_tag",
+    "xml_bad_token",
+    "xml_duplicate_attribute",
+    "xml_undefined_entity",
+    "xml_entity_declared",
+    "xml_unbound_prefix",
+    "xml_after_root",
+    "xml_no_root",
+    "xml_other",
+]
+XML_PROBLEM_CODES: tuple[XMLProblemCode, ...] = get_args(XMLProblemCode)
+
 ProblemCode = Literal[
     "missing_comma",
     "unclosed_quote",
@@ -50,20 +67,15 @@ ProblemCode = Literal[
     "yaml_duplicate",
     "yaml_colon",
     "yaml_other",
-    "xml_mismatched_tag",
-    "xml_unclosed",
-    "xml_unfinished_tag",
-    "xml_bad_token",
-    "xml_duplicate_attribute",
-    "xml_undefined_entity",
-    "xml_entity_declared",
-    "xml_unbound_prefix",
-    "xml_after_root",
-    "xml_no_root",
-    "xml_other",
+    XMLProblemCode,
     "html_unexpected_close",
     "html_unclosed",
 ]
+
+
+def is_xml_code(code: str) -> TypeGuard[XMLProblemCode]:
+    """True for a code the XML check reports."""
+    return code in XML_PROBLEM_CODES
 
 
 @dataclass(frozen=True)
