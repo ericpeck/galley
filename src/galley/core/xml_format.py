@@ -297,7 +297,15 @@ def _tag_names(tag: bytes) -> list[bytes]:
 def _located(
     code: str, data: bytes, index: int, token: str = "", found: str = ""
 ) -> XMLSyntaxError:
+    """An error at byte ``index``. At the end of the text it has no column.
+
+    A problem found only because the text ran out, such as no root element
+    or an unclosed CDATA section, names its line alone, as YAML problems
+    do (#131). Its column would only point past the last character.
+    """
     line, column = _line_column(data, index)
+    if index >= len(data):
+        column = 0
     return XMLSyntaxError(code, lineno=line, colno=column, token=token, found=found)
 
 

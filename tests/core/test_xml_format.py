@@ -180,9 +180,12 @@ def test_validate_checks_without_output() -> None:
         ('<r xmlns:a="u">\n  <a:b c:x="1"/>\n</r>', "xml_unbound_prefix", 2, 3, "c"),
         ("<r/>\n<s/>", "xml_after_root", 2, 1, ""),
         ("<r><a/></r>text", "xml_after_root", 1, 12, ""),
-        ("", "xml_no_root", 1, 1, ""),
-        ('<?xml version="1.0"?>\n<!-- only -->\n', "xml_no_root", 3, 1, ""),
-        ("<r>\n  <![CDATA[ open\n</r>", "xml_other", 3, 5, ""),
+        # Found at the end of the text: the line alone, no column (#131).
+        ("", "xml_no_root", 1, 0, ""),
+        ('<?xml version="1.0"?>\n<!-- only -->\n', "xml_no_root", 3, 0, ""),
+        ("<!-- c -->\n", "xml_no_root", 2, 0, ""),
+        ("\n  ", "xml_no_root", 2, 0, ""),
+        ("<r>\n  <![CDATA[ open\n</r>", "xml_other", 3, 0, ""),
     ],
 )
 def test_error_codes_with_their_lines(
