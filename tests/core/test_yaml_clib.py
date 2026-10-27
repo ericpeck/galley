@@ -3,7 +3,7 @@
 import os
 import random
 import warnings
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 import ruamel.yaml.main as ruamel_main
@@ -876,3 +876,146 @@ def test_conversions_match_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(format_module, "_CLIB_READY", False)
     assert format_module._safe_yaml(pure=False).Parser is not CParser
     assert _conversion_outcomes(documents) == with_c
+
+
+# The C emitter against the pure emitter (#115). ``_dump_yaml`` writes with
+# the C emitter and must give the pure emitter's bytes for every value. The
+# characters cover quotes, indicators, line breaks, control characters,
+# non-ASCII spaces and BOM, and the words cover YAML's implicit types.
+_EMITTER_SEED = 0x0115
+_CI_EMITTER_COUNT = 2_000
+_FULL_EMITTER_COUNT = 50_000
+_EMITTER_CHARS = (
+    *("abcxyz019 " * 6),
+    *" \t\n\r'\"-?:,[]{}#&*!|>%@`\\=~<.",
+    *("\u00e9", "\u65e5", "\u00a0", "\u3000", "\u1680", "\u200b", "\ufeff"),
+    *("\x00", "\x01", "\x1f", "\x7f", "\x80", "\x9f", "\ud7ff", "\ue000"),
+    *("\ufffd", "\ufffe", "\uffff", "\U0001f600", "\U0010ffff", "\x85"),
+    *("\u2028", "\u2029", "\ud800", "\udfff"),
+)
+_EMITTER_WORDS = (
+    *("true", "no", "yes", "Yes", "~", "null", "Null", "1", "1.0", ".5"),
+    *("0x1", "0o7", "2020-01-01", "2020-01-01 10:00:00", "1:2", "<<", "="),
+    *("-", "---", "...", "- a", "? a", "a:b", "a: b", " a", "a ", "+1"),
+    *("1_000", ".inf", ".nan", "y", "off", "it's", "'q' x", "two\nlines"),
+)
+
+
+def _emitter_string(rng: random.Random, chars: tuple[str, ...]) -> str:
+    roll = rng.random()
+    if roll < 0.2:
+        return rng.choice(_EMITTER_WORDS)
+    if roll < 0.25:
+        return "k" * rng.randint(100, 135) + rng.choice(chars)
+    if roll < 0.28:
+        return "é" * rng.randint(55, 70)
+    if roll < 0.32:
+        return " ".join(rng.choice(_EMITTER_WORDS) for _ in range(30))
+    length = rng.choice((0, 1, 1, 2, 3, 5, 8, 20))
+    return "".join(rng.choice(chars) for _ in range(length))
+
+
+def _emitter_scalar(rng: random.Random, chars: tuple[str, ...]) -> object:
+    roll = rng.randrange(10)
+    if roll == 0:
+        return rng.randint(-(10**20), 10**20)
+    if roll == 1:
+        return rng.choice((1.5, -0.0, 1e300, 1e-300, float("inf"), 3.0, 0.1))
+    if roll == 2:
+        return rng.choice((True, False, None))
+    if roll == 3:
+        return rng.choice((date(2020, 1, 2), datetime(2020, 1, 2, 3, 4, 5)))
+    if roll == 4 and rng.random() < 0.1:
+        return b"hello"
+    return _emitter_string(rng, chars)
+
+
+def _emitter_value(rng: random.Random, chars: tuple[str, ...], depth: int = 0):
+    roll = rng.random()
+    if depth < 4 and roll < 0.25:
+        keys = (
+            _emitter_string(rng, chars)
+            if rng.random() < 0.85
+            else _emitter_scalar(rng, chars)
+            for _ in range(rng.randrange(4))
+        )
+        return {key: _emitter_value(rng, chars, depth + 1) for key in keys}
+    if depth < 4 and roll < 0.4:
+        return [_emitter_value(rng, chars, depth + 1) for _ in range(rng.randrange(4))]
+    if depth < 4 and roll < 0.45:
+        shared = [_emitter_string(rng, chars), {"x": 1}]
+        return {"a": shared, "b": [shared, _emitter_value(rng, chars, depth + 1)]}
+    if depth < 4 and roll < 0.5:
+        return {_emitter_string(rng, chars) for _ in range(rng.randrange(5))}
+    return _emitter_scalar(rng, chars)
+
+
+def _compare_emitters(count: int) -> int:
+    """Return how many values the C emitter wrote itself."""
+    rng = random.Random(_EMITTER_SEED)
+    # Half the values avoid the characters that send a value to the pure
+    # emitter, so most of them are written by the C emitter.
+    matchable = tuple(
+        char
+        for char in _EMITTER_CHARS
+        if not format_module._C_EMITTER_MISMATCH_RE.search(char) and char != "\r"
+    )
+    written_by_c = 0
+    for index in range(count):
+        chars = matchable if index % 2 else _EMITTER_CHARS
+        value = _emitter_value(rng, chars)
+        expected = format_module._dump_parsed(value, pure=True)
+        assert format_module._dump_yaml(value) == expected, value
+        try:
+            format_module._c_emitter_dump(value)
+        except format_module._NeedsPureEmitter:
+            continue
+        written_by_c += 1
+    return written_by_c
+
+
+def test_c_emitter_writes_the_pure_emitter_bytes() -> None:
+    _require_clib()
+    written_by_c = _compare_emitters(_CI_EMITTER_COUNT)
+    assert written_by_c > _CI_EMITTER_COUNT // 2
+
+
+def test_c_emitter_writes_the_pure_emitter_bytes_full() -> None:
+    if os.environ.get("GALLEY_YAML_COMPARE_FULL") != "1":
+        pytest.skip("the 50000-value comparison runs in the nightly job")
+    if not format_module._clib_available():
+        pytest.fail("ruamel.yaml.clib is not installed")
+    assert _compare_emitters(_FULL_EMITTER_COUNT) > _FULL_EMITTER_COUNT // 2
+
+
+def test_compare_corpus_values_dump_identically() -> None:
+    """Every value the comparison corpus loads dumps to the same bytes."""
+    _require_clib()
+    documents = [*_CORPUS, *_ci_comparison_documents()]
+    compared = 0
+    for text in documents:
+        try:
+            value = YAML(typ="safe", pure=True).load(text)
+        except Exception:
+            continue
+        expected = format_module._dump_parsed(value, pure=True)
+        assert format_module._dump_yaml(value) == expected, text
+        compared += 1
+    assert compared > len(documents) // 2
+
+
+def test_plain_values_are_written_by_the_c_emitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_clib()
+
+    def refuse(value: object, *, pure: bool) -> str:
+        raise AssertionError(value)
+
+    monkeypatch.setattr(format_module, "_dump_parsed", refuse)
+    assert format_yaml("a: it's\nb: 'x: y'\nc: [1, 2]\n") == (
+        "a: it's\nb: 'x: y'\nc:\n- 1\n- 2\n"
+    )
+    assert format_document('{"q": "\'a\': 1", "n": "a\\nb"}', "json", "yaml") == (
+        'q: "\'a\': 1"\nn: "a\\nb"\n'
+    )

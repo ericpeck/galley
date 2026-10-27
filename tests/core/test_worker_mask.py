@@ -26,6 +26,7 @@ from tests.core.mask_rows import (
     text_of_size,
     yaml_text,
 )
+from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
 import galley.core.worker as worker_module
@@ -356,7 +357,7 @@ def test_a_repeated_yaml_key_names_the_key_and_place_but_no_value(
     events = _run_in_child([_job(_REPEATED_PASSWORD, "yaml", target)])
     failure = events[-1]
     assert isinstance(failure, FailureEvent)
-    assert failure.message == 'duplicate_key "password" at line 3'
+    assert failure.message == 'duplicate_key "password" at line 3, column 1'
     assert failure.problems == (Problem("yaml_duplicate", 3, "password"),)
     assert failure.error is None
     for event in events:
@@ -432,7 +433,7 @@ def test_a_repeated_key_that_looks_personal_is_masked_too() -> None:
     failure = _run_here(_job(text, "yaml"))[-1]
     assert isinstance(failure, FailureEvent)
     assert failure.problems == (Problem("yaml_duplicate", 2, MASK),)
-    assert failure.message == f'duplicate_key "{MASK}" at line 2'
+    assert failure.message == f'duplicate_key "{MASK}" at line 2, column 1'
     _assert_clean(failure)
 
 
@@ -459,8 +460,9 @@ def test_a_write_failure_keeps_its_path(tmp_path: Path) -> None:
 
 # A masked failure's place: "at" once, and the first problem's line and column
 
-# Every message CPython's JSON decoder raises (eight in ``_json.c``, plus
-# "Extra data" from ``json.decoder``), each with a fake value in the text.
+# Every message CPython's JSON decoder raises (eight in ``_json.c``, "Extra
+# data" from ``json.decoder``, and the BOM check in ``json.loads``), each
+# with a fake value in the text.
 _JSON_DECODE_FAILURES = (
     ("Expecting value", '{"password": "hunter22", "pin": }'),
     (
@@ -474,6 +476,10 @@ _JSON_DECODE_FAILURES = (
     ("Invalid \\escape", '{"password": "hunter22\\x"}'),
     ("Invalid \\uXXXX escape", '{"password": "hunter22\\u12"}'),
     ("Extra data", '{"password": "hunter22"} 7'),
+    (
+        "Unexpected UTF-8 BOM (decode using utf-8-sig)",
+        '\ufeff{"password": "hunter22"}',
+    ),
 )
 _PLACE_RE = re.compile(r" at line (\d+)(?:, column (\d+))?$")
 
@@ -561,6 +567,84 @@ def test_a_yaml_failure_with_two_problems_names_the_first() -> None:
     assert message == "yaml_scanner_error at line 3"
     for value in ("hunter22", "1234", "fake-other-22"):
         assert value not in message
+
+
+# YAML problems carry the parser's column, and masked messages name it
+
+_YAML_COLUMNS = pytest.mark.parametrize(
+    ("text", "kind", "place"),
+    [
+        ("password: hunter22\n  pin: 1234\n", "yaml_scanner_error", (2, 6)),
+        ("password: [hunter22, }\n", "yaml_parser_error", (1, 22)),
+        (
+            "password: hunter22\npassword: fake-other-22\n",
+            'duplicate_key "password"',
+            (2, 1),
+        ),
+    ],
+    ids=["scanner", "parser", "duplicate-key"],
+)
+
+
+def _yaml_error(text: str) -> MarkedYAMLError:
+    with pytest.raises(MarkedYAMLError) as caught:
+        format_document(text, "yaml", "yaml")
+    return caught.value
+
+
+@_YAML_COLUMNS
+def test_a_yaml_problem_has_the_parsers_column(
+    text: str, kind: str, place: tuple[int, int]
+) -> None:
+    error = _yaml_error(text)
+    mark = error.problem_mark
+    (first,) = collect_problems(text, "yaml", error)
+    assert (first.lineno, first.colno) == (mark.line + 1, mark.column + 1) == place
+
+
+@_YAML_COLUMNS
+@pytest.mark.parametrize("target", ["yaml", "json"])
+def test_a_masked_yaml_message_names_the_problems_line_and_column(
+    text: str, kind: str, place: tuple[int, int], target: str
+) -> None:
+    failure = _run_here(_job(text, "yaml", target))[-1]
+    assert isinstance(failure, FailureEvent)
+    first = failure.problems[0]
+    assert (first.lineno, first.colno) == place
+    assert failure.message == f"{kind} at line {place[0]}, column {place[1]}"
+    _assert_clean(failure, ("hunter22", "fake-other-22", "1234"))
+
+
+def test_a_yaml_problem_moved_to_an_earlier_line_has_no_column() -> None:
+    # "expected ',' or ']'" stops on line 4; the problem moves back to line 2,
+    # where the parser's column means nothing.
+    text = "password: hunter22\nlist: [a, b\n\n"
+    error = _yaml_error(text)
+    assert error.problem_mark.line + 1 == 4
+    assert collect_problems(text, "yaml", error) == (Problem("yaml_other", 2),)
+    assert collect_problems(text, "yaml", error)[0].colno == 0
+    failure = _run_here(_job(text, "yaml"))[-1]
+    assert isinstance(failure, FailureEvent)
+    assert failure.message == "yaml_parser_error at line 2"
+    _assert_clean(failure, ("hunter22",))
+
+
+def test_a_yaml_error_with_no_problem_names_its_mark() -> None:
+    # A running job always has a problem for a YAML error; this is the
+    # fallback in _failure_place if it ever has none.
+    error = _yaml_error("password: hunter22\n  pin: 1234\n")
+    assert worker_module._failure_place(error, ()) == " at line 2, column 6"
+
+
+def test_a_yaml_error_with_no_mark_names_its_problems_place() -> None:
+    # A control character raises ReaderError, a YAMLError with no mark, so
+    # its place comes from its problem, which has no column.
+    failure = _run_here(_job("password: hunter22\x07\n", "yaml"))[-1]
+    assert isinstance(failure, FailureEvent)
+    (first,) = failure.problems
+    assert first.colno == 0
+    assert failure.message == f"ReaderError at line {first.lineno}"
+    _assert_clean(failure, ("hunter22",))
 
 
 def test_a_failure_with_no_problem_and_no_line_names_no_place() -> None:
@@ -848,19 +932,13 @@ def test_a_format_that_does_not_load_to_a_value_is_never_shown(monkeypatch) -> N
 # the job going in to its result coming out of a warm worker. macOS and
 # Windows use the same numbers, except the YAML job on Windows below.
 _JOB_JSON_BUDGET_S = 0.7
-# #112 writes YAML through ruamel's pure-Python emitter on every platform so
-# both engines give identical bytes. The team chose to accept the slowdown
-# (#115 tracks making the C emitter match), so YAML gets 1 s until #115
-# lands, as ``_CONVERT_YAML_BUDGET_S`` in ``test_convert_from_python.py``
-# does. This budget is Isaac's 1.1 s: that 1 s plus about 0.05 s of masking
-# (192 KB at 0.2 s per MB), rounded up. When #115 restores the 0.5 s YAML
-# budget, it drops ``_CONVERT_YAML_BUDGET_S`` and this one (to 0.6 s).
-_JOB_YAML_BUDGET_S = 1.1
-# Windows only, for the same job (#115): after #112 moved YAML to the
-# pure-Python emitter, the Windows runner measured 1084 ms against the 1.1 s
-# above, too close for the strict nightly. Isaac set 1.6 s, about 1.5x that
-# measurement. When #115 lands, Isaac resets it from that PR's measurement.
-_JOB_YAML_WINDOWS_BUDGET_S = 1.6
+# The 0.5 s Convert budget at 192 KB plus about 0.05 s of masking (192 KB at
+# 0.2 s per MB), rounded up.
+_JOB_YAML_BUDGET_S = 0.6
+# Windows only, for the same job: the Windows runner is slower. Isaac's
+# rule from #108, the worst Windows CI median plus 25%: 567 ms x 1.25,
+# rounded up.
+_JOB_YAML_WINDOWS_BUDGET_S = 0.8
 _JOB_YAML_BUDGET_HERE_S = (
     _JOB_YAML_WINDOWS_BUDGET_S if sys.platform == "win32" else _JOB_YAML_BUDGET_S
 )
@@ -893,6 +971,8 @@ def test_a_masked_format_job_is_within_budget(
     assert size <= len(text.encode("utf-8")) < size * 11 // 10
     if render is one_line:
         assert "\n" not in text
+    if source == "yaml":
+        assert_c_emitter_writes(_masked_value(text))
     job = _job(text, source)
     with _WarmWorker() as worker:
         success = worker.run(job)
@@ -914,6 +994,18 @@ def test_masking_1_mb_with_the_default_keys_is_within_budget(perf_budget) -> Non
         lambda: mask_tree(value),
         fixture="1 MB JSON, default keys, mask_tree only",
     )
+
+
+def _masked_value(text: str) -> object:
+    """The value the masked YAML job writes for ``text``."""
+    return mask_tree(format_module.load_document(text, "yaml")).value
+
+
+def test_the_masked_yaml_perf_fixture_stays_on_the_c_emitter() -> None:
+    if not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    text, _rows = text_of_size(YAML_BUSY_BYTES, yaml_text)
+    assert_c_emitter_writes(_masked_value(text))
 
 
 # Helpers

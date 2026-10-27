@@ -1,8 +1,9 @@
 """Code editor with a line-number gutter and syntax colors."""
 
 from bisect import bisect_left
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import Final, Literal
 
 from PySide6.QtCore import (
     QEvent,
@@ -52,9 +53,16 @@ from galley.app.file_drop import dropped_paths
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
 from galley.app.limits import JSON_BUSY_BYTES
-from galley.app.theme import error_color, find_match_colors, problem_line_tint
+from galley.app.theme import (
+    change_color,
+    change_tint,
+    error_color,
+    find_match_colors,
+    problem_line_tint,
+)
 from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
+from galley.core.diff import ChangeKind, Span
 from galley.core.folds import FoldKind, FoldRange, fold_ranges, line_count
 
 GUTTER_MIN_WIDTH = 50
@@ -76,6 +84,25 @@ _FOLD_RESCAN_MS = 300
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
 FOLD_MARKERS = "fold"
+
+# Compare's two panes.
+CompareSide = Literal["left", "right"]
+# Bill's glyphs (#65): "−" is U+2212 and "⇄" is U+21C4.
+CHANGE_GLYPHS: Final[dict[ChangeKind, str]] = {
+    "added": "+",
+    "removed": "\u2212",
+    "changed": "~",
+    "moved": "\u21c4",
+}
+# Which panes band each kind's lines (Bill, #65 slice 3b). Removed text is
+# only on the left and Added text only on the right. A Moved change bands
+# both ends.
+CHANGE_TINT_SIDES: Final[dict[ChangeKind, frozenset[CompareSide]]] = {
+    "added": frozenset({"right"}),
+    "removed": frozenset({"left"}),
+    "changed": frozenset({"left", "right"}),
+    "moved": frozenset({"left", "right"}),
+}
 
 # Spaces per indent level. The Tab key types spaces up to the next multiple
 # of this (#91 item 6). 2 matches the fixed "2 spaces" indent while the
@@ -201,6 +228,32 @@ class ProblemMarker(LineMarker):
 
 
 PROBLEM_MARKER = ProblemMarker()
+
+
+@dataclass(frozen=True)
+class ChangeMarker(LineMarker):
+    """Diff marker: the kind's glyph in its ink, so a change is not color alone.
+
+    It goes on the first line of a change's span. ``name`` is the change
+    row's spoken name, such as "Changed, orders 2 total, 40 to 45", and is
+    the tooltip and accessible text. The band over the whole span comes
+    from ``CodeEditor.set_change_tints``, not from the marker. A problem
+    marker on the same line is drawn instead (see ``GUTTER_LANES``).
+    """
+
+    kind: ChangeKind = "changed"
+    name: str = ""
+
+    @property
+    def glyph(self) -> str:
+        return CHANGE_GLYPHS[self.kind]
+
+    def paint(self, painter: QPainter, rect: QRect, palette: QPalette) -> None:
+        painter.setPen(change_color(self.kind, palette))
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), self.glyph)
+
+    def description(self) -> str:
+        return self.name
 
 
 @dataclass(frozen=True)
@@ -351,6 +404,14 @@ class CodeEditor(QPlainTextEdit):
         self.setDocument(document)
         self._adopting_palette = False
         self._markers: dict[str, dict[int, LineMarker]] = {}
+        # Change spans as (first line, last line, kind), 1-based, for this
+        # pane's side, and the band per line that markers and spans give,
+        # kept until either changes or the palette does.
+        self._change_spans: tuple[tuple[int, int, ChangeKind], ...] = ()
+        self._tints: dict[int, QColor] | None = None
+        # The glyph each spanned line shows when it has no marker of its own,
+        # built with the bands.
+        self._span_glyphs: dict[int, ChangeMarker] = {}
         self._overlay: QWidget | None = None
         # Folding state. Lines here are 0-based, as in FoldRange.
         self._folding = False
@@ -366,6 +427,8 @@ class CodeEditor(QPlainTextEdit):
         self._find_starts: list[int] = []
         self._find_ends: list[int] = []
         self._find_current = -1
+        # The matches given extra selections, outlined after each paint.
+        self._outlined: list[tuple[int, int]] = []
         # True while setExtraSelections runs. See _highlight_current_line.
         self._setting_selections = False
         self._selections_again = QTimer(self)
@@ -398,9 +461,12 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._reveal_cursor_line)
         self.document().contentsChange.connect(self._drop_folds_on_edit)
-        self.verticalScrollBar().valueChanged.connect(self._refresh_find_matches)
-        self.horizontalScrollBar().valueChanged.connect(self._refresh_find_matches)
-        self.folds_changed.connect(self._refresh_find_matches)
+        # Line bands and find matches exist only for what is on screen, so
+        # they are picked again whenever other text comes into view.
+        self.verticalScrollBar().valueChanged.connect(self._refresh_shown_selections)
+        self.horizontalScrollBar().valueChanged.connect(self._refresh_shown_selections)
+        self.document().contentsChanged.connect(self._refresh_shown_selections)
+        self.folds_changed.connect(self._refresh_shown_selections)
         self._update_line_number_width(0)
         self._highlight_current_line()
         # setDocumentMargin records an edit. Drop it so Undo starts disabled.
@@ -444,6 +510,7 @@ class CodeEditor(QPlainTextEdit):
 
     def _repaint_line_colors(self) -> None:
         """Rebuild the line bands, which keep the colors they were made with."""
+        self._tints = None
         self._highlight_current_line()
         self._line_numbers.update()
 
@@ -523,6 +590,9 @@ class CodeEditor(QPlainTextEdit):
             self._markers[kind] = dict(markers)
         else:
             self._markers.pop(kind, None)
+        if kind != FOLD_MARKERS:
+            # Fold arrows never tint a line, and a fold toggle resets them.
+            self._tints = None
         self._line_numbers.setAccessibleDescription(
             "\n".join(
                 marker.description()
@@ -558,6 +628,48 @@ class CodeEditor(QPlainTextEdit):
             {lineno: ProblemMarker(message) for lineno, message in messages.items()},
         )
 
+    def change_tints(self) -> tuple[tuple[int, int, ChangeKind], ...]:
+        """The change spans this pane bands, as ``set_change_tints`` kept them."""
+        return self._change_spans
+
+    def set_change_tints(
+        self, side: CompareSide, tints: Iterable[tuple[int, int, ChangeKind]]
+    ) -> None:
+        """Band each ``(first line, last line, kind)`` span, 1-based.
+
+        ``side`` is the pane this editor is. A kind that does not show on
+        that side is left out (``CHANGE_TINT_SIDES``). Where spans overlap,
+        the later one wins, so a change inside another keeps its own band.
+        A problem marker's band wins over any change. Nothing replaces the
+        spans but another call; an empty one clears them.
+        """
+        self._change_spans = tuple(
+            (first, last, kind)
+            for first, last, kind in tints
+            if side in CHANGE_TINT_SIDES[kind]
+        )
+        self._tints = None
+        self._highlight_current_line()
+        self._line_numbers.update()
+
+    def select_span(self, span: Span) -> None:
+        """Select ``span`` with the native selection and scroll to its start.
+
+        Lines and columns are 1-based characters with an exclusive end, as
+        in ``Span``. The selection paints in the Highlight role. Folds that
+        hide either end open first. Focus stays where it is.
+        """
+        self.ensure_line_visible(span.line)
+        self.ensure_line_visible(span.end_line)
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(self._position_of(span.end_line, span.end_column))
+        cursor.setPosition(
+            self._position_of(span.line, span.column),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self.setTextCursor(cursor)
+        self.centerCursor()
+
     def marker_at(self, pos: QPoint) -> MarkerHit | None:
         """The marker drawn at gutter point ``pos``, or None.
 
@@ -575,10 +687,23 @@ class CodeEditor(QPlainTextEdit):
                     continue
                 for kind in lane.kinds:
                     marker = self._markers.get(kind, {}).get(lineno)
+                    if marker is None and kind == CHANGE_MARKERS:
+                        marker = self._span_glyph_markers().get(lineno)
                     if marker is not None:
                         rect = QRect(left, top, width, line_height)
                         return MarkerHit(kind, lineno, marker, rect)
         return None
+
+    def _lane_markers(self, lane: GutterLane) -> list[Mapping[int, LineMarker]]:
+        """The markers ``lane`` draws, in priority order. A change span's
+        glyphs come right after the change markers."""
+        ranked: list[Mapping[int, LineMarker]] = []
+        for kind in lane.kinds:
+            if kind in self._markers:
+                ranked.append(self._markers[kind])
+            if kind == CHANGE_MARKERS and self._change_spans:
+                ranked.append(self._span_glyph_markers())
+        return ranked
 
     def syntax_mode(self) -> SyntaxMode:
         """``"JSON"`` or ``"YAML"``, the colors the editor applies."""
@@ -686,15 +811,23 @@ class CodeEditor(QPlainTextEdit):
         Folded blocks that hide the line open first.
         """
         self.ensure_line_visible(lineno)
+        cursor = self.textCursor()
+        cursor.setPosition(self._position_of(lineno, colno))
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        self.setFocus()
+
+    def _position_of(self, lineno: int, colno: int) -> int:
+        """Document position of 1-based ``lineno`` and character ``colno``.
+
+        Column 0 or 1 is the line start. A line past the end is the last
+        line, and a column past the end of its line is the line's end.
+        """
         block = self.document().findBlockByNumber(max(lineno, 1) - 1)
         if not block.isValid():
             block = self.document().lastBlock()
         offset = _utf16_length(block.text()[: max(colno - 1, 0)])
-        cursor = self.textCursor()
-        cursor.setPosition(block.position() + min(offset, block.length() - 1))
-        self.setTextCursor(cursor)
-        self.centerCursor()
-        self.setFocus()
+        return block.position() + min(offset, block.length() - 1)
 
     def cursor_place(self) -> tuple[int, int]:
         """The cursor's 1-based line and column, in characters."""
@@ -920,9 +1053,11 @@ class CodeEditor(QPlainTextEdit):
         self._fold_summaries = []
         if not self._folded:
             super().paintEvent(event)
-            return
-        self._paint_shown_blocks(event.rect())
-        self._paint_fold_summaries(event.rect())
+        else:
+            self._paint_shown_blocks(event.rect())
+            self._paint_fold_summaries(event.rect())
+        if self._outlined:
+            self._paint_find_outlines()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -986,7 +1121,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(rect.left(), rect.top(), self.line_number_area_width(), rect.height())
         )
         self.place_overlay()
-        self._refresh_find_matches()
+        self._refresh_shown_selections()
 
     def paint_line_numbers(self, event: QPaintEvent) -> None:
         painter = QPainter(self._line_numbers)
@@ -999,10 +1134,7 @@ class CodeEditor(QPlainTextEdit):
         line_height = self.fontMetrics().height()
         # Kinds in priority order, so the first marker found on a line wins.
         lanes = [
-            (
-                layout.lanes[lane.name],
-                [self._markers[kind] for kind in lane.kinds if kind in self._markers],
-            )
+            (layout.lanes[lane.name], self._lane_markers(lane))
             for lane in GUTTER_LANES
             if lane.kinds and layout.lanes[lane.name][1]
         ]
@@ -1108,6 +1240,51 @@ class CodeEditor(QPlainTextEdit):
             if offset.y() > viewport_height:
                 break
             block = self._next_shown_block(block)
+        painter.end()
+
+    def _paint_find_outlines(self) -> None:
+        """A 1 px accent outline around each find match on screen.
+
+        The match fills are under 3:1 against Base and the line tints; the
+        outline clears 3:1 against all of them. It traces the fill on each
+        row of the match, so a match that wraps gets a box per row.
+        """
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(find_match_colors(self.palette()).edge, 0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        document = self.document()
+        offset = self.contentOffset()
+        for start, end in self._outlined:
+            block = document.findBlock(start)
+            while block.isValid() and block.position() < end:
+                layout = block.layout()
+                if block.isVisible() and layout.lineCount():
+                    rect = self.blockBoundingGeometry(block).translated(offset)
+                    origin = rect.topLeft() + layout.position()
+                    first = max(start, block.position()) - block.position()
+                    last = min(end, block.position() + block.length() - 1)
+                    last -= block.position()
+                    # Only the rows the match is on, for one very long line.
+                    row = layout.lineForTextPosition(first).lineNumber()
+                    while 0 <= row < layout.lineCount():
+                        line = layout.lineAt(row)
+                        if line.textStart() >= last:
+                            break
+                        row += 1
+                        left = max(first, line.textStart())
+                        right = min(last, line.textStart() + line.textLength())
+                        # Right-to-left text puts the end left of the start.
+                        x1, x2 = sorted(
+                            (line.cursorToX(left)[0], line.cursorToX(right)[0])
+                        )
+                        if x2 <= x1:
+                            # Nothing to trace, such as a lone combining mark.
+                            continue
+                        # Aligned outward, as Qt fills the match.
+                        box = QRectF(x1, line.y(), x2 - x1, line.height())
+                        box = box.translated(origin).toAlignedRect()
+                        painter.drawRect(box.adjusted(0, 0, -1, -1))
+                block = block.next()
         painter.end()
 
     def _paint_fold_summaries(self, area: QRect) -> None:
@@ -1416,6 +1593,13 @@ class CodeEditor(QPlainTextEdit):
             self._update_line_number_width(0)
 
     def _highlight_current_line(self) -> None:
+        """The current-line band, then line bands and find matches on screen.
+
+        A band per tinted line in the whole document would make every caret
+        move cost as much as the number of tinted lines: Qt walks all extra
+        selections for each block it paints. Lines off screen get theirs
+        when they scroll into view.
+        """
         if self._setting_selections:
             # setExtraSelections lays blocks out, which can move the scroll
             # bar and call back here. Qt is still walking the old selections
@@ -1429,11 +1613,13 @@ class CodeEditor(QPlainTextEdit):
         if current not in tints:
             band = self.palette().color(QPalette.ColorRole.Midlight)
             selections.append(self._line_band(self.textCursor(), band))
-        document = self.document()
-        for lineno in sorted(tints):
-            block = document.findBlockByNumber(lineno - 1)
-            if block.isValid():
-                selections.append(self._line_band(QTextCursor(block), tints[lineno]))
+        if tints:
+            document = self.document()
+            for lineno, _top in self._visible_line_tops(self.viewport().rect()):
+                tint = tints.get(lineno)
+                if tint is not None:
+                    block = document.findBlockByNumber(lineno - 1)
+                    selections.append(self._block_band(block, tint))
         selections.extend(self._find_selections())
         self._setting_selections = True
         try:
@@ -1441,9 +1627,10 @@ class CodeEditor(QPlainTextEdit):
         finally:
             self._setting_selections = False
 
-    def _refresh_find_matches(self) -> None:
-        """Pick the matches to draw again after a scroll, resize, or fold."""
-        if self._find_starts:
+    def _refresh_shown_selections(self) -> None:
+        """Pick the bands and matches to draw again after a scroll, resize,
+        fold, or edit."""
+        if self._find_starts or self._line_tints():
             self._highlight_current_line()
 
     def _find_selections(self) -> list[QTextEdit.ExtraSelection]:
@@ -1455,6 +1642,7 @@ class CodeEditor(QPlainTextEdit):
         is skipped, and the first and last blocks are cut at the viewport's
         corners, so one very long line gives only the part on screen.
         """
+        self._outlined = []
         if not self._find_starts:
             return []
         colors = find_match_colors(self.palette())
@@ -1489,6 +1677,10 @@ class CodeEditor(QPlainTextEdit):
         if current is not None:
             # Last, so it paints over a neighbor.
             selections.append(current)
+        self._outlined = [
+            (selection.cursor.selectionStart(), selection.cursor.selectionEnd())
+            for selection in selections
+        ]
         return selections
 
     def _shown_spans(self) -> list[tuple[int, int]]:
@@ -1526,8 +1718,42 @@ class CodeEditor(QPlainTextEdit):
         return [(first, last) for first, last in spans if first <= last]
 
     def _line_tints(self) -> dict[int, QColor]:
-        """Band color per 1-based line, from the highest-priority marker."""
+        """Band color per 1-based line, built once per marker or span change.
+
+        Change spans come first, the later span winning, and then each
+        marker kind in priority order, so a problem's band wins over a
+        change's.
+        """
+        if self._tints is None:
+            self._tints = self._build_line_tints()
+        return self._tints
+
+    def _span_glyph_markers(self) -> dict[int, ChangeMarker]:
+        """The change glyph for every line a change span covers.
+
+        A tint alone would tell a change's kind by color on every line
+        but the first, where its ``ChangeMarker`` is. Each spanned line
+        repeats the kind's glyph, named as the span's own marker, so the
+        kind reads by shape on every line. A line's own marker still wins.
+        """
+        self._line_tints()
+        return self._span_glyphs
+
+    def _build_line_tints(self) -> dict[int, QColor]:
         palette = self.palette()
+        named = self._markers.get(CHANGE_MARKERS, {})
+        spans: dict[int, QColor] = {}
+        glyphs: dict[int, ChangeMarker] = {}
+        for first, last, kind in self._change_spans:
+            color = change_tint(kind, palette)
+            own = named.get(first)
+            glyph = ChangeMarker(
+                kind, own.name if isinstance(own, ChangeMarker) else ""
+            )
+            for lineno in range(max(first, 1), last + 1):
+                spans[lineno] = color
+                glyphs[lineno] = glyph
+        self._span_glyphs = glyphs
         tints: dict[int, QColor] = {}
         for kind in MARKER_KINDS:
             if kind == FOLD_MARKERS:
@@ -1539,7 +1765,8 @@ class CodeEditor(QPlainTextEdit):
                 tint = marker.line_tint(palette)
                 if tint is not None:
                     tints[lineno] = tint
-        return tints
+        spans.update(tints)
+        return spans
 
     def _marker_lane_widths(self) -> dict[str, int]:
         """Width of each marker lane: reserved, in use, or 0."""
@@ -1559,6 +1786,25 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = cursor
         selection.cursor.clearSelection()
+        return selection
+
+    def _block_band(self, block: QTextBlock, color: QColor) -> QTextEdit.ExtraSelection:
+        """A band over every row of ``block``, wrapped or not.
+
+        A full-width selection with no extent bands only the row its cursor
+        is on, so a soft-wrapped line would be tinted on its first row only.
+        Selecting the whole block, line break included, bands each row it
+        spans out to the right edge. Qt skips the next block, where the
+        selection ends at position 0.
+        """
+        selection = self._line_band(QTextCursor(block), color)
+        cursor = selection.cursor
+        cursor.setPosition(
+            block.position() + block.length() - 1, QTextCursor.MoveMode.KeepAnchor
+        )
+        cursor.movePosition(
+            QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor
+        )
         return selection
 
 
@@ -1668,7 +1914,7 @@ def _gate_level(chars: int) -> int:
 
 
 def _first_marker(
-    ranked: list[dict[int, LineMarker]], lineno: int
+    ranked: Sequence[Mapping[int, LineMarker]], lineno: int
 ) -> LineMarker | None:
     for markers in ranked:
         marker = markers.get(lineno)

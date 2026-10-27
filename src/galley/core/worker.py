@@ -525,11 +525,14 @@ def _failure_place(exc: Exception, problems: tuple[Problem, ...]) -> str:
     """`` at line L, column C`` for a masked failure, or ``""`` with no line.
 
     A YAML error takes its first problem, the row the app shows for it,
-    because that row can sit on an earlier line than the parser's mark.
-    YAML problems have no column (``colno`` 0), so then the line is named
-    alone. Without a problem, YAML takes its 0-based ``problem_mark``. JSON
-    decode, repeated-key and input errors take their own ``lineno`` and
-    ``colno``. Anything else takes its first problem.
+    because that row can sit on an earlier line than the parser's mark. A
+    problem with no column (``colno`` 0, as when it moved to an earlier
+    line) gives the line alone. Without a problem, YAML takes its 0-based
+    ``problem_mark``. ``context_mark`` is never used: it marks where the
+    enclosing construct began, not the error, and the problems don't use it
+    either. JSON decode, repeated-key and input errors take their own
+    ``lineno`` and ``colno``. Anything else, such as a ``ReaderError`` (a
+    ``YAMLError`` with no mark), takes its first problem.
     """
     line: int | None = None
     column: int | None = None
