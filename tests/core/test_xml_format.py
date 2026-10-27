@@ -159,7 +159,10 @@ def test_validate_checks_without_output() -> None:
     [
         ("<r>\n  <a>\n  </b>\n</r>", "xml_mismatched_tag", 3, 3, "a"),
         ("<r>\n  <a>\n", "xml_unclosed", 2, 3, "a"),
-        ("<r>\n  a & b\n</r>", "xml_bad_token", 2, 6, ""),
+        ("<r>\n  a & b\n</r>", "xml_bad_token", 2, 5, ""),
+        # The column is the stray & or < itself, not the byte after it.
+        ("<r>\n  <name>A & B</name>\n</r>", "xml_bad_token", 2, 11, ""),
+        ("<r>\n  a < b\n</r>", "xml_bad_token", 2, 5, ""),
         ('<r a="<"/>', "xml_bad_token", 1, 7, ""),
         ("<r>\n  <a</r>", "xml_bad_token", 2, 5, ""),
         ('<r>\n  <a x="1" y="2" x="3"/>\n</r>', "xml_duplicate_attribute", 2, 18, "x"),
@@ -205,7 +208,7 @@ def test_error_codes_with_their_lines(
     ("third_line", "code", "column"),
     [
         ("  </b>", "xml_mismatched_tag", 3),
-        ("  a & b", "xml_bad_token", 6),
+        ("  a & b", "xml_bad_token", 5),
         ("  <c>&nbsp;</c>", "xml_undefined_entity", 6),
     ],
 )
