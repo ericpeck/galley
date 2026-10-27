@@ -8,7 +8,15 @@ from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, QRect
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QTextCursor
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QPainter,
+    QPalette,
+    QTextCursor,
+)
 from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit
 
 from galley.app.appearance import set_application_palette
@@ -291,14 +299,30 @@ def test_every_line_of_a_change_shows_its_glyph(qtbot, scheme: QPalette) -> None
     assert _lane(editor, 4) == _lane(editor, 2)
     assert _lane(editor, 6) == _lane(editor, 5)
     assert _ink_mask(editor, 4)
-    # Removed and Changed differ by shape, not only by color.
-    assert _ink_mask(editor, 4) != _ink_mask(editor, 6)
+    assert CHANGE_GLYPHS["removed"] != CHANGE_GLYPHS["changed"]
     assert _ink_mask(editor, 7) == set()
     # Each line names its change for the tooltip and screen readers.
     hit = editor.marker_at(_marker_point(editor, 3))
     assert hit is not None and hit.kind == CHANGE_MARKERS
     assert hit.marker.description() == removed.name
     assert editor.marker_at(_marker_point(editor, 7)) is None
+
+
+def test_removed_and_changed_lines_differ_by_shape(qtbot) -> None:
+    editor = _editor(qtbot)
+    metrics = QFontMetrics(editor.font())
+    missing = [
+        glyph
+        for glyph in (CHANGE_GLYPHS["removed"], CHANGE_GLYPHS["changed"])
+        if not metrics.inFontUcs4(ord(glyph))
+    ]
+    if missing:
+        # Windows CI's offscreen font draws every character as one box.
+        pytest.skip(f"the code font has no {' '.join(missing)} glyph here")
+    editor.set_change_tints("left", [(2, 4, "removed"), (5, 6, "changed")])
+
+    # Off the first line, where only the repeated glyph tells the kind.
+    assert _ink_mask(editor, 4) != _ink_mask(editor, 6)
 
 
 def test_a_line_inside_a_change_keeps_its_problem_marker(
@@ -767,12 +791,19 @@ def test_every_row_of_a_wrapped_line_is_tinted(
     assert layout.lineCount() > 2
     top = editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
     image = editor.viewport().grab().toImage()
+    # Bands are painted for what's on screen, and a wider font can wrap the
+    # line past the bottom (Windows CI), so only the rows shown count.
+    checked = 0
     for index in range(layout.lineCount()):
         line = layout.lineAt(index)
         y = int(top + layout.position().y() + line.y()) + 1
+        if not 0 <= y < image.height():
+            continue
+        checked += 1
         assert tint.rgb() in {
             image.pixelColor(x, y).rgb() for x in range(image.width())
         }, f"row {index + 1} of {layout.lineCount()} is not tinted"
+    assert checked >= 3
 
 
 def test_the_bands_follow_a_fold(qtbot) -> None:
