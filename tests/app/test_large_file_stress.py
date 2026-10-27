@@ -454,12 +454,18 @@ def _html_nested(target: int) -> str:
     return items[:middle] + chain + items[middle:]
 
 
+# Both HTML shapes, both platforms. Isaac's rule from #108, the worst CI
+# median plus 25%, rounded up to the next 0.1 s: 429.5 ms on perf (Windows)
+# at d031816 x 1.25 = 536.9 ms. It was 0.5 s, Isaac's #63 budget.
+_HTML_STRESS_BUDGET_S = 0.6
+
+
 @pytest.mark.perf
 @pytest.mark.parametrize("shape", ["large", "deeply nested"])
 def test_large_and_deeply_nested_html_format_within_budget(
     perf_budget, shape: str
 ) -> None:
-    """Format 1 MB of HTML in 0.5 s (Isaac's #63 budget).
+    """Format 1 MB of HTML within ``_HTML_STRESS_BUDGET_S``.
 
     The deeply nested fixture reaches ``MAX_DEPTH``, so the explicit stacks
     in ``html_format`` are what is timed.
@@ -467,7 +473,9 @@ def test_large_and_deeply_nested_html_format_within_budget(
     size = _BYTES["1 MB"]
     text = _html_items(size) if shape == "large" else _html_nested(size)
     assert size <= _utf8_len(text) < size * 11 // 10
-    perf_budget.within(0.5, lambda: format_html(text), fixture=f"1 MB {shape} HTML")
+    perf_budget.within(
+        _HTML_STRESS_BUDGET_S, lambda: format_html(text), fixture=f"1 MB {shape} HTML"
+    )
 
 
 def _record(

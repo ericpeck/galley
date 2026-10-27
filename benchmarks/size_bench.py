@@ -185,7 +185,8 @@ DEFAULT_PYTHON_SIZES_MB = (0.1, 0.25, 0.5, 1, 2, 5)
 # ladder. 1 MB is Isaac's 0.5 s budget point.
 DEFAULT_XML_SIZES_MB = DEFAULT_JSON_SIZES_MB
 # HTML Format tokenizes in pure Python, about 0.25 s per MB on macOS arm64,
-# so 1 MB is Isaac's 0.5 s budget point and 20 MB is past the 2 s band.
+# so 1 MB is the 0.7 s macOS budget point (1.0 s on Windows) and 20 MB is
+# past the 2 s band.
 DEFAULT_HTML_SIZES_MB = (0.25, 0.5, 1, 2, 5, 10, 20)
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
