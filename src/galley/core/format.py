@@ -1,4 +1,4 @@
-"""JSON, YAML, and XML formatting.
+"""JSON, YAML, XML, and HTML formatting.
 
 Invalid UTF-8, documents nested past ``MAX_DEPTH``, and JSON lone-surrogate
 escapes raise ``InputError``. So does a YAML surrogate escape on its way to
@@ -7,11 +7,12 @@ JSON output. A JSON object that repeats a key raises
 errors keep the line and column from the parser. Banner sentences are not
 built here.
 
-Every YAML dump uses the pure-Python emitter, so the text is the same with
-or without ``ruamel.yaml.clib``. A ``!!set`` is written with its string
-members first, in code-point order, then its other members grouped by type
-name and ordered by ``repr``, so the order does not follow
-``PYTHONHASHSEED``.
+Every YAML dump writes the bytes ruamel's pure-Python emitter writes, with
+or without ``ruamel.yaml.clib``. With it, the C emitter does the writing,
+with scalar styles set so its output matches (see ``_dump_yaml``). A
+``!!set`` is written with its string members first, in code-point order,
+then its other members grouped by type name and ordered by ``repr``, so the
+order does not follow ``PYTHONHASHSEED``.
 
 ``sort_keys=True`` reorders the output only; the input text is never
 changed. See :func:`sort_mapping_keys` for the ordering rule.
@@ -22,8 +23,12 @@ document that has an alias loads with the pure-Python parser, because the
 C parser gives each alias of a scalar its own string object.
 
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
+HTML is formatted by ``galley.core.html_format`` the same way, and is
+written only as HTML; its table row comes with the picker item in #63
+slice 5.
 """
 
+import datetime
 import functools
 import json
 import os
@@ -33,6 +38,7 @@ from collections.abc import Callable
 from io import StringIO
 
 from ruamel.yaml import YAML
+from ruamel.yaml.emitter import Emitter as PureEmitter
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.events import (
     AliasEvent,
@@ -43,9 +49,10 @@ from ruamel.yaml.events import (
     SequenceStartEvent,
 )
 from ruamel.yaml.main import CEmitter, CParser
-from ruamel.yaml.nodes import MappingNode, ScalarNode
+from ruamel.yaml.nodes import MappingNode, ScalarNode, SequenceNode
 from ruamel.yaml.reader import ReaderError
 from ruamel.yaml.representer import SafeRepresenter
+from ruamel.yaml.tag import Tag
 from ruamel.yaml.tokens import (
     AliasToken,
     BlockEndToken,
@@ -71,6 +78,7 @@ from galley.core.errors import (
     utf8_input_error,
 )
 from galley.core.formats import format_named, targets_for
+from galley.core.html_format import format_html
 from galley.core.xml_format import format_xml
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
@@ -122,6 +130,10 @@ _LONE_SURROGATE_RE = re.compile(
     "|"
     "[\ud800-\udfff]"
 )
+# Every escape that regex matches starts with "\ud" or "\uD". Text with
+# neither and no raw surrogate has no hit, and those checks run in C far
+# faster than the regex's lookarounds (#129).
+_RAW_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 _CHARACTER_WALK = object()
 
 # Rewrites a loaded value before it is written. See the module docstring.
@@ -227,7 +239,8 @@ def format_yaml(
     """Return ``text`` parsed as YAML and dumped as a block document.
 
     When ``ruamel.yaml.clib`` is installed, the C loader runs first. The
-    text shown to the user is written by the pure-Python emitter. A tab
+    text shown to the user is written by ``_dump_yaml``, byte for byte what
+    the pure-Python emitter writes. A tab
     anywhere in the text, a ``%YAML`` or ``%TAG`` directive, a non-core
     tag, a bare ``!`` that is not followed on the same line by a
     non-empty scalar or a flow collection, or a block scalar whose first
@@ -270,7 +283,7 @@ def format_yaml(
     # Outside the retry, so a masking failure is not retried in pure Python.
     loaded = _apply(prepare, loaded)
     try:
-        return _dump_parsed(_ordered(loaded, sort_keys), pure=True)
+        return _dump_yaml(_ordered(loaded, sort_keys))
     except Exception:
         return retry(text)
 
@@ -339,8 +352,40 @@ def _set_member_key(member: object) -> tuple[int, str, str]:
     return (1, type(member).__name__, repr(member))
 
 
+@functools.cache
+def _shared_tag(tag: str) -> Tag:
+    """One ``Tag`` per tag string, so its URI is decoded once per process.
+
+    ruamel builds a new ``Tag`` for every node, and each one decodes its
+    URI the first time an emitter reads it. Only the parser changes a
+    ``Tag``, so dumps can share them.
+    """
+    return Tag(suffix=tag)
+
+
 class _BlockRepresenter(SafeRepresenter):
     """Safe representer that writes ``!!set`` members in a fixed order."""
+
+    def represent_scalar(
+        self, tag: object, value: object, style: object = None, anchor: object = None
+    ) -> ScalarNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_scalar(tag, value, style=style, anchor=anchor)
+
+    def represent_sequence(
+        self, tag: object, sequence: object, flow_style: object = None
+    ) -> SequenceNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_sequence(tag, sequence, flow_style=flow_style)
+
+    def represent_mapping(
+        self, tag: object, mapping: object, flow_style: object = None
+    ) -> MappingNode:
+        if isinstance(tag, str):
+            tag = _shared_tag(tag)
+        return super().represent_mapping(tag, mapping, flow_style=flow_style)
 
     def represent_set(self, data: set[object]) -> MappingNode:
         members = dict.fromkeys(sorted(data, key=_set_member_key))
@@ -350,13 +395,127 @@ class _BlockRepresenter(SafeRepresenter):
 _BlockRepresenter.add_representer(set, _BlockRepresenter.represent_set)
 
 
-def _block_dumper(yaml: YAML) -> YAML:
+def _block_dumper(yaml: YAML, representer: type = _BlockRepresenter) -> YAML:
     """Set the block style, key order, set order and width every dump shares."""
-    yaml.Representer = _BlockRepresenter
+    yaml.Representer = representer
     yaml.default_flow_style = False
     yaml.representer.sort_base_mapping_type_on_output = False
     yaml.width = YAML_DUMP_WIDTH
     return yaml
+
+
+# Characters the ruamel.yaml.clib emitter writes differently from the pure
+# emitter: it escapes everything past U+FFFF ("\U0001F600"), it breaks a
+# quoted line at NEL, U+2028 and U+2029, and it can't encode a lone
+# surrogate. None of these has a setting.
+_C_EMITTER_MISMATCH_RE = re.compile(
+    "[\U00010000-\U0010ffff\x85\u2028\u2029\ud800-\udfff]"
+)
+_CORE_TAG_PREFIX = "tag:yaml.org,2002:"
+_SIMPLE_KEY_LIMIT = 128
+_STR_TAG = _CORE_TAG_PREFIX + "str"
+# The pure emitter's own scalar analysis, used only to read ``allow_block_plain``.
+_PURE_ANALYZER = PureEmitter(None, allow_unicode=True)
+_PURE_ANALYZER.use_version = None
+
+
+class _NeedsPureEmitter(Exception):
+    """The C emitter can't write this value the way the pure emitter does."""
+
+
+class _CBlockRepresenter(_BlockRepresenter):
+    """Sets scalar styles so the C emitter writes the pure emitter's bytes.
+
+    Both emitters pick plain when they can. After that, the pure emitter
+    prefers double quotes for a string with ``'`` or a newline, and the C
+    emitter takes single quotes, so those strings ask for ``"``. A simple
+    key is shorter than 128 characters counting its ``!!str`` tag in pure
+    Python, and at most 128 UTF-8 bytes in C; a key the two disagree on, a
+    key with ``\\r`` (a line break only in C), binary data and the
+    characters in ``_C_EMITTER_MISMATCH_RE`` raise ``_NeedsPureEmitter``.
+    """
+
+    def represent_str(self, data: str) -> ScalarNode:
+        if _C_EMITTER_MISMATCH_RE.search(data):
+            raise _NeedsPureEmitter
+        style = None
+        if "\n" in data or (
+            "'" in data and not _PURE_ANALYZER.analyze_scalar(data).allow_block_plain
+        ):
+            style = '"'
+        return self.represent_scalar(_STR_TAG, data, style=style)
+
+    def represent_binary(self, data: bytes) -> ScalarNode:
+        raise _NeedsPureEmitter
+
+    def represent_key(self, data: object) -> object:
+        node = self.represent_data(data)
+        if isinstance(node, ScalarNode) and _keys_disagree(data, node):
+            raise _NeedsPureEmitter
+        return node
+
+
+# The pure emitter counts a key's ``!!`` tag toward the simple-key limit.
+# The tag comes from the key's type, which costs less than ``node.tag``.
+# ``bool`` is listed before ``int``, its base class.
+_KEY_TAG_LENGTHS = (
+    (str, len("!!str")),
+    (bool, len("!!bool")),
+    (int, len("!!int")),
+    (float, len("!!float")),
+    (type(None), len("!!null")),
+    (datetime.date, len("!!timestamp")),
+)
+
+
+def _keys_disagree(data: object, node: ScalarNode) -> bool:
+    """Return True when only one emitter would write ``node`` as a simple key."""
+    text = node.value
+    if "\r" in text:
+        return True
+    tag_length = _key_tag_length(data, node)
+    pure_length = len(text) + tag_length
+    c_length = len(text.encode("utf-8", "surrogatepass"))
+    return (pure_length < _SIMPLE_KEY_LIMIT) != (c_length <= _SIMPLE_KEY_LIMIT)
+
+
+def _key_tag_length(data: object, node: ScalarNode) -> int:
+    for kind, length in _KEY_TAG_LENGTHS:
+        if isinstance(data, kind):
+            return length
+    tag = node.tag or ""
+    return len(tag) - len(_CORE_TAG_PREFIX) + len("!!")
+
+
+_CBlockRepresenter.add_representer(str, _CBlockRepresenter.represent_str)
+_CBlockRepresenter.add_representer(bytes, _CBlockRepresenter.represent_binary)
+
+
+def _dump_yaml(value: object) -> str:
+    """Dump ``value`` as the block YAML Galley shows.
+
+    With ``ruamel.yaml.clib`` the C emitter writes it, set up by
+    ``_CBlockRepresenter`` to give the pure emitter's bytes. A value it
+    can't match that way is written by the pure emitter. The output is
+    never edited after either emitter writes it.
+    """
+    if _clib_available():
+        try:
+            return _c_emitter_dump(value)
+        except _NeedsPureEmitter:
+            pass
+    return _dump_parsed(value, pure=True)
+
+
+def _c_emitter_dump(value: object) -> str:
+    """Dump ``value`` with the C emitter, or raise ``_NeedsPureEmitter``.
+
+    It raises before anything is written. Needs ``ruamel.yaml.clib``.
+    """
+    yaml = _block_dumper(_safe_yaml(pure=False), _CBlockRepresenter)
+    buffer = StringIO()
+    yaml.dump(value, buffer)
+    return buffer.getvalue()
 
 
 def _has_tab(text: str | bytes) -> bool:
@@ -689,6 +848,12 @@ def _json_fast_value(source: str) -> object:
 
 def _has_lone_surrogate(text: str) -> bool:
     """Return True if ``text`` has a surrogate the character walk rejects."""
+    if (
+        "\\ud" not in text
+        and "\\uD" not in text
+        and _RAW_SURROGATE_RE.search(text) is None
+    ):
+        return False
     start = 0
     while True:
         match = _LONE_SURROGATE_RE.search(text, start)
@@ -1087,12 +1252,13 @@ def format_document(
     """Format ``text`` from ``source`` into ``target``.
 
     ``source`` and ``target`` are format names (case-insensitive). Same-format
-    calls go through ``format_json``, ``format_yaml``, and ``format_xml``, so
-    located ``InputError`` checks stay exactly those functions. A pair
-    ``targets_for`` does not list raises ``ValueError``. ``sort_keys`` orders
-    JSON and YAML output keys with :func:`sort_mapping_keys`; XML ignores it.
-    ``prepare`` rewrites the loaded JSON or YAML value before it is written.
-    XML does not load to a value, so it raises ``ValueError`` with ``prepare``.
+    calls go through ``format_json``, ``format_yaml``, ``format_xml``, and
+    ``format_html``, so located ``InputError`` checks stay exactly those
+    functions. A pair ``targets_for`` does not list raises ``ValueError``.
+    ``sort_keys`` orders JSON and YAML output keys with
+    :func:`sort_mapping_keys`; XML and HTML ignore it. ``prepare`` rewrites
+    the loaded JSON or YAML value before it is written. XML and HTML do not
+    load to a value, so they raise ``ValueError`` with ``prepare``.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
@@ -1102,6 +1268,8 @@ def format_document(
         _value_format(source)
     if source_kind == "xml":
         return format_xml(text)
+    if source_kind == "html":
+        return format_html(text)
     if source_kind == "json" and target_kind == "json":
         return format_json(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "yaml" and target_kind == "yaml":
@@ -1135,15 +1303,15 @@ def load_document(text: str | bytes, source: str) -> object:
 def dump_value(value: object, target: str) -> str:
     """Serialize ``value`` the way ``format_document`` writes ``target``.
 
-    JSON uses the JSON dumper. YAML uses the pure-Python safe emitter that
-    ``format_yaml`` shows, and falls back to the explicit-stack block dump
+    JSON uses the JSON dumper. YAML is written by ``_dump_yaml``, as
+    ``format_yaml`` writes it, and falls back to the explicit-stack block dump
     for a value too deep for ruamel. A format that does not load to a value
     raises ``ValueError``.
     """
     if _value_format(target) == "json":
         return _dump_json(value)
     try:
-        return _dump_parsed(value, pure=True)
+        return _dump_yaml(value)
     except RecursionError:
         return _dump_block(value)
 
@@ -1243,13 +1411,9 @@ def _not_json_value(value: object) -> object:
 
 
 def _dump_yaml_value(value: object) -> str:
-    """Dump ``value`` with the pure-Python emitter ``format_yaml`` shows.
-
-    The C emitter escapes characters past U+FFFF (``"\\U0001F600"``) and
-    quotes some strings differently, so it is not used.
-    """
+    """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
-        dumped = _dump_parsed(value, pure=True)
+        dumped = _dump_yaml(value)
     except RecursionError:
         return _dump_block(value)
     if dumped and not dumped.endswith("\n"):

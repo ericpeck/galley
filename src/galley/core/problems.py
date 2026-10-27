@@ -6,6 +6,7 @@ JSON document reports every syntax error and repeated key: after
 ``json.loads`` fails, ``scan_json`` reads on past each error. Other YAML
 failures still stop at the first problem, so those stay a single code.
 Expat stops at the first XML error, so XML reports one ``xml_*`` code.
+HTML reports every tag that does not nest at once, as ``html_*`` codes.
 """
 
 import json
@@ -19,7 +20,11 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.tokens import KeyToken, ScalarToken
 
-from galley.core.errors import JSONDuplicateKeyError, XMLSyntaxError
+from galley.core.errors import (
+    HTMLStructureError,
+    JSONDuplicateKeyError,
+    XMLSyntaxError,
+)
 from galley.core.json_recover import Scan, Slip, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
@@ -55,6 +60,8 @@ ProblemCode = Literal[
     "xml_after_root",
     "xml_no_root",
     "xml_other",
+    "html_unexpected_close",
+    "html_unclosed",
 ]
 
 
@@ -64,7 +71,8 @@ class Problem:
 
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
-    For XML it is the element, attribute, entity, or prefix named.
+    For XML it is the element, attribute, entity, or prefix named. For
+    HTML it is the tag name as written.
     ``found`` is what stood where ``token`` was expected: for
     ``xml_mismatched_tag`` the name in the end tag, while ``token`` is the
     element still open. ``colno`` is 0 when the parser gives no column.
@@ -96,7 +104,8 @@ def collect_problems(
     YAML leading tabs are collected up front and the parser is not asked
     to continue. Repeated JSON keys give one problem per key and line. A
     JSON syntax error gives every problem ``scan_json`` finds, in text
-    order. Any other failure contributes at most one problem.
+    order, and HTML gives every tag that does not nest. Any other failure
+    contributes at most one problem.
     """
     if source.strip().casefold() == "yaml":
         tabs = tuple(Problem("yaml_tab", line) for line in leading_tab_lines(text))
@@ -108,6 +117,8 @@ def collect_problems(
         return duplicate_key_problems(exc)
     if isinstance(exc, json.JSONDecodeError):
         return json_problems(exc, text)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)
     found = classify_failure(exc, text)
     if found is None:
         return ()
@@ -140,6 +151,14 @@ def duplicate_key_problems(exc: JSONDuplicateKeyError) -> tuple[Problem, ...]:
                 "json_duplicate", duplicate.lineno, duplicate.key, duplicate.colno
             )
     return tuple(found.values())
+
+
+def html_problems(exc: HTMLStructureError) -> tuple[Problem, ...]:
+    """One problem per tag that does not nest, in text order."""
+    return tuple(
+        Problem(found.code, found.lineno, found.token, found.colno)
+        for found in exc.problems
+    )
 
 
 def json_problems(exc: json.JSONDecodeError, text: str) -> tuple[Problem, ...]:
@@ -193,6 +212,8 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
         return _classify_yaml(exc, text)
     if isinstance(exc, XMLSyntaxError):
         return Problem(exc.code, exc.lineno, exc.token, exc.colno, found=exc.found)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)[0]
     return None
 
 
@@ -316,23 +337,33 @@ def _word_start(char: str) -> bool:
 
 
 def _classify_yaml(exc: YAMLError, text: str) -> Problem:
+    """One problem at the parser's ``problem_mark``, with its 1-based column.
+
+    The column is 0 when the error has no mark (a ``ReaderError``), and when
+    the problem moves back to the previous non-blank line: the parser's
+    column belongs to the line it stopped on, so none is made up for the
+    earlier one.
+    """
     problem = getattr(exc, "problem", None)
     detail = problem.casefold() if isinstance(problem, str) else ""
     line, column = _yaml_location(exc)
+    colno = column if _yaml_marked(exc) else 0
     lines = _Lines(text)
     if "cannot start any token" in detail and (
         "tab" in detail or _indent_has_tab(lines.line_text(line))
     ):
-        return Problem("yaml_tab", line)
+        return Problem("yaml_tab", line, "", colno)
     if "duplicate key" in detail:
-        return Problem("yaml_duplicate", line, _yaml_key_at(text, line, column))
+        key = _yaml_key_at(text, line, column)
+        return Problem("yaml_duplicate", line, key, colno)
     if _expects_delimiter(detail) and _at_line_start(lines, line, column):
         line = _previous_nonblank(lines, line)
+        colno = 0
     if "unexpected end of stream" in detail:
-        return Problem("yaml_incomplete", line)
+        return Problem("yaml_incomplete", line, "", colno)
     if "expected ':'" in detail:
-        return Problem("yaml_colon", line)
-    return Problem("yaml_other", line)
+        return Problem("yaml_colon", line, "", colno)
+    return Problem("yaml_other", line, "", colno)
 
 
 def _yaml_key_at(text: str, line: int, column: int) -> str:
@@ -376,6 +407,14 @@ def _expects_delimiter(detail: str) -> bool:
         or "expected ']'" in detail
         or "expected '}'" in detail
         or "did not find expected" in detail
+    )
+
+
+def _yaml_marked(exc: YAMLError) -> bool:
+    """True when the error has a ``problem_mark`` with a line and column."""
+    mark = getattr(exc, "problem_mark", None)
+    return isinstance(getattr(mark, "line", None), int) and isinstance(
+        getattr(mark, "column", None), int
     )
 
 

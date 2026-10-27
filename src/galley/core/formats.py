@@ -40,7 +40,14 @@ def _looks_like_yaml(line: str) -> bool:
 
 
 def _looks_like_xml(line: str) -> bool:
-    return line.startswith("<")
+    """A leading ``<``, except the start of an HTML document (Bill, #63).
+
+    ``<!doctype html`` and ``<html``, in any case, are HTML's. They stay
+    unsettled until the HTML row arrives in slice 5.
+    """
+    if not line.startswith("<"):
+        return False
+    return not line.casefold().startswith(("<!doctype html", "<html"))
 
 
 # ``.jsonc`` and ``.json5`` are not mapped, since the JSON parser rejects

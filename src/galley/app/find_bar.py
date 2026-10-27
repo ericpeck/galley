@@ -52,7 +52,7 @@ NEXT_MATCH = "Next match"
 CLOSE_FIND_BAR = "Close find bar"
 MATCH_CASE = "Match case"
 KEYS_ONLY = "Keys only"
-KEYS_ONLY_TIP = "Match object keys only, not values"
+KEYS_ONLY_TIP = "Match only object keys, not values"
 # Keys only stays visible but greyed out for a format with no keys (#63).
 KEYS_ONLY_NOT_APPLICABLE = "Keys only doesn't apply to {label}"
 _FIELD_MIN_WIDTH = 120

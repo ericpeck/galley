@@ -6,7 +6,14 @@ import sys
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QTextCursor
+from PySide6.QtGui import (
+    QAccessible,
+    QAction,
+    QColor,
+    QKeySequence,
+    QPalette,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -408,6 +415,17 @@ def test_only_output_offers_keys_only(qtbot) -> None:
     assert isinstance(keys_only, QCheckBox)
     assert keys_only.text() == "Keys only"
     assert keys_only.accessibleName() == "Keys only"
+
+
+def test_keys_only_tooltip_and_description(qtbot) -> None:
+    """#122: Bill's wording. Screen readers hear the tooltip as the description."""
+    window = _window(qtbot)
+    keys_only = _bar(window, "output").keys_only
+    assert keys_only.toolTip() == "Match only object keys, not values"
+    assert keys_only.accessibleDescription() in ("", keys_only.toolTip())
+    face = QAccessible.queryAccessibleInterface(keys_only)
+    assert face is not None
+    assert face.text(QAccessible.Text.Description) == keys_only.toolTip()
 
 
 def test_keys_only_skips_values_with_the_same_text_in_json(qtbot) -> None:
