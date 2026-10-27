@@ -9,6 +9,7 @@ first.
 import os
 import pickle
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -469,6 +470,23 @@ def test_inline_content_is_copied_as_written(inline: str) -> None:
 # --- Performance ------------------------------------------------------------
 
 
+# Perf budgets (``uv run pytest -m perf``), set by the team on #136 with
+# Isaac's rule from #108: the worst CI median at head 1b2fdfd plus 25%,
+# rounded up to the next 0.1 s. Making HTML Format faster is #138.
+#
+# Format 1 MB of HTML on macOS: 444 ms on the perf job x 1.25 = 555 ms.
+_ONE_MB_BUDGET_S = 0.6
+# Windows only, for the same test: 779 ms on perf (Windows) x 1.25 = 974 ms.
+_ONE_MB_WINDOWS_BUDGET_S = 1.0
+_ONE_MB_BUDGET_HERE_S = (
+    _ONE_MB_WINDOWS_BUDGET_S if sys.platform == "win32" else _ONE_MB_BUDGET_S
+)
+# The 100k stray end tag guard, both platforms: its worst CI median was
+# 914 ms on perf (Windows) x 1.25 = 1143 ms. It guards against quadratic
+# search, which would be about 100 times slower.
+_STRAY_TAGS_BUDGET_S = 1.2
+
+
 def _one_megabyte_html() -> str:
     """About 1 MB of generated, fake catalog HTML."""
     parts = [
@@ -496,7 +514,7 @@ def test_format_one_megabyte_of_html(perf_budget) -> None:
     text = _one_megabyte_html()
     assert 1_000_000 <= len(text.encode("utf-8")) < 1_100_000
     perf_budget.within(
-        0.5,
+        _ONE_MB_BUDGET_HERE_S,
         lambda: format_html(text),
         fixture="~1 MB generated catalog HTML, 5k articles",
     )
@@ -510,8 +528,9 @@ def test_a_hundred_thousand_problems_are_found_in_linear_time(perf_budget) -> No
         with pytest.raises(HTMLStructureError):
             format_html(text)
 
-    # A guard against quadratic search, not one of Isaac's budgets.
-    perf_budget.within(1.0, find, fixture="100k stray end tags, one per line")
+    perf_budget.within(
+        _STRAY_TAGS_BUDGET_S, find, fixture="100k stray end tags, one per line"
+    )
 
 
 @pytest.mark.perf
