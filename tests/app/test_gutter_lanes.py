@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPalette, QTextCursor
+from PySide6.QtWidgets import QTextEdit
 
 from galley.app.editor import (
     CHANGE_MARKERS,
@@ -43,11 +44,18 @@ class _Tinted(_Box):
         return palette.color(QPalette.ColorRole.Highlight)
 
 
+def _band_line(editor: CodeEditor, selection: QTextEdit.ExtraSelection) -> int:
+    """The 1-based line a band covers. A tint band runs on to the start of
+    the next line, so its line is where the selection starts."""
+    start = selection.cursor.selectionStart()
+    return editor.document().findBlock(start).blockNumber() + 1
+
+
 def _tints(editor: CodeEditor) -> dict[int, int]:
     """Line bands other than the current-line band."""
     midlight = editor.palette().color(QPalette.ColorRole.Midlight)
     return {
-        selection.cursor.blockNumber() + 1: selection.format.background().color().rgb()
+        _band_line(editor, selection): selection.format.background().color().rgb()
         for selection in editor.extraSelections()
         if selection.format.background().color() != midlight
     }
