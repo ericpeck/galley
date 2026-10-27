@@ -333,23 +333,33 @@ def _word_start(char: str) -> bool:
 
 
 def _classify_yaml(exc: YAMLError, text: str) -> Problem:
+    """One problem at the parser's ``problem_mark``, with its 1-based column.
+
+    The column is 0 when the error has no mark (a ``ReaderError``), and when
+    the problem moves back to the previous non-blank line: the parser's
+    column belongs to the line it stopped on, so none is made up for the
+    earlier one.
+    """
     problem = getattr(exc, "problem", None)
     detail = problem.casefold() if isinstance(problem, str) else ""
     line, column = _yaml_location(exc)
+    colno = column if _yaml_marked(exc) else 0
     lines = _Lines(text)
     if "cannot start any token" in detail and (
         "tab" in detail or _indent_has_tab(lines.line_text(line))
     ):
-        return Problem("yaml_tab", line)
+        return Problem("yaml_tab", line, "", colno)
     if "duplicate key" in detail:
-        return Problem("yaml_duplicate", line, _yaml_key_at(text, line, column))
+        key = _yaml_key_at(text, line, column)
+        return Problem("yaml_duplicate", line, key, colno)
     if _expects_delimiter(detail) and _at_line_start(lines, line, column):
         line = _previous_nonblank(lines, line)
+        colno = 0
     if "unexpected end of stream" in detail:
-        return Problem("yaml_incomplete", line)
+        return Problem("yaml_incomplete", line, "", colno)
     if "expected ':'" in detail:
-        return Problem("yaml_colon", line)
-    return Problem("yaml_other", line)
+        return Problem("yaml_colon", line, "", colno)
+    return Problem("yaml_other", line, "", colno)
 
 
 def _yaml_key_at(text: str, line: int, column: int) -> str:
@@ -393,6 +403,14 @@ def _expects_delimiter(detail: str) -> bool:
         or "expected ']'" in detail
         or "expected '}'" in detail
         or "did not find expected" in detail
+    )
+
+
+def _yaml_marked(exc: YAMLError) -> bool:
+    """True when the error has a ``problem_mark`` with a line and column."""
+    mark = getattr(exc, "problem_mark", None)
+    return isinstance(getattr(mark, "line", None), int) and isinstance(
+        getattr(mark, "column", None), int
     )
 
 

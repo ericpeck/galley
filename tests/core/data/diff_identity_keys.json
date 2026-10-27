@@ -1,0 +1,14 @@
+{
+ "hand-built json": {
+  "diff": "ac3699eb24435308e3f068b5",
+  "report": "ccf8319f535701752d2ef7f2"
+ },
+ "hand-built, no spans": {
+  "diff": "6d7beb562a94d497a21b7782",
+  "report": "663b0f0036cc9989badee33b"
+ },
+ "yaml": {
+  "diff": "b59233b02ab0c117c6e5bcd3",
+  "report": "1ab011f475fa9fd9eaae1fd3"
+ }
+}

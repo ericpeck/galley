@@ -807,7 +807,8 @@ def classify_observed_path(state: dict[str, bool]) -> str:
     with no C error. That covers a second parse after a C load and a C scan
     that decides the document needs a full pure-Python parse. C rejection is
     a C error followed by pure Python. C parse plus pure writer is a C load
-    and a pure dump with no pure load. C only is a C load and C dump with no
+    and a pure dump with no pure load, which includes a value the C emitter
+    hands to the pure emitter (#115). C only is a C load and C dump with no
     pure call.
     """
     c_load_ok = state.get("c_load_ok", False)
@@ -913,6 +914,10 @@ def _format_yaml_shipped_clib_phases(text: str) -> PhaseResult:
         started = time.perf_counter()
         try:
             rendered = real_dump(self, data, stream, transform=transform)
+        except core_format._NeedsPureEmitter:
+            # The C emitter stopped before writing a value it can't match,
+            # and the pure emitter writes it next. That is not a C error.
+            raise
         except Exception:
             if _engine_is_c(self.Emitter, CEmitter):
                 state["c_dump_error"] = True

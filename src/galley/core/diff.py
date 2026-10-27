@@ -73,6 +73,7 @@ from galley.core.format import (
     _scan_yaml,
     _value_format,
 )
+from galley.core.gc_pause import pause_gc
 from galley.core.keypath import render_path
 
 ChangeKind = Literal["added", "removed", "changed", "moved"]
@@ -105,7 +106,7 @@ _COLLECTION_TAGS = frozenset(
 
 # One JSON token: a whole string, one structural character, or a bare
 # number or literal. The unrolled string body stays linear.
-_JSON_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{},:]|[^\s\][{},:"]+')
+_JSON_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]|[^\s\][{},:"]+')
 
 _MISSING = object()
 _EXPECT_KEY = object()
@@ -200,6 +201,7 @@ class Doc:
     spans: dict[Path, Span] = field(default_factory=dict)
 
 
+@pause_gc
 def load_document(text: str | bytes, source: str) -> Doc:
     """Parse ``text`` as ``source`` (``json`` or ``yaml``) and locate its values.
 
@@ -232,6 +234,7 @@ def diff(left: Doc, right: Doc) -> DiffResult:
     return diff_with_pairs(left, right)[0]
 
 
+@pause_gc
 def diff_with_pairs(left: Doc, right: Doc) -> tuple[DiffResult, dict[Path, Path]]:
     """Return ``diff(left, right)`` and the containers the walk compared.
 
@@ -258,62 +261,77 @@ def _load_json(text: str | bytes) -> Doc:
     return Doc(value, "json", _json_spans(source))
 
 
+@pause_gc
 def _json_spans(text: str) -> dict[Path, Span]:
     """Map each path in valid JSON ``text`` to its span, in one token pass.
 
-    Each frame is ``[path, is_object, key_or_index, line, column, key_line,
-    key_column]``. Valid JSON strings hold no raw newline, so a token ends
-    on the line it starts.
+    The tokens are strings, brackets, and bare numbers or literals. Commas
+    and colons are skipped, because valid JSON already fixes where they go:
+    in an object, strings alternate between key and value, and in an array
+    each value takes the next index as it starts. The open container lives
+    in local variables, and its parent's are saved on a stack, which is
+    faster in CPython than indexing a frame list per token (#129). Valid
+    JSON strings hold no raw newline, so a token ends on the line it starts.
+    A scalar's span is added when it is read and a container's when it
+    closes, the same order as before.
     """
     spans: dict[Path, Span] = {}
-    frames: list[list[object]] = []
+    saved: list[tuple[Path | None, bool, object, tuple[int, int], tuple[int, int]]]
+    saved = []
+    push = saved.append
+    pop = saved.pop
+    # The open container: its path, kind, key or next index, start, and the
+    # start of the key whose value comes next.
+    path: Path | None = None
+    is_object = False
+    slot: object = None
+    start = (0, 0)
+    key_start = (0, 0)
     line = 1
     line_start = 0
     cursor = 0
+    count = text.count
+    rfind = text.rfind
     for match in _JSON_TOKEN.finditer(text):
         position = match.start()
-        breaks = text.count("\n", cursor, position)
+        breaks = count("\n", cursor, position)
         if breaks:
             line += breaks
-            line_start = text.rfind("\n", cursor, position) + 1
+            line_start = rfind("\n", cursor, position) + 1
         cursor = position
         column = position - line_start + 1
-        token = match.group()
-        first = token[0]
-        if first == ":":
+        first = text[position]
+        if first == "}" or first == "]":
+            spans[path] = Span(start[0], start[1], line, column + 1)
+            path, is_object, slot, start, key_start = pop()
+            if is_object:
+                slot = _EXPECT_KEY
             continue
-        if first == ",":
-            frame = frames[-1]
-            if frame[1]:
-                frame[2] = _EXPECT_KEY
-            else:
-                frame[2] += 1
-            continue
-        if first in "}]":
-            frame = frames.pop()
-            spans[frame[0]] = Span(frame[3], frame[4], line, column + 1)
-            continue
-        if frames:
-            frame = frames[-1]
-            if frame[1]:
-                if frame[2] is _EXPECT_KEY:
-                    frame[2] = _json_key(token)
-                    frame[5] = line
-                    frame[6] = column
-                    continue
-                start_line, start_column = frame[5], frame[6]
-            else:
-                start_line, start_column = line, column
-            path = (*frame[0], frame[2])
+        if path is None:
+            child: Path = ()
+            child_start = (line, column)
+        elif is_object:
+            if slot is _EXPECT_KEY:
+                slot = _json_key(match.group())
+                key_start = (line, column)
+                continue
+            child = (*path, slot)
+            child_start = key_start
         else:
-            path = ()
-            start_line, start_column = line, column
-        if first == "{":
-            frames.append([path, True, _EXPECT_KEY, start_line, start_column, 0, 0])
-        elif first == "[":
-            frames.append([path, False, 0, start_line, start_column, 0, 0])
+            child = (*path, slot)
+            slot += 1
+            child_start = (line, column)
+        if first == "{" or first == "[":
+            push((path, is_object, slot, start, key_start))
+            path = child
+            is_object = first == "{"
+            slot = _EXPECT_KEY if is_object else 0
+            start = child_start
         else:
-            spans[path] = Span(start_line, start_column, line, column + len(token))
+            end_column = column + match.end() - position
+            spans[child] = Span(child_start[0], child_start[1], line, end_column)
+            if is_object:
+                slot = _EXPECT_KEY
     return spans
 
 
@@ -702,6 +720,12 @@ def _walk(state: _DiffState) -> list[list[object]]:
             continue
         if left_path is None or right_path is None:
             raise TypeError("a compared pair needs both paths")
+        kind = type(old)
+        if (kind is str or kind is int) and type(new) is kind:
+            # The common scalar pair, as ``_same_scalar`` would decide it.
+            if old != new:
+                found.append(["changed", left_path, right_path, old, new])
+            continue
         if isinstance(old, dict) and isinstance(new, dict):
             _check_depth(left_path, left)
             state.matched.add((left_path, right_path))
@@ -734,20 +758,24 @@ def _object_jobs(
     """Order members: left keys by left start position, and right-only keys
     after the left key that precedes them on the right."""
     added_after: dict[object, list[object]] = {}
-    anchor: object = _FIRST
-    for key in new:
-        if key in old:
-            anchor = key
-        else:
-            added_after.setdefault(anchor, []).append(key)
+    if old.keys() != new.keys():
+        anchor: object = _FIRST
+        for key in new:
+            if key in old:
+                anchor = key
+            else:
+                added_after.setdefault(anchor, []).append(key)
     jobs: list[_Job] = []
     for key in added_after.get(_FIRST, ()):
         jobs.append((_MISSING, new[key], None, (*right_path, _segment(key))))
-    for key in _keys_by_position(old, left_path, spans):
-        segment = _segment(key)
+    keys = list(old)
+    segments = [key if type(key) is str else _segment(key) for key in keys]
+    paths = [(*left_path, segment) for segment in segments]
+    for index in _position_order(paths, spans):
+        key = keys[index]
         other = new.get(key, _MISSING)
-        target = None if other is _MISSING else (*right_path, segment)
-        jobs.append((old[key], other, (*left_path, segment), target))
+        target = None if other is _MISSING else (*right_path, segments[index])
+        jobs.append((old[key], other, paths[index], target))
         if added_after:
             for extra in added_after.get(key, ()):
                 jobs.append(
@@ -756,28 +784,26 @@ def _object_jobs(
     return jobs
 
 
-def _keys_by_position(
-    mapping: dict[object, object], path: Path, spans: dict[Path, Span]
-) -> list[object]:
-    """Return the keys sorted by span start, or in dict order without spans.
+def _position_order(paths: list[Path], spans: dict[Path, Span]) -> range | list[int]:
+    """Return member indexes sorted by span start, or in dict order without spans.
 
     Dict order is already document order except where a YAML merge key or a
     duplicate JSON key places a key elsewhere. Keys inside an alias have no
-    spans and keep dict order. The sort is stable.
+    spans and keep dict order. The sort is stable. ``paths`` are the
+    members' left paths, built once for this and for the jobs (#129).
     """
-    keys = list(mapping)
-    if not spans or len(keys) < 2:
-        return keys
+    in_order = range(len(paths))
+    if not spans or len(paths) < 2:
+        return in_order
     starts: list[tuple[int, int]] = []
-    for key in keys:
-        span = spans.get((*path, _segment(key)))
+    for path in paths:
+        span = spans.get(path)
         if span is None:
-            return keys
+            return in_order
         starts.append((span.line, span.column))
     if all(starts[index] <= starts[index + 1] for index in range(len(starts) - 1)):
-        return keys
-    order = sorted(range(len(keys)), key=starts.__getitem__)
-    return [keys[index] for index in order]
+        return in_order
+    return sorted(in_order, key=starts.__getitem__)
 
 
 def _array_jobs(
@@ -830,14 +856,8 @@ def _align(
     hasher = state.hasher
     left_spans = state.left.spans
     right_spans = state.right.spans
-    left_hashes = [
-        hasher.value(item, (*left_path, index), left_spans)
-        for index, item in enumerate(old)
-    ]
-    right_hashes = [
-        hasher.value(item, (*right_path, index), right_spans)
-        for index, item in enumerate(new)
-    ]
+    left_hashes = hasher.items(old, left_path, left_spans)
+    right_hashes = hasher.items(new, right_path, right_spans)
     size = min(len(old), len(new))
     head = 0
     while head < size and left_hashes[head] == right_hashes[head]:
@@ -907,8 +927,15 @@ def _opcodes(
     The matcher breaks ties toward the start of its first sequence, so it
     always runs with the smaller hash list first and the opcodes are
     mirrored when that list is the right side. Swapping the documents then
-    gives the mirror image of the same alignment.
+    gives the mirror image of the same alignment. With an empty side the
+    opcodes are known, so no matcher is built (#129).
     """
+    if not left_hashes or not right_hashes:
+        if left_hashes:
+            return [("delete", 0, len(left_hashes), 0, 0)]
+        if right_hashes:
+            return [("insert", 0, 0, 0, len(right_hashes))]
+        return []
     if left_hashes <= right_hashes:
         matcher = SequenceMatcher(None, left_hashes, right_hashes, autojunk=False)
         return matcher.get_opcodes()
@@ -996,10 +1023,13 @@ class _Hasher:
     each run. ``1`` and ``1.0`` hash alike; ``True`` and ``1`` do not; NaN
     hashes like NaN. Container hashes are memoized by identity for the
     length of one ``diff`` call, so nested arrays hash each node once.
+    String hashes are memoized by value, so repeated keys and values cost
+    one dict lookup.
     """
 
     def __init__(self) -> None:
         self.texts: dict[str, int] = {}
+        self.strings: dict[str, int] = {}
         self.containers: dict[int, int] = {}
 
     def text(self, value: str) -> int:
@@ -1022,61 +1052,102 @@ class _Hasher:
                 return hash((_NAN_TAG,))
             return hash((_NUMBER_TAG, value))
         if isinstance(value, str):
-            return hash((_STRING_TAG, self.text(value)))
+            digest = self.strings.get(value)
+            if digest is None:
+                digest = hash((_STRING_TAG, self.text(value)))
+                self.strings[value] = digest
+            return digest
         return hash((_OTHER_TAG, self.text(repr(value))))
 
+    def items(
+        self, items: list[object], path: Path, spans: dict[Path, Span]
+    ) -> list[int]:
+        """Hash each item of the array at ``path``, the same as ``value``."""
+        strings = self.strings
+        memo = self.containers
+        hashes: list[int] = []
+        append = hashes.append
+        for index, item in enumerate(items):
+            kind = type(item)
+            if kind is str:
+                digest = strings.get(item)
+                if digest is None:
+                    digest = self.scalar(item)
+            elif kind is int:
+                digest = hash((_NUMBER_TAG, item))
+            elif kind is dict or kind is list:
+                digest = memo.get(id(item))
+                if digest is None:
+                    digest = self.value(item, (*path, index), spans)
+            else:
+                digest = self.value(item, (*path, index), spans)
+            append(digest)
+        return hashes
+
     def value(self, value: object, path: Path, spans: dict[Path, Span]) -> int:
-        """Hash ``value`` at ``path``, post-order on an explicit stack."""
+        """Hash ``value`` at ``path``, post-order on an explicit stack.
+
+        A container is hashed in one pass over its children when they are
+        all scalars or already memoized. Otherwise it goes back on the stack
+        under the children it still needs, and is hashed when it comes off
+        again. Scalar children are hashed in place.
+        """
         if not isinstance(value, (dict, list)):
             return self.scalar(value)
         memo = self.containers
         cached = memo.get(id(value))
         if cached is not None:
             return cached
-        hashes: list[int] = []
-        stack: list[tuple[object, bool, int]] = [(value, False, len(path) + 1)]
+        strings = self.strings
+        texts = self.texts
+        scalar = self.scalar
+        stack: list[tuple[object, int]] = [(value, len(path) + 1)]
+        pop = stack.pop
+        push = stack.append
         while stack:
-            node, done, depth = stack.pop()
-            if isinstance(node, dict):
-                if done:
-                    start = len(hashes) - len(node)
-                    children = hashes[start:]
-                    del hashes[start:]
-                    keys = [self.text(_segment(key)) for key in node]
-                    digest = hash((_OBJECT_TAG, frozenset(zip(keys, children))))
-                    memo[id(node)] = digest
-                    hashes.append(digest)
-                    continue
-                cached = memo.get(id(node))
-                if cached is not None:
-                    hashes.append(cached)
-                    continue
-                if depth > MAX_DEPTH:
-                    raise _too_deep(depth, path, spans)
-                stack.append((node, True, depth))
-                stack.extend(
-                    (child, False, depth + 1) for child in reversed(node.values())
-                )
-            elif isinstance(node, list):
-                if done:
-                    start = len(hashes) - len(node)
-                    children = hashes[start:]
-                    del hashes[start:]
-                    digest = hash((_ARRAY_TAG, tuple(children)))
-                    memo[id(node)] = digest
-                    hashes.append(digest)
-                    continue
-                cached = memo.get(id(node))
-                if cached is not None:
-                    hashes.append(cached)
-                    continue
-                if depth > MAX_DEPTH:
-                    raise _too_deep(depth, path, spans)
-                stack.append((node, True, depth))
-                stack.extend((child, False, depth + 1) for child in reversed(node))
+            node, depth = pop()
+            node_id = id(node)
+            if node_id in memo:
+                continue
+            if depth > MAX_DEPTH:
+                raise _too_deep(depth, path, spans)
+            is_object = isinstance(node, dict)
+            hashes: list[int] = []
+            append = hashes.append
+            waiting = False
+            for child in node.values() if is_object else node:
+                kind = type(child)
+                if kind is str:
+                    digest = strings.get(child)
+                    if digest is None:
+                        digest = scalar(child)
+                elif kind is int:
+                    digest = hash((_NUMBER_TAG, child))
+                elif isinstance(child, (dict, list)):
+                    digest = memo.get(id(child))
+                    if digest is None:
+                        if not waiting:
+                            push((node, depth))
+                            waiting = True
+                        push((child, depth + 1))
+                        continue
+                else:
+                    digest = scalar(child)
+                append(digest)
+            if waiting:
+                continue
+            if is_object:
+                keys = []
+                for name in node:
+                    digest = texts.get(name) if type(name) is str else None
+                    keys.append(
+                        digest if digest is not None else self.text(_segment(name))
+                    )
+                digest = hash((_OBJECT_TAG, frozenset(zip(keys, hashes))))
             else:
-                hashes.append(self.scalar(node))
-        return hashes[0]
+                digest = hash((_ARRAY_TAG, tuple(hashes)))
+            memo[node_id] = digest
+        return memo[id(value)]
 
 
 # --- Moved --------------------------------------------------------------
@@ -1100,10 +1171,23 @@ def _pair_moves(found: list[list[object]], state: _DiffState) -> list[list[objec
         added_classes = added_groups.get(digest)
         if added_classes is None:
             continue
+        only = added_classes[0] if len(added_classes) == 1 else None
         for members in removed_classes:
             if len(members) != 1:
                 continue
             source = found[members[0]]
+            if only is not None and len(only) == 1:
+                # One candidate whose parent the walk compared with this one:
+                # it is not a move whether or not the values are equal, so
+                # the deep comparison is skipped (#129).
+                source_at = source[1]
+                target_at = found[only[0]][2]
+                if (
+                    isinstance(source_at, tuple)
+                    and isinstance(target_at, tuple)
+                    and (source_at[:-1], target_at[:-1]) in state.matched
+                ):
+                    continue
             match = next(
                 (
                     other
@@ -1213,8 +1297,17 @@ def _preview(value: object, limit: int | None) -> str:
 
     Containers are read through iterators on an explicit stack, and the
     walk stops once the text is past the limit, so a large value costs
-    only what is shown.
+    only what is shown. A small container of plain JSON scalars renders
+    with ``json.dumps`` instead, which writes the same text in C (#129).
     """
+    if limit is not None and _is_small_and_flat(value, limit):
+        try:
+            text = json.dumps(value, ensure_ascii=False)
+        except ValueError:
+            # An int too long for str(); the walk below says so in words.
+            pass
+        else:
+            return text if len(text) <= limit else text[: limit - 1] + "…"
     pieces: list[str] = []
     size = 0
     frames: list[list[object]] = []
@@ -1262,6 +1355,42 @@ def _preview(value: object, limit: int | None) -> str:
     if limit is not None and size > limit:
         return text[: limit - 1] + "…"
     return text
+
+
+_FLAT_TYPES = frozenset({str, int, float, bool, type(None)})
+_FLAT_ITEMS = 32
+
+
+def _is_small_and_flat(value: object, limit: int) -> bool:
+    """Return True for a dict or list that ``json.dumps`` renders like the walk.
+
+    Every item is an exact str, int, float, bool, or None, every key is an
+    exact str, and no string is longer than ``limit``, so ``json.dumps``
+    writes each piece as ``_scalar_text`` does and does no more work than
+    the preview needs. Tuples, other types, and subclasses take the walk.
+    """
+    kind = type(value)
+    if kind is dict:
+        if len(value) > _FLAT_ITEMS:
+            return False
+        for key, item in value.items():
+            if type(key) is not str or len(key) > limit:
+                return False
+            if type(item) not in _FLAT_TYPES:
+                return False
+            if type(item) is str and len(item) > limit:
+                return False
+        return True
+    if kind is list:
+        if len(value) > _FLAT_ITEMS:
+            return False
+        for item in value:
+            if type(item) not in _FLAT_TYPES:
+                return False
+            if type(item) is str and len(item) > limit:
+                return False
+        return True
+    return False
 
 
 def _scalar_text(value: object, limit: int | None) -> str:

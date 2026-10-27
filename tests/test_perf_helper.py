@@ -139,7 +139,7 @@ def test_a_failed_check_reports_that_message() -> None:
 
 def test_a_budget_checks_its_own_test_name(monkeypatch) -> None:
     monkeypatch.setenv("GALLEY_PERF_MODE", "strict")
-    monkeypatch.setattr(perf, "time_runs", lambda _op, setup=None: _timing(1.0))
+    monkeypatch.setattr(perf, "time_runs", lambda _op, **_kwargs: _timing(1.0))
     with pytest.raises(_FAILED, match="-k test_named"):
         Budget("test_named").within(0.5, lambda: None, fixture="f")
 
@@ -245,3 +245,35 @@ def test_a_marked_test_gets_a_budget_under_its_function_name() -> None:
 def test_an_unmarked_test_cannot_use_the_fixture() -> None:
     with pytest.raises(_FAILED, match=r"test_x\[a\] uses perf_budget; mark it perf"):
         budget_for(_Node(marked=False))
+
+
+def test_runs_sets_how_many_timed_runs_follow_the_warmup() -> None:
+    calls: list[str] = []
+    timing = time_runs(
+        lambda: calls.append("run"), runs=3, clock=_clock([9.0, 1, 2, 3])
+    )
+    assert calls == ["run"] * 4
+    assert timing.samples == (1, 2, 3)
+
+
+def test_the_percentile_is_the_nearest_rank_sample() -> None:
+    timing = Timing(tuple(float(n) for n in range(200, 0, -1)))
+    assert timing.percentile(95) == 190.0
+    assert timing.percentile(100) == 200.0
+    assert timing.percentile(50) == 100.0
+    assert Timing((0.5,)).percentile(95) == 0.5
+
+
+def test_a_percentile_budget_checks_the_tail_not_the_median() -> None:
+    # 189 fast runs and 11 slow ones: the median passes, p95 does not.
+    timing = Timing((0.01,) * 189 + (0.5,) * 11)
+    check(timing, 0.1, test="t", fixture="f", mode="strict")
+    check(timing, 0.5, test="t", fixture="f", mode="strict", percentile=95)
+    with pytest.raises(_FAILED) as failed:
+        check(timing, 0.1, test="t", fixture="f", mode="gate", percentile=95)
+    assert "  p95: 500.0 ms (200 timed runs after 1 warmup)" in str(failed.value)
+
+
+def test_within_passes_runs_and_percentile_through() -> None:
+    timing = Budget("t").within(10.0, lambda: None, fixture="f", runs=7, percentile=95)
+    assert len(timing.samples) == 7

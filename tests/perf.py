@@ -9,6 +9,9 @@ then the median of five timed runs against the test's budget.
   budget, so a shared runner's noise does not fail a pull request.
 - ``strict`` (the nightly run on ``main``): fail past the budget itself.
 
+A budget on a tail (``perf_budget.within(..., runs=200, percentile=95)``)
+checks that percentile of many timed runs instead of the median of five.
+
 A ratio budget (``perf_budget.ratio_within``) compares two operations on
 the same machine instead. Their runs alternate, so both share the runner's
 noise, and the check uses the median of the per-pair ratios. A ratio does
@@ -16,6 +19,7 @@ not depend on how fast the runner is, so neither mode multiplies its limit.
 """
 
 import gc
+import math
 import os
 import statistics
 import time
@@ -42,19 +46,32 @@ class Timing:
     def median(self) -> float:
         return statistics.median(self.samples)
 
+    def percentile(self, percent: float) -> float:
+        """The nearest-rank ``percent`` percentile: the sample at or under
+        which ``percent`` of the samples fall."""
+        ranked = sorted(self.samples)
+        return ranked[max(math.ceil(percent / 100 * len(ranked)), 1) - 1]
+
+    def statistic(self, percentile: float | None) -> tuple[str, float]:
+        """The value a budget checks, and its name: the median, or ``pNN``."""
+        if percentile is None:
+            return "median", self.median
+        return f"p{percentile:g}", self.percentile(percentile)
+
 
 def time_runs(
     operation: Callable[[], object],
     *,
     setup: Callable[[], object] | None = None,
     clock: Callable[[], float] = time.perf_counter,
+    runs: int = TIMED_RUNS,
 ) -> Timing:
-    """Run ``operation`` once to warm up, then time ``TIMED_RUNS`` more runs.
+    """Run ``operation`` once to warm up, then time ``runs`` more runs.
 
     ``setup`` runs before every run, warmup included, outside the clock.
     """
     samples: list[float] = []
-    for run in range(WARMUP_RUNS + TIMED_RUNS):
+    for run in range(WARMUP_RUNS + runs):
         if setup is not None:
             setup()
         elapsed = _timed(operation, clock)
@@ -139,16 +156,23 @@ def rerun_command(test: str, mode: str) -> str:
 
 
 def failure_message(
-    *, test: str, fixture: str, timing: Timing, budget_s: float, mode: str
+    *,
+    test: str,
+    fixture: str,
+    timing: Timing,
+    budget_s: float,
+    mode: str,
+    percentile: float | None = None,
 ) -> str:
     factor = mode_factor(mode)
     samples = ", ".join(_ms(sample) for sample in timing.samples)
+    name, value = timing.statistic(percentile)
     return "\n".join(
         [
             f"perf budget missed: {test}",
             f"  fixture: {fixture}",
-            f"  median: {_ms(timing.median)} "
-            f"({TIMED_RUNS} timed runs after {WARMUP_RUNS} warmup)",
+            f"  {name}: {_ms(value)} "
+            f"({len(timing.samples)} timed runs after {WARMUP_RUNS} warmup)",
             f"  samples: {samples}",
             f"  budget: {_ms(budget_s)}",
             f"  mode: {mode}, factor {factor:g}x, fails above {_ms(budget_s * factor)}",
@@ -212,19 +236,27 @@ def check(
     test: str,
     fixture: str,
     mode: str | None = None,
+    percentile: float | None = None,
 ) -> None:
-    """Fail the test when the median is past the budget for this mode."""
+    """Fail the test when the median, or ``percentile``, is past the budget
+    for this mode."""
     mode = current_mode() if mode is None else mode
     limit = budget_s * mode_factor(mode)
+    name, value = timing.statistic(percentile)
     print(
-        f"perf: {test} [{fixture}] median {_ms(timing.median)}, "
+        f"perf: {test} [{fixture}] {name} {_ms(value)}, "
         f"budget {_ms(budget_s)}, {mode} limit {_ms(limit)}",
         flush=True,
     )
-    if timing.median > limit:
+    if value > limit:
         pytest.fail(
             failure_message(
-                test=test, fixture=fixture, timing=timing, budget_s=budget_s, mode=mode
+                test=test,
+                fixture=fixture,
+                timing=timing,
+                budget_s=budget_s,
+                mode=mode,
+                percentile=percentile,
             ),
             pytrace=False,
         )
@@ -236,8 +268,15 @@ class Budget:
     def __init__(self, test: str) -> None:
         self.test = test
 
-    def check(self, timing: Timing, budget_s: float, *, fixture: str) -> None:
-        check(timing, budget_s, test=self.test, fixture=fixture)
+    def check(
+        self,
+        timing: Timing,
+        budget_s: float,
+        *,
+        fixture: str,
+        percentile: float | None = None,
+    ) -> None:
+        check(timing, budget_s, test=self.test, fixture=fixture, percentile=percentile)
 
     def within(
         self,
@@ -246,10 +285,16 @@ class Budget:
         *,
         fixture: str,
         setup: Callable[[], object] | None = None,
+        runs: int = TIMED_RUNS,
+        percentile: float | None = None,
     ) -> Timing:
-        """Time ``operation`` and fail when its median is over ``budget_s``."""
-        timing = time_runs(operation, setup=setup)
-        self.check(timing, budget_s, fixture=fixture)
+        """Time ``operation`` and fail when its median is over ``budget_s``.
+
+        With ``percentile``, that percentile of the ``runs`` timed runs is
+        checked instead, for a budget on the slow tail of many short runs.
+        """
+        timing = time_runs(operation, setup=setup, runs=runs)
+        self.check(timing, budget_s, fixture=fixture, percentile=percentile)
         return timing
 
     def ratio_within(
