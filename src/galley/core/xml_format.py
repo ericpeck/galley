@@ -238,7 +238,11 @@ def _expat_error(
             return _located("xml_unclosed", data, where, _name_at(data, where + 1))
         return _located("xml_no_root", data, max(index, 0))
     if code in _BAD_TOKEN_ERRORS:
-        return _located("xml_bad_token", data, max(index, 0))
+        index = max(index, 0)
+        # Expat stops on the byte after a stray & or <. Point at the stray.
+        if index > 0 and data[index - 1 : index] in (b"&", b"<"):
+            index -= 1
+        return _located("xml_bad_token", data, index)
     kind = _ERROR_CODES.get(code, "xml_other")
     if index < 0:
         return XMLSyntaxError(kind, lineno=exc.lineno, colno=exc.offset + 1)
