@@ -163,6 +163,17 @@ def test_validate_checks_without_output() -> None:
         # The column is the stray & or < itself, not the byte after it.
         ("<r>\n  <name>A & B</name>\n</r>", "xml_bad_token", 2, 11, ""),
         ("<r>\n  a < b\n</r>", "xml_bad_token", 2, 5, ""),
+        # A stray & that runs into a word: expat reads on as an entity name
+        # and stops later, but the column is still the & (#135 review).
+        ("<r>AT&T rocks</r>", "xml_bad_token", 1, 6, ""),
+        ("<r>R&D</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>a&b</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>x &nbsp y</r>", "xml_bad_token", 1, 6, ""),
+        ("<r>Tom & Jerry</r>", "xml_bad_token", 1, 8, ""),
+        ("<r>a&#;b</r>", "xml_bad_token", 1, 5, ""),
+        # Multibyte text before the & still counts one column per character.
+        ("<r>é&é</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>日本&語</r>", "xml_bad_token", 1, 6, ""),
         ('<r a="<"/>', "xml_bad_token", 1, 7, ""),
         ("<r>\n  <a</r>", "xml_bad_token", 2, 5, ""),
         # The text ends inside a tag: the column is the tag's <.
