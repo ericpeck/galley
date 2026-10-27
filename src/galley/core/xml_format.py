@@ -54,6 +54,9 @@ _ATTRIBUTE = re.compile(rb"""\s([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')""")
 _TAG_SPACE = re.compile(rb"""("[^"]*"|'[^']*')|\s+""")
 _NAME = re.compile(rb"[^\s/>=;&<]+")
 _CONTINUATION = re.compile(rb"[\x80-\xbf]")
+# What expat reads after ``&`` as a name or character reference: anything
+# but whitespace, markup, quotes, or the ``;`` that would end it.
+_REFERENCE_TAIL = re.compile(rb"""[^\s<>&;"']*""")
 
 _BAD_TOKEN_ERRORS = frozenset(
     {
@@ -241,11 +244,7 @@ def _expat_error(
     if code == _UNFINISHED:
         return _located("xml_unfinished_tag", data, max(index, 0))
     if code in _BAD_TOKEN_ERRORS:
-        index = max(index, 0)
-        # Expat stops on the byte after a stray & or <. Point at the stray.
-        if index > 0 and data[index - 1 : index] in (b"&", b"<"):
-            index -= 1
-        return _located("xml_bad_token", data, index)
+        return _located("xml_bad_token", data, _stray_at(data, max(index, 0)))
     kind = _ERROR_CODES.get(code, "xml_other")
     if index < 0:
         return XMLSyntaxError(kind, lineno=exc.lineno, colno=exc.offset + 1)
@@ -265,6 +264,22 @@ def _expat_error(
     elif kind == "xml_unbound_prefix":
         token = _unbound_prefix(data, index, opened)
     return _located(kind, data, index, token, found)
+
+
+def _stray_at(data: bytes, index: int) -> int:
+    """Where a bad-token error really starts, given expat's ``index``.
+
+    Expat stops on the byte after a stray ``<``. After a stray ``&`` it
+    first reads any letters, digits, or ``#`` that follow as an entity or
+    character reference, as in ``AT&T`` or ``&nbsp`` with no ``;``. Either
+    way the ``&`` or ``<`` is what to fix, so the error points at it.
+    """
+    if index > 0 and data[index - 1 : index] == b"<":
+        return index - 1
+    amp = data.rfind(b"&", 0, index)
+    if amp >= 0 and _REFERENCE_TAIL.fullmatch(data, amp + 1, index):
+        return amp
+    return index
 
 
 def _unbound_prefix(data: bytes, index: int, opened: list[int]) -> str:
