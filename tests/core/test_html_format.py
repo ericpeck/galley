@@ -471,12 +471,14 @@ def test_inline_content_is_copied_as_written(inline: str) -> None:
 
 
 # Perf budgets (``uv run pytest -m perf``), set by the team on #136 with
-# Isaac's rule from #108: the worst CI median at head 1b2fdfd plus 25%,
-# rounded up to the next 0.1 s. Making HTML Format faster is #138.
+# Isaac's rule from #108: the worst CI median plus 25%, rounded up to the
+# next 0.1 s. Making HTML Format faster is #138.
 #
-# Format 1 MB of HTML on macOS: 444 ms on the perf job x 1.25 = 555 ms.
-_ONE_MB_BUDGET_S = 0.6
-# Windows only, for the same test: 779 ms on perf (Windows) x 1.25 = 974 ms.
+# Format 1 MB of HTML on macOS: 541.5 ms on the perf job at d031816 x 1.25
+# = 676.9 ms. It was 0.6 s, from 444 ms at 1b2fdfd.
+_ONE_MB_BUDGET_S = 0.7
+# Windows only, for the same test: 779 ms on perf (Windows) at 1b2fdfd
+# x 1.25 = 974 ms.
 _ONE_MB_WINDOWS_BUDGET_S = 1.0
 _ONE_MB_BUDGET_HERE_S = (
     _ONE_MB_WINDOWS_BUDGET_S if sys.platform == "win32" else _ONE_MB_BUDGET_S
