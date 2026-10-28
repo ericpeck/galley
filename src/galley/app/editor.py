@@ -5,6 +5,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
+from PySide6 import QtGui
 from PySide6.QtCore import (
     QEvent,
     QPoint,
@@ -331,7 +332,9 @@ class LineNumberArea(QWidget):
             hit = self._editor.marker_at(event.pos())
             text = hit.marker.description() if hit is not None else ""
             if hit is not None and text:
-                QToolTip.showText(event.globalPos(), text, self, hit.rect)
+                QToolTip.showText(
+                    event.globalPos(), marker_tooltip_text(text), self, hit.rect
+                )
             else:
                 QToolTip.hideText()
                 event.ignore()
@@ -1938,6 +1941,16 @@ def _opens_like_html(document: QTextDocument, index: int) -> bool:
         size += len(text)
         block = block.next()
     return sniff_format("\n".join(parts)) is HTML
+
+
+def marker_tooltip_text(message: str) -> str:
+    """A gutter marker's tooltip: ``message`` as plain text, tags and all.
+
+    A tooltip reads rich text, so a problem that names a tag, such as
+    ``<div> opened on line 3 is never closed.``, is escaped first. Lines
+    stay lines, and spaces still wrap.
+    """
+    return QtGui.Qt.convertFromPlainText(message, Qt.WhiteSpaceMode.WhiteSpaceNormal)
 
 
 def _mode_for(first: str) -> SyntaxMode:

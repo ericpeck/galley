@@ -794,3 +794,39 @@ def test_escape_in_the_list_returns_focus_to_input_and_keeps_the_pane(qtbot) -> 
     assert pane.count() == 1
     assert status.text() == "1 problem"
     assert _action(window, "Show Problems").isChecked()
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        Problem("html_unclosed", 3, "div"),
+        Problem("html_unexpected_close", 4, "b"),
+        # xml_unclosed on main had the same problem (Bill, #148 review).
+        Problem("xml_unclosed", 2, "b"),
+    ],
+)
+def test_a_row_shows_tag_names_as_written(qtbot, problem: Problem) -> None:
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    row_problem = display_problem(problem)
+    pane.set_problems((row_problem,))
+    problems = pane.list_widget()
+    row = problems.itemWidget(problems.item(0))
+    assert row is not None
+    labels = {label.text(): label for label in row.findChildren(QLabel)}
+    message = row_problem.full_message()
+    assert message.startswith(("<", "Line"))
+    assert message in labels
+    assert labels[message].textFormat() == Qt.TextFormat.PlainText
+    header = next(text for text in labels if text.startswith("Error · "))
+    assert labels[header].textFormat() == Qt.TextFormat.PlainText
+
+
+def test_the_div_row_reads_in_full(qtbot) -> None:
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.set_problems((display_problem(Problem("html_unclosed", 3, "div")),))
+    row = pane.list_widget().itemWidget(pane.list_widget().item(0))
+    assert row is not None
+    texts = [label.text() for label in row.findChildren(QLabel)]
+    assert "<div> opened on line 3 is never closed." in texts

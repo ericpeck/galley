@@ -4,10 +4,22 @@ from collections.abc import Callable
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt
-from PySide6.QtGui import QAccessible, QAction, QHelpEvent, QImage, QPalette
+from PySide6.QtGui import (
+    QAccessible,
+    QAction,
+    QHelpEvent,
+    QImage,
+    QPalette,
+    QTextDocumentFragment,
+)
 from PySide6.QtWidgets import QComboBox, QToolTip
 
-from galley.app.editor import GUTTER_MIN_WIDTH, PROBLEM_MARKERS, CodeEditor
+from galley.app.editor import (
+    GUTTER_MIN_WIDTH,
+    PROBLEM_MARKERS,
+    CodeEditor,
+    marker_tooltip_text,
+)
 from galley.app.main import create_main_window
 from galley.app.main_window import MainWindow
 from galley.app.problems_pane import ProblemsPane
@@ -180,7 +192,7 @@ def test_the_marker_tooltip_and_accessible_text_are_its_message(qtbot) -> None:
     )
     help_event = QHelpEvent(QEvent.Type.ToolTip, point, gutter.mapToGlobal(point))
     gutter.event(help_event)
-    qtbot.waitUntil(lambda: QToolTip.text() == _MESSAGE)
+    qtbot.waitUntil(lambda: QToolTip.text() == marker_tooltip_text(_MESSAGE))
 
     assert gutter.accessibleDescription() == _MESSAGE
     accessible = QAccessible.queryAccessibleInterface(gutter)
@@ -279,3 +291,29 @@ def test_clicking_a_marker_selects_its_problems_row(qtbot) -> None:
     qtbot.mouseClick(gutter, Qt.MouseButton.LeftButton, pos=_marker_point(editor, 2))
 
     assert problems.currentRow() == 0
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "<div> opened on line 2 is never closed.",
+        "Line 2 closes </b>, but nothing open matches it.",
+        # xml_unclosed on main had the same problem (Bill, #148 review).
+        "<b> opened on line 2 is never closed.",
+    ],
+)
+def test_a_marker_tooltip_shows_tag_names_as_written(qtbot, message: str) -> None:
+    editor = _editor(qtbot)
+    editor.set_problem_messages({2: message})
+    gutter = editor.line_number_area()
+    point = _marker_point(editor, 2)
+    help_event = QHelpEvent(QEvent.Type.ToolTip, point, gutter.mapToGlobal(point))
+    gutter.event(help_event)
+
+    expected = marker_tooltip_text(message)
+    qtbot.waitUntil(lambda: QToolTip.text() == expected)
+    # The tag is escaped, so the tooltip shows it instead of reading it.
+    assert "&lt;" in expected
+    assert "<div>" not in expected and "</b>" not in expected
+    assert QTextDocumentFragment.fromHtml(expected).toPlainText() == message
+    assert gutter.accessibleDescription() == message
