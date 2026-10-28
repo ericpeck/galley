@@ -160,7 +160,11 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     assert titles == ["Galley", "File", "Edit", "View", "Help"]
 
     assert _labels(_menu(window, "Galley")) == ["Quit"]
-    assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
+    assert _labels(_menu(window, "File")) == [
+        "Open file…",
+        "Open Right Document…",
+        "Open Recent",
+    ]
     assert _labels(_menu(window, "Edit")) == [
         "Undo",
         "Redo",
@@ -200,6 +204,11 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Show Problems",
         "Next Problem",
         "Previous Problem",
+        "|",
+        "Compare",
+        "Next Change",
+        "Previous Change",
+        "Link Scrolling",
         "|",
         "Expand all",
         "Collapse all",

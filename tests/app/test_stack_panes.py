@@ -136,11 +136,16 @@ def test_stack_panes_follows_show_problems(qtbot) -> None:
     window = _show(qtbot)
     labels = _labels(_menu(window, "View"))
     show = labels.index("Show Problems")
-    # Next and Previous Problem (#78), then the fold section (#64), sit
-    # between Show Problems and Stack Panes.
-    assert labels[show + 1 : show + 10] == [
+    # Next and Previous Problem (#78), the Compare section (#65), then the
+    # fold section (#64), sit between Show Problems and Stack Panes.
+    assert labels[show + 1 : show + 15] == [
         "Next Problem",
         "Previous Problem",
+        "|",
+        "Compare",
+        "Next Change",
+        "Previous Change",
+        "Link Scrolling",
         "|",
         "Expand all",
         "Collapse all",

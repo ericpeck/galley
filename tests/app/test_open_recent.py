@@ -36,10 +36,11 @@ def test_file_menu_has_open_recent_after_open(qtbot) -> None:
     assert isinstance(file_menu, QMenu)
     assert [action.text() for action in file_menu.actions()] == [
         "Open file…",
+        "Open Right Document…",
         "Open Recent",
     ]
     recent = _recent(window)
-    assert file_menu.actions()[1].menu() is recent
+    assert file_menu.actions()[2].menu() is recent
     assert _labels(recent) == ["Clear Menu"]
     assert not _clear(window).isEnabled()
 

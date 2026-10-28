@@ -46,6 +46,11 @@ NOT_AVAILABLE = "Not available for {label}"
 # Menu order: menu bar, then the toolbar, then the tab menu.
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
+    "Open Right Document…",
+    "Compare",
+    "Next Change",
+    "Previous Change",
+    "Link Scrolling",
     "Indent",
     "Minify",
     "Validate",
@@ -56,7 +61,12 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
 # not edit this map; it only deletes the name from UNBUILT_ACTIONS.
 _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Open": ("open_file",),
+    "Open Right Document…": ("open_right_document",),
     "Find": ("find",),
+    "Compare": ("compare",),
+    "Next Change": ("next_change",),
+    "Previous Change": ("previous_change",),
+    "Link Scrolling": ("link_scrolling",),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -267,6 +277,12 @@ class ShellActions:
             "Open file…",
             standard=QKeySequence.StandardKey.Open,
         )
+        # File › Open Right Document… (#65 slice 3e). No shortcut until it ships.
+        self.open_right_document = _action(
+            parent,
+            "Open Right Document…",
+            role=QAction.MenuRole.NoRole,
+        )
 
         self.undo = _action(parent, "Undo", standard=QKeySequence.StandardKey.Undo)
         self.redo = _action(parent, "Redo", standard=QKeySequence.StandardKey.Redo)
@@ -349,6 +365,28 @@ class ShellActions:
         self.next_problem.setShortcuts(list(NEXT_PROBLEM))
         self.previous_problem = _action(parent, "Previous Problem")
         self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
+        # View section for Compare (#65). Shortcuts arrive with the real actions.
+        self.compare = _action(
+            parent,
+            "Compare",
+            checkable=True,
+            role=QAction.MenuRole.NoRole,
+        )
+        self.next_change = _action(
+            parent,
+            "Next Change",
+            role=QAction.MenuRole.NoRole,
+        )
+        self.previous_change = _action(
+            parent,
+            "Previous Change",
+            role=QAction.MenuRole.NoRole,
+        )
+        self.link_scrolling = _action(
+            parent,
+            "Link Scrolling",
+            role=QAction.MenuRole.NoRole,
+        )
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
         self.appearance_light = _action(parent, "Light", checkable=True)
         self.appearance_dark = _action(parent, "Dark", checkable=True)
@@ -431,6 +469,11 @@ class ShellActions:
     def _stub_actions(self) -> list[QAction]:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
+            self.open_right_document,
+            self.compare,
+            self.next_change,
+            self.previous_change,
+            self.link_scrolling,
             self.rename,
             self.duplicate,
             self.close_tab,
