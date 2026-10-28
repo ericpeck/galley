@@ -378,6 +378,59 @@ def test_every_html_code_has_a_sentence_and_an_unknown_one_raises() -> None:
 # --- Detection, Open, Open Recent, and drag and drop ---------------------------
 
 
+# The script fragment from Erik's #148 review. Fake data only.
+_SCRIPT_FRAGMENT = '<div>\n<script>if (a<b) x = "</div>";</script>\n</div>'
+
+
+def _colored(editor: CodeEditor, line: int, needle: str) -> bool:
+    """True when any character of ``needle`` on ``line`` has a color."""
+    block = editor.document().findBlockByNumber(line - 1)
+    start = block.text().index(needle)
+    end = start + len(needle)
+    return any(
+        item.start < end and start < item.start + item.length
+        for item in block.layout().formats()
+    )
+
+
+def test_input_as_html_colors_a_fragment_as_html(qtbot) -> None:
+    """The picker decides the colors for XML and HTML, not the text (Erik)."""
+    window = _show(qtbot)
+    source = _pane(window, "input")
+    _choose(source, "HTML")
+    source.editor.setPlainText(_SCRIPT_FRAGMENT)
+
+    assert source.editor.syntax_mode() == "HTML"
+    assert not _colored(source.editor, 2, 'if (a<b) x = "</div>";')
+    assert _pane(window, "output").editor.syntax_mode() == "HTML"
+
+    window._actions.format.trigger()
+    qtbot.waitUntil(lambda: _status(window).text() == "Formatted HTML", timeout=20000)
+    output = _pane(window, "output").editor
+    assert output.syntax_mode() == "HTML"
+    assert not _colored(output, 2, 'if (a<b) x = "</div>";')
+
+
+def test_input_as_xml_keeps_xml_colors_for_an_html_doctype(qtbot) -> None:
+    window = _show(qtbot)
+    source = _pane(window, "input")
+    _choose(source, "XML")
+    source.editor.setPlainText("<!DOCTYPE html>\n<r/>")
+    assert source.editor.syntax_mode() == "XML"
+    assert _pane(window, "output").editor.syntax_mode() == "XML"
+
+
+def test_json_and_yaml_input_still_guess_colors_from_the_text(qtbot) -> None:
+    window = _show(qtbot)
+    source = _pane(window, "input")
+    _choose(source, "HTML")
+    _choose(source, "YAML")
+    source.editor.setPlainText('{"a": 1}')
+    assert source.editor.syntax_mode() == "JSON"
+    source.editor.setPlainText("a: 1\n")
+    assert source.editor.syntax_mode() == "YAML"
+
+
 @pytest.mark.parametrize(
     ("text", "mode"),
     [
