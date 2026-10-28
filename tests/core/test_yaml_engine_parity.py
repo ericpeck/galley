@@ -21,7 +21,7 @@ from tests.yaml_fast_path import assert_c_emitter_writes
 import galley.core.format as format_module
 from galley.core.errors import InputError, NotJSONValueError
 from galley.core.escape import escape_document
-from galley.core.format import format_document, format_json
+from galley.core.format import SelfReferenceError, format_document, format_json
 
 _ENGINES = ("c", "pure")
 
@@ -156,8 +156,11 @@ def test_recursive_alias_with_a_surrogate_is_located(engine: str) -> None:
 
 
 def test_recursive_alias_without_a_surrogate_still_finishes(engine: str) -> None:
-    """Escaped text that looks like a surrogate escape walks a cycle once."""
-    with pytest.raises(ValueError, match="Circular reference"):
+    """Escaped text that looks like a surrogate escape walks a cycle once.
+
+    The alias contains itself, so it ends in ``SelfReferenceError`` (#116).
+    """
+    with pytest.raises(SelfReferenceError, match="self_reference"):
         format_document('a: &a ["\\\\uD800", *a]\n', "yaml", "json")
 
 
