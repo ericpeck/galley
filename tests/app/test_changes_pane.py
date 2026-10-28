@@ -184,19 +184,35 @@ def test_a_group_says_whether_it_is_collapsed_or_expanded(qtbot) -> None:
 def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
     pane = _pane(qtbot, _long_path_report())
     tip = pane.model().index(0).data(Qt.ItemDataRole.ToolTipRole)
-    assert tip == f"Changed · {_LONG_PATH} · \u20687\u2069 → \u206810\u2069"
+    assert tip == (
+        f"Changed · \u2068{_LONG_PATH}\u2069 · \u20687\u2069 → \u206810\u2069"
+    )
     pane.set_report(_grouped())
     model = pane.model()
     assert [
         model.index(row).data(Qt.ItemDataRole.ToolTipRole)
         for row in range(model.rowCount())
     ] == [
-        'Changed · name · \u2068"Ada"\u2069 → \u2068"Bo"\u2069',
+        'Changed · \u2068name\u2069 · \u2068"Ada"\u2069 → \u2068"Bo"\u2069',
         "users: items compared by position (too complex to align)",
         "users[1–2]: 2 items differ",
         "users[4–6]: 3 items differ",
-        "Changed · zip · \u20681\u2069 → \u20682\u2069",
+        "Changed · \u2068zip\u2069 · \u20681\u2069 → \u20682\u2069",
     ]
+
+
+def test_a_right_to_left_key_stays_between_the_tooltip_separators(qtbot) -> None:
+    key = "\u05de\u05d7\u05d9\u05e8"  # Hebrew "price", fake data
+    pane = _pane(qtbot, _report({key: 1}, {key: 2}))
+    tip = pane.model().index(0).data(Qt.ItemDataRole.ToolTipRole)
+    assert tip == f"Changed · \u2068{key}\u2069 · \u20681\u2069 → \u20682\u2069"
+    label_at = tip.index("Changed")
+    key_at = tip.index(key)
+    old_at = tip.index("1")
+    label = _visual_span(tip, label_at, label_at + len("Changed"))
+    path = _visual_span(tip, key_at, key_at + len(key))
+    old = _visual_span(tip, old_at, old_at + 1)
+    assert label[1] <= path[0] and path[1] <= old[0], (label, path, old)
 
 
 _LONG_KEY = "estimated_delivery_window_days"

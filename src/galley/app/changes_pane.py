@@ -537,9 +537,11 @@ def _isolated(text: str) -> str:
 
 def tooltip_text(row: ChangeRow | GroupRow | InfoRow) -> str:
     """The whole row, for when it is cut to fit: a change row's label, path,
-    and detail, or a group or info row's text."""
+    and detail, or a group or info row's text. The path is a direction
+    isolate too, so a right-to-left key stays between its separators."""
     if isinstance(row, ChangeRow):
-        return f"{row.label} · {row.path_text} · {change_detail(row)}"
+        path = _isolated(row.path_text)
+        return f"{row.label} · {path} · {change_detail(row)}"
     return row.text
 
 
