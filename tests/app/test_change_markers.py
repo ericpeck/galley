@@ -316,9 +316,8 @@ def test_removed_and_changed_lines_differ_by_shape(qtbot) -> None:
         for glyph in (CHANGE_GLYPHS["removed"], CHANGE_GLYPHS["changed"])
         if not metrics.inFontUcs4(ord(glyph))
     ]
-    if missing:
-        # Windows CI's offscreen font draws every character as one box.
-        pytest.skip(f"the code font has no {' '.join(missing)} glyph here")
+    # The test font (#145) has both glyphs on every platform.
+    assert not missing, f"the code font has no {' '.join(missing)} glyph"
     editor.set_change_tints("left", [(2, 4, "removed"), (5, 6, "changed")])
 
     # Off the first line, where only the repeated glyph tells the kind.
