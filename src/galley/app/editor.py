@@ -717,10 +717,19 @@ class CodeEditor(QPlainTextEdit):
         ``{`` or ``[`` means JSON, and anything else but ``<`` YAML. A ``<``
         means HTML when the text opens like an HTML document (the doctype,
         or an ``html``, ``head``, or ``body`` tag, after any comments), and
-        XML otherwise.
+        XML otherwise. :meth:`guess_syntax_mode` goes back to guessing.
         """
         self._syntax_mode_set = True
+        changed = mode != self._highlighter.mode()
         self._highlighter.set_mode(mode)
+        if changed:
+            # XML and HTML have their own busy sizes for colors.
+            self._apply_display_options()
+
+    def guess_syntax_mode(self) -> None:
+        """Pick the colors from the text again, as before ``set_syntax_mode``."""
+        self._syntax_mode_set = False
+        self._detect_syntax(0, 0, 0)
 
     def syntax_colors_enabled(self) -> bool:
         """Whether the highlighter is attached: wanted, and no limit applies."""
