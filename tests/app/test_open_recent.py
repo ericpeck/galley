@@ -344,6 +344,31 @@ def test_choosing_a_row_before_its_check_returns_opens_it(
     assert slow_stat.main_thread_calls == []
 
 
+def test_stuck_checks_do_not_delay_opening_a_healthy_file(
+    qtbot, tmp_path, monkeypatch, slow_stat
+) -> None:
+    stuck = [_write(tmp_path / "share" / f"lost{index}.json") for index in range(8)]
+    for path in stuck:
+        remember_recent_file(path)
+    slow_stat.hold(*stuck)
+    healthy = _write(tmp_path / "local.json")
+    # A small laptop: Open's reader shares no threads with recent checks.
+    pool = QThreadPool.globalInstance()
+    cores = pool.maxThreadCount()
+    pool.setMaxThreadCount(2)
+    try:
+        window = _show(qtbot, settle=False)
+        _recent(window).aboutToShow.emit()
+        qtbot.waitUntil(lambda: len(slow_stat.calls) >= 2)
+
+        _open_with_dialog(qtbot, monkeypatch, window, healthy, _SAMPLE)
+
+        assert _recent(window).checking()
+    finally:
+        slow_stat.release()
+        pool.setMaxThreadCount(cores)
+
+
 @pytest.mark.perf
 def test_building_the_menu_with_a_slow_disk_is_within_budget(
     qtbot, tmp_path, slow_stat, perf_budget
