@@ -574,3 +574,95 @@ def test_release_check_no_longer_lists_pop_out() -> None:
     for name in ("Pop out", "Show window", "Bring back"):
         assert name not in coming
         assert name not in not_yet
+
+
+# Menu order: File, then the View section after Previous Problem.
+_COMPARE_UNBUILT = (
+    "Open Right Document…",
+    "Compare",
+    "Next Change",
+    "Previous Change",
+    "Link Scrolling",
+)
+
+
+def test_compare_items_stay_unbuilt_until_they_ship(qtbot, capsys) -> None:
+    """#65 slices 3d and 3e stay on the release check until they ship.
+
+    Open Right Document… uses one U+2026 ellipsis. None of the five has a
+    shortcut. Compare is the only checkable item. Each one is disabled and
+    says Coming soon.
+    """
+    missing = [name for name in _COMPARE_UNBUILT if name not in UNBUILT_ACTIONS]
+    assert missing == []
+    open_right = _COMPARE_UNBUILT[0]
+    assert open_right.endswith("\u2026")
+    assert not open_right.endswith("...")
+    for name in _COMPARE_UNBUILT:
+        assert name in _ACTION_ATTRS
+
+    window = _show(qtbot)
+    actions = window._actions
+    wired = {
+        "Open Right Document…": actions.open_right_document,
+        "Compare": actions.compare,
+        "Next Change": actions.next_change,
+        "Previous Change": actions.previous_change,
+        "Link Scrolling": actions.link_scrolling,
+    }
+    file_menu = _menu(window, "File")
+    file_items = file_menu.actions()
+    open_at = [item.text() for item in file_items].index("Open file…")
+    assert file_items[open_at + 1] is actions.open_right_document
+
+    view = _menu(window, "View")
+    view_items = view.actions()
+    view_labels = ["|" if item.isSeparator() else item.text() for item in view_items]
+    previous = view_labels.index("Previous Problem")
+    assert view_labels[previous : previous + 7] == [
+        "Previous Problem",
+        "|",
+        "Compare",
+        "Next Change",
+        "Previous Change",
+        "Link Scrolling",
+        "|",
+    ]
+    section = view_items[previous + 2 : previous + 6]
+    assert section == [
+        actions.compare,
+        actions.next_change,
+        actions.previous_change,
+        actions.link_scrolling,
+    ]
+    assert view_items[previous + 1].isSeparator()
+    assert view_items[previous + 6].isSeparator()
+
+    assert actions.compare.isCheckable()
+    assert not actions.compare.isChecked()
+    for name, action in wired.items():
+        assert action.text() == name
+        assert action in actions._stub_actions()
+        assert action not in actions._not_yet_actions()
+        assert action.isVisible()
+        assert not action.isEnabled()
+        assert action.toolTip() == COMING_SOON
+        assert is_unbuilt(action)
+        assert action.property("unbuiltName") == name
+        assert action.menuRole() == QAction.MenuRole.NoRole
+        assert action.shortcut().isEmpty()
+        assert list(action.shortcuts()) == []
+        if name != "Compare":
+            assert not action.isCheckable()
+    assert actions.open_right_document.text()[-1] == "\u2026"
+    assert "..." not in actions.open_right_document.text()
+
+    message = release_failure()
+    assert message is not None
+    assert ", ".join(_COMPARE_UNBUILT) in message
+    assert main() == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert message in captured.out
+    for name in _COMPARE_UNBUILT:
+        assert name in captured.out
