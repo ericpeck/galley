@@ -36,6 +36,7 @@ _NOT_YET_FIX = (
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
     "Outdent",
+    "Output Options",
 )
 _RELEASE_WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
@@ -116,8 +117,28 @@ def _menu_order(window) -> list[str]:
     return found
 
 
+def _visit_output_footer(window, note: Callable[[QAction], None]) -> None:
+    """Visit the Output pane footer's Options link by the command it triggers."""
+    button = window.findChild(QPushButton, "outputOptionsButton")
+    assert isinstance(button, QPushButton)
+    fired: list[QAction] = []
+    slots = []
+    for action in window.findChildren(QAction):
+
+        def slot(_checked: bool = False, action: QAction = action) -> None:
+            fired.append(action)
+
+        action.triggered.connect(slot)
+        slots.append((action, slot))
+    button.click()
+    for action, slot in slots:
+        action.triggered.disconnect(slot)
+    for action in fired:
+        note(action)
+
+
 def _not_yet_menu_order(window) -> list[str]:
-    """Not yet release labels as they first appear: menu bar, toolbar, tab menu."""
+    """Not yet release labels as they first appear: menu bar, toolbar, footer."""
     actions = window._actions
     guides = {
         id(actions.guides_off),
@@ -137,6 +158,7 @@ def _not_yet_menu_order(window) -> list[str]:
         pending.remove(id(action))
 
     _visit_shell(window, note)
+    _visit_output_footer(window, note)
     assert not pending
     return found
 
@@ -246,6 +268,25 @@ def test_release_check_fails_when_both_lists_remain(qtbot, capsys) -> None:
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == f"{coming_message}\n{not_yet_message}\n"
+
+
+def test_output_options_link_triggers_its_not_yet_action(qtbot) -> None:
+    window = _show(qtbot)
+    button = window.findChild(QPushButton, "outputOptionsButton")
+    assert isinstance(button, QPushButton)
+    assert button.text() == "Options"
+    options = window._actions.output_options
+    assert options.text() == "Output Options"
+    assert options in window._actions._not_yet_actions()
+    assert options in window._actions.stubs()
+    output = window.findChild(CodeEditor, "outputEditor")
+    assert isinstance(output, CodeEditor)
+    fired: list[bool] = []
+    options.triggered.connect(lambda _checked=False: fired.append(True))
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    assert fired == [True]
+    assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
+    assert output.toPlainText() == ""
 
 
 def test_tag_release_runs_the_unbuilt_action_check_after_copyright() -> None:
@@ -581,3 +622,11 @@ def test_release_check_lists_pop_out_under_coming_soon_only() -> None:
     assert "Pop out" in coming.splitlines()[0]
     for name in ("Pop out", "Show window", "Bring back"):
         assert name not in not_yet
+
+
+def test_release_check_lists_output_options_last_under_not_yet() -> None:
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet == _not_yet_text(", ".join(_NOT_YET_MENU_NAMES))
+    assert "Output Options" not in coming
