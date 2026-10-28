@@ -24,7 +24,6 @@ SHIFT = Qt.KeyboardModifier.ShiftModifier
 
 # Command: second key of the Ctrl+K chord.
 CHORDS = {
-    "Close others": (Qt.Key.Key_W, CTRL | SHIFT),
     "Unescape String": (Qt.Key.Key_E, CTRL),
     "Collapse all": (Qt.Key.Key_0, CTRL),
     "Expand all": (Qt.Key.Key_J, CTRL),
@@ -32,13 +31,6 @@ CHORDS = {
 
 _VALID = '{"name": "galley", "owner": {"id": 7}, "tags": [1, 2]}'
 _INVALID = '{"name": "galley",,}'
-
-# Close others is only in the tab context menu, which nothing opens yet, so
-# the window never registers its shortcut. It ships with Tabs.
-_TAB_MENU_ONLY = pytest.mark.xfail(
-    reason="Close others is only in the unopened tab menu, so no shortcut fires",
-    strict=True,
-)
 
 
 def _action(window, text: str) -> QAction:
@@ -73,8 +65,8 @@ def _formatted(qtbot, text: str):
 def _probe(window) -> list[str]:
     """Record every action that fires, with the command's own work cut off.
 
-    The test checks key dispatch only. Close others is still Coming soon
-    and Collapse all needs foldable Output, so all four are switched on.
+    The test checks key dispatch only. Collapse all needs foldable Output,
+    so all three are switched on.
     """
     fired: list[str] = []
     for action in window.findChildren(QAction):
@@ -91,15 +83,7 @@ def _probe(window) -> list[str]:
     return fired
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param(command, marks=_TAB_MENU_ONLY)
-        if command == "Close others"
-        else command
-        for command in CHORDS
-    ],
-)
+@pytest.mark.parametrize("command", list(CHORDS))
 @pytest.mark.parametrize("target", ["input", "output", "problems"])
 def test_ctrl_k_chord_fires_from_the_focused_widget(qtbot, target, command) -> None:
     text = _INVALID if target == "problems" else _VALID
@@ -126,6 +110,36 @@ def test_ctrl_k_chord_fires_from_the_focused_widget(qtbot, target, command) -> N
     assert fired == [command]
     # The caret is at the start of a non-empty line, so a Ctrl+K taken as
     # Delete to end of line, or a typed k, would change the text.
+    assert (source.toPlainText(), output.toPlainText()) == texts
+
+
+@pytest.mark.parametrize("target", ["input", "output", "problems"])
+def test_old_close_others_chord_does_nothing(qtbot, target) -> None:
+    """Tabs are removed, so Ctrl+K, Ctrl+Shift+W runs nothing and types nothing."""
+    text = _INVALID if target == "problems" else _VALID
+    window, source, output, pane = _formatted(qtbot, text)
+    focus: QWidget = {
+        "input": source,
+        "output": output,
+        "problems": pane.list_widget(),
+    }[target]
+    for editor in (source, output):
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        editor.setTextCursor(cursor)
+    texts = (source.toPlainText(), output.toPlainText())
+    fired: list[str] = []
+    for action in window.findChildren(QAction):
+        label = action.text() or action.objectName()
+        action.triggered.connect(lambda _=False, label=label: fired.append(label))
+    window.activateWindow()
+    focus.setFocus()
+    qtbot.waitUntil(focus.hasFocus, timeout=2000)
+
+    qtbot.keyClick(focus, Qt.Key.Key_K, CTRL)
+    qtbot.keyClick(focus, Qt.Key.Key_W, CTRL | SHIFT)
+
+    assert fired == []
     assert (source.toPlainText(), output.toPlainText()) == texts
 
 

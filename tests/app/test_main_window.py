@@ -49,7 +49,6 @@ _PROBLEM = ["Ctrl+'", "F8"] if sys.platform == "darwin" else ["F8"]
 _PREVIOUS = ["Ctrl+Shift+'", "Shift+F8"] if sys.platform == "darwin" else ["Shift+F8"]
 CUSTOM_SHORTCUTS = {
     "Word Wrap": ["Alt+Z"],
-    "Close others": ["Ctrl+K, Ctrl+Shift+W"],
     "Escape as String": ["Ctrl+Shift+E"],
     "Unescape String": ["Ctrl+K, Ctrl+E"],
     "Show Whitespace": ["Ctrl+Shift+8"],
@@ -77,7 +76,6 @@ STANDARD_SHORTCUTS = {
     "Find Previous": QKeySequence.StandardKey.FindPrevious,
     "Find and Replace…": QKeySequence.StandardKey.Replace,
     "Open file…": QKeySequence.StandardKey.Open,
-    "Close": QKeySequence.StandardKey.Close,
     "Bigger": QKeySequence.StandardKey.ZoomIn,
     "Smaller": QKeySequence.StandardKey.ZoomOut,
     "Enter Full Screen": QKeySequence.StandardKey.FullScreen,
@@ -230,14 +228,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     ]
     assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
     assert _labels(_menu(window, "Help")) == ["About Galley"]
-    assert _labels(window.findChild(QMenu, "tabMenu")) == [
-        "Rename",
-        "Duplicate",
-        "|",
-        "Close",
-        "Close others",
-        "Close tabs to the right",
-    ]
+    assert window.findChild(QMenu, "tabMenu") is None
 
 
 def _menu_bar_actions(window) -> list[QAction]:
@@ -389,23 +380,66 @@ def test_pop_out_is_removed(qtbot) -> None:
         assert "pop out" not in widget.accessibleName().lower(), widget.objectName()
 
 
-def test_tab_menu_has_no_dangling_separator(qtbot) -> None:
+_TAB_ATTRS = (
+    "rename",
+    "duplicate",
+    "close_tab",
+    "close_others",
+    "close_tabs_right",
+    "new_tab",
+)
+_TAB_LABELS = (
+    "Rename",
+    "Duplicate",
+    "Close",
+    "Close others",
+    "Close tabs to the right",
+    "New tab",
+)
+
+
+def test_tabs_are_removed(qtbot) -> None:
+    """Tabs aren't built for v1: no actions, tab menu, or strip menu."""
     window = _show(qtbot)
-    tab_menu = window.findChild(QMenu, "tabMenu")
-    assert isinstance(tab_menu, QMenu)
-    labels = _labels(tab_menu)
-    assert labels == [
-        "Rename",
-        "Duplicate",
-        "|",
-        "Close",
-        "Close others",
-        "Close tabs to the right",
+    for attr in _TAB_ATTRS:
+        assert not hasattr(window._actions, attr), attr
+    assert window.findChild(QMenu, "tabMenu") is None
+    assert not hasattr(window, "_tab_menu")
+    for action in window.findChildren(QAction):
+        assert action.text() not in _TAB_LABELS, action.text()
+    for name in ("input", "output"):
+        strip = window.findChild(QWidget, f"{name}TabStrip")
+        assert isinstance(strip, QWidget), name
+        assert strip.contextMenuPolicy() == Qt.ContextMenuPolicy.DefaultContextMenu
+        assert window.findChild(QPushButton, f"{name}CloseTab") is None
+        assert window.findChild(QPushButton, f"{name}NewTab") is None
+
+
+def test_close_keys_are_unbound(qtbot) -> None:
+    """With Tabs removed, Ctrl+W and the Ctrl+K, Ctrl+Shift+W chord do nothing.
+
+    Nothing takes over Ctrl+W, so no action holds any Close binding Qt has
+    for this platform, and none starts with the old Close others chord.
+    """
+    window = _show(qtbot)
+    unbound = [
+        sequence
+        for sequence in QKeySequence.keyBindings(QKeySequence.StandardKey.Close)
+        if not sequence.isEmpty()
     ]
-    assert labels[0] != "|"
-    assert labels[-1] != "|"
-    pairs = zip(labels, labels[1:], strict=False)
-    assert not any(a == b == "|" for a, b in pairs)
+    unbound.append(QKeySequence("Ctrl+W", QKeySequence.SequenceFormat.PortableText))
+    chord = _sequence_id(
+        QKeySequence("Ctrl+K, Ctrl+Shift+W", QKeySequence.SequenceFormat.PortableText)
+    )
+    closing = {_sequence_id(sequence) for sequence in unbound}
+    bound: list[str] = []
+    for action in window.findChildren(QAction):
+        for sequence in action.shortcuts():
+            ident = _sequence_id(sequence)
+            if ident in closing or ident[: len(chord)] == chord:
+                rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+                bound.append(f"{rendered}: {action.text() or action.objectName()}")
+    assert bound == []
 
 
 def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
@@ -457,9 +491,6 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
                 rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
                 duplicates.append(f"{rendered}: {previous} and {label}")
     assert duplicates == []
-    assert _portable(_action(window, "Word Wrap")) != _portable(
-        _action(window, "Close others")
-    )
 
 
 def test_custom_shortcuts_avoid_standard_keys_and_chord_prefixes(qtbot) -> None:

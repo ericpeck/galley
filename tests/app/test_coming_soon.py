@@ -64,7 +64,7 @@ def _menu(window, title: str) -> QMenu:
 
 
 def _visit_shell(window, note: Callable[[QAction], None]) -> None:
-    """Visit commands in menu order: menu bar, toolbar, then the tab menu."""
+    """Visit commands in menu order: menu bar, then the toolbar."""
 
     def walk_menu(menu: QMenu) -> None:
         children = menu.findChildren(
@@ -99,13 +99,10 @@ def _visit_shell(window, note: Callable[[QAction], None]) -> None:
     toolbar = window.findChild(QWidget, "mainToolbar")
     assert isinstance(toolbar, QWidget)
     walk_toolbar(toolbar)
-    tab_menu = window.findChild(QMenu, "tabMenu")
-    assert isinstance(tab_menu, QMenu)
-    walk_menu(tab_menu)
 
 
 def _menu_order(window) -> list[str]:
-    """Unbuilt names as they first appear: menu bar, toolbar, tab menu."""
+    """Unbuilt names as they first appear: menu bar, then the toolbar."""
     found: list[str] = []
 
     def note(action: QAction) -> None:
@@ -343,21 +340,12 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         for button in window.findChildren(QPushButton)
         if button.toolTip() == COMING_SOON
     ]
-    assert len(pushed) == 4
-    assert not any(button.objectName().endswith("PopOut") for button in pushed)
+    # The tab strips' Close and New tab buttons were the last ones.
+    assert pushed == []
     open_button = window.findChild(QPushButton, "emptyOpenButton")
     assert isinstance(open_button, QPushButton)
     assert open_button.isEnabled()
     assert open_button.toolTip() != COMING_SOON
-    assert sorted(
-        button.accessibleName() for button in pushed if button.accessibleName()
-    ) == [
-        "Close",
-        "Close",
-        "New tab",
-        "New tab",
-    ]
-    buttons.extend(pushed)
 
     seen: set[str] = set()
     for button in buttons:
@@ -572,6 +560,26 @@ def test_release_check_no_longer_lists_pop_out() -> None:
     assert coming is not None
     assert not_yet is not None
     for name in ("Pop out", "Show window", "Bring back"):
+        assert name not in coming
+        assert name not in not_yet
+
+
+def test_release_check_no_longer_lists_tabs() -> None:
+    """Release-check PR 2d removed Tabs instead of building them."""
+    assert "Tabs" not in UNBUILT_ACTIONS
+    assert "Tabs" not in _ACTION_ATTRS
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    for name in (
+        "Tabs",
+        "Rename",
+        "Duplicate",
+        "Close others",
+        "Close tabs to the right",
+        "New tab",
+    ):
         assert name not in coming
         assert name not in not_yet
 

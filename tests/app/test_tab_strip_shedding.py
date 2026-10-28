@@ -56,8 +56,8 @@ def _scaled_points(font: QFont, sample: tuple[str, int]) -> int | None:
 def strip_font(request, monkeypatch, qapp) -> Iterator[str]:
     """Run once with the platform fonts and once with Windows-wide ones.
 
-    Widgets with a stylesheet (the caption, Close and New tab) take the
-    application font, and the rest take ``ui_font``, so both grow.
+    Widgets with a stylesheet (the caption) take the application font, and
+    the rest take ``ui_font``, so both grow.
     """
     if request.param == "platform font":
         yield request.param
@@ -133,7 +133,7 @@ def _assert_strip_fits(pane: PaneWidget) -> None:
     """Every shown strip part has its full width, inside the strip, apart."""
     strip = pane.tab_strip
     parts = _strip_parts(pane)
-    assert len(parts) >= 4
+    assert len(parts) >= 2
     right = 0
     for widget in sorted(parts, key=lambda item: item.x()):
         geometry = widget.geometry()
@@ -239,6 +239,24 @@ def test_strip_has_no_pop_out_button(qtbot, spec: PaneSpec) -> None:
     assert not hasattr(pane, "pop_out_button")
     names = [part.objectName() for part in _strip_parts(pane)]
     assert not any(name.endswith("PopOut") for name in names), names
+
+
+@pytest.mark.parametrize("spec", _ROLES, ids=lambda spec: spec.name)
+def test_strip_has_no_tab_buttons(qtbot, spec: PaneSpec) -> None:
+    """Release-check PR 2d removed Tabs: the strip is title, caption, picker."""
+    pane = _alone(qtbot, spec)
+    for attr in ("close_tab_button", "new_tab_button"):
+        assert not hasattr(pane, attr), attr
+    names = [part.objectName() for part in _strip_parts(pane)]
+    assert names == [
+        f"{spec.name}TabTitle",
+        f"{spec.name}FormatCaption",
+        f"{spec.name}Format",
+    ]
+    assert pane.tab_strip.findChildren(QPushButton) == []
+    for child in pane.tab_strip.findChildren(QWidget):
+        for text in (child.accessibleName(), child.toolTip()):
+            assert text not in ("Close", "New tab"), child.objectName()
 
 
 def test_full_strip_width_is_where_shedding_starts(qtbot) -> None:
