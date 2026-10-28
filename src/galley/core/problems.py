@@ -6,6 +6,7 @@ JSON document reports every syntax error and repeated key: after
 ``json.loads`` fails, ``scan_json`` reads on past each error. Other YAML
 failures still stop at the first problem, so those stay a single code.
 Expat stops at the first XML error, so XML reports one ``xml_*`` code.
+HTML reports every tag that does not nest at once, as ``html_*`` codes.
 """
 
 import json
@@ -13,13 +14,17 @@ import re
 from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.tokens import KeyToken, ScalarToken
 
-from galley.core.errors import JSONDuplicateKeyError, XMLSyntaxError
+from galley.core.errors import (
+    HTMLStructureError,
+    JSONDuplicateKeyError,
+    XMLSyntaxError,
+)
 from galley.core.json_recover import Scan, Slip, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
@@ -27,6 +32,23 @@ from galley.core.json_recover import Scan, Slip, scan_json
 _STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
 _CLOSERS = {"[": "]", "{": "}"}
 _NEWLINE = re.compile("\n")
+
+# Every code the XML check reports. A type checker sees the app's sentence
+# for each one, since that function ends in ``assert_never`` (#135).
+XMLProblemCode = Literal[
+    "xml_mismatched_tag",
+    "xml_unclosed",
+    "xml_unfinished_tag",
+    "xml_bad_token",
+    "xml_duplicate_attribute",
+    "xml_undefined_entity",
+    "xml_entity_declared",
+    "xml_unbound_prefix",
+    "xml_after_root",
+    "xml_no_root",
+    "xml_other",
+]
+XML_PROBLEM_CODES: tuple[XMLProblemCode, ...] = get_args(XMLProblemCode)
 
 ProblemCode = Literal[
     "missing_comma",
@@ -45,17 +67,15 @@ ProblemCode = Literal[
     "yaml_duplicate",
     "yaml_colon",
     "yaml_other",
-    "xml_mismatched_tag",
-    "xml_unclosed",
-    "xml_bad_token",
-    "xml_duplicate_attribute",
-    "xml_undefined_entity",
-    "xml_entity_declared",
-    "xml_unbound_prefix",
-    "xml_after_root",
-    "xml_no_root",
-    "xml_other",
+    XMLProblemCode,
+    "html_unexpected_close",
+    "html_unclosed",
 ]
+
+
+def is_xml_code(code: str) -> TypeGuard[XMLProblemCode]:
+    """True for a code the XML check reports."""
+    return code in XML_PROBLEM_CODES
 
 
 @dataclass(frozen=True)
@@ -64,15 +84,19 @@ class Problem:
 
     ``token`` is the bracket for a close problem, or the repeated key for
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
-    For XML it is the element, attribute, entity, or prefix named.
-    ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
-    when the problem was found after the JSON scan guessed at a repair,
-    so an earlier problem may have caused it.
+    For XML it is the element, attribute, entity, or prefix named. For
+    HTML it is the tag name as written.
+    ``found`` is what stood where ``token`` was expected: for
+    ``xml_mismatched_tag`` the name in the end tag, while ``token`` is the
+    element still open. ``colno`` is 0 when the parser gives no column.
+    ``uncertain`` is True when the problem was found after the JSON scan
+    guessed at a repair, so an earlier problem may have caused it.
 
     ``json_stopped`` is not a problem: it ends the list when the scan
     stopped at ``MAX_FINDINGS``, on the line where it stopped.
 
-    Problems compare by code, line, and token, the parts a sentence says.
+    Problems compare by code, line, token, and found, the parts a sentence
+    says.
     """
 
     code: ProblemCode
@@ -80,6 +104,7 @@ class Problem:
     token: str = ""
     colno: int = field(default=0, compare=False)
     uncertain: bool = field(default=False, compare=False)
+    found: str = ""
 
 
 def collect_problems(
@@ -92,7 +117,8 @@ def collect_problems(
     YAML leading tabs are collected up front and the parser is not asked
     to continue. Repeated JSON keys give one problem per key and line. A
     JSON syntax error gives every problem ``scan_json`` finds, in text
-    order. Any other failure contributes at most one problem.
+    order, and HTML gives every tag that does not nest. Any other failure
+    contributes at most one problem.
     """
     if source.strip().casefold() == "yaml":
         tabs = tuple(Problem("yaml_tab", line) for line in leading_tab_lines(text))
@@ -104,6 +130,8 @@ def collect_problems(
         return duplicate_key_problems(exc)
     if isinstance(exc, json.JSONDecodeError):
         return json_problems(exc, text)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)
     found = classify_failure(exc, text)
     if found is None:
         return ()
@@ -136,6 +164,14 @@ def duplicate_key_problems(exc: JSONDuplicateKeyError) -> tuple[Problem, ...]:
                 "json_duplicate", duplicate.lineno, duplicate.key, duplicate.colno
             )
     return tuple(found.values())
+
+
+def html_problems(exc: HTMLStructureError) -> tuple[Problem, ...]:
+    """One problem per tag that does not nest, in text order."""
+    return tuple(
+        Problem(found.code, found.lineno, found.token, found.colno)
+        for found in exc.problems
+    )
 
 
 def json_problems(exc: json.JSONDecodeError, text: str) -> tuple[Problem, ...]:
@@ -188,7 +224,9 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
     if isinstance(exc, YAMLError):
         return _classify_yaml(exc, text)
     if isinstance(exc, XMLSyntaxError):
-        return Problem(exc.code, exc.lineno, exc.token, exc.colno)
+        return Problem(exc.code, exc.lineno, exc.token, exc.colno, found=exc.found)
+    if isinstance(exc, HTMLStructureError):
+        return html_problems(exc)[0]
     return None
 
 

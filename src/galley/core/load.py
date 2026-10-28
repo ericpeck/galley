@@ -107,8 +107,9 @@ def detect_format(path: Path, text: str) -> str | None:
     """Return the format label for ``path``, or None when unsettled.
 
     An extension in the format table wins over the text. Otherwise the
-    first meaningful line decides: an object or array opener is JSON, and
-    a document marker, a list item, or a ``key:`` line is YAML.
+    first meaningful line decides: an object or array opener is JSON, a
+    document marker, a list item, or a ``key:`` line is YAML, and ``<`` is
+    XML.
     """
     fmt = format_for_extension(path.suffix) or sniff_format(text)
     return None if fmt is None else fmt.label

@@ -1,5 +1,6 @@
 """One editor pane: tab strip, editor, footer, empty state."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 from pathlib import Path
@@ -29,7 +30,9 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
-from galley.core.formats import FORMAT_LABELS
+from galley.core.formats import FORMAT_LABELS, FORMATS, targets_for
+
+EMPTY_HEADING = "Paste JSON, YAML, XML, or HTML, or drop a file here."
 
 
 class PaneKind(Enum):
@@ -131,6 +134,32 @@ class PaneWidget(QWidget):
 
     def format_name(self) -> str:
         return self.format_combo.currentText()
+
+    def format_choices(self) -> tuple[str, ...]:
+        combo = self.format_combo
+        return tuple(combo.itemText(index) for index in range(combo.count()))
+
+    def set_format_choices(self, labels: Sequence[str], current: str) -> None:
+        """Offer ``labels`` in the picker and select ``current``.
+
+        ``format_changed`` is sent once, only when the selected format
+        changes. A ``current`` not in ``labels`` selects the first one.
+        """
+        combo = self.format_combo
+        before = combo.currentText()
+        if self.format_choices() == tuple(labels) and before == current:
+            return
+        combo.blockSignals(True)
+        try:
+            if self.format_choices() != tuple(labels):
+                combo.clear()
+                combo.addItems(list(labels))
+            combo.setCurrentIndex(max(combo.findText(current), 0))
+        finally:
+            combo.blockSignals(False)
+        combo.updateGeometry()
+        if combo.currentText() != before:
+            self.format_changed.emit(combo.currentText())
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.tab_strip and event.type() in (
@@ -302,7 +331,13 @@ class PaneWidget(QWidget):
         self.format_combo = FormatComboBox()
         self.format_combo.setObjectName(f"{self.spec.name}Format")
         self.format_combo.setAccessibleName(accessible_name)
-        self.format_combo.addItems(FORMAT_LABELS)
+        # Output offers what the first Input format writes. The window
+        # follows the Input picker from then on (B1 on #63).
+        if self.spec.kind is PaneKind.SOURCE:
+            labels = FORMAT_LABELS
+        else:
+            labels = tuple(fmt.label for fmt in targets_for(FORMATS[0].name))
+        self.format_combo.addItems(list(labels))
         self.format_combo.currentTextChanged.connect(self.format_changed.emit)
         return self.format_combo
 
@@ -419,13 +454,13 @@ def _text_width(label: QLabel, text: str) -> int:
 
 
 def _source_empty_heading() -> str:
-    """Empty Input heading with this platform's Open shortcut."""
+    """Empty Input heading with this platform's Open shortcut (B3 on #63)."""
     shortcut = QKeySequence(QKeySequence.StandardKey.Open).toString(
         QKeySequence.SequenceFormat.NativeText
     )
     if not shortcut:
-        return "Paste JSON or YAML, or drop a file here."
-    return f"Paste JSON or YAML, or drop a file here. {shortcut} to open."
+        return EMPTY_HEADING
+    return f"{EMPTY_HEADING} {shortcut} to open."
 
 
 def _style_empty_heading(heading: QLabel) -> None:

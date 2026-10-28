@@ -3020,7 +3020,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ValueError 27eed00c2e8b9b7433fb498c",
+  "yaml>json": "SelfReferenceError 87cbfcb41455548c3ea29622",
   "yaml>yaml": "output 1198b2f8f6c3a23febc45adc"
  },
  "tests/core/test_diff.py#378": {
@@ -3780,7 +3780,7 @@
   "detect": null,
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "TypeError 6f472e3010b250b56437caf1",
+  "yaml>json": "NotJSONKeyError 65ab9351bf88888019623300",
   "yaml>yaml": "output 039169135ae768da8cc484de"
  },
  "tests/core/test_escape.py#473": {
@@ -3788,7 +3788,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ValueError 27eed00c2e8b9b7433fb498c",
+  "yaml>json": "SelfReferenceError 87cbfcb41455548c3ea29622",
   "yaml>yaml": "output 4d6782c795a6fe0805a11aec"
  },
  "tests/core/test_escape.py#474": {
@@ -4196,7 +4196,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ValueError 27eed00c2e8b9b7433fb498c",
+  "yaml>json": "SelfReferenceError 87cbfcb41455548c3ea29622",
   "yaml>yaml": "output 3450a5ff57222190d3ed8ea5"
  },
  "tests/core/test_hostile.py#525": {
@@ -5300,7 +5300,7 @@
   "detect": "YAML",
   "json>json": "JSONDecodeError 3907c9d78564ed01790f2033",
   "json>yaml": "JSONDecodeError 3907c9d78564ed01790f2033",
-  "yaml>json": "ValueError 27eed00c2e8b9b7433fb498c",
+  "yaml>json": "SelfReferenceError 87cbfcb41455548c3ea29622",
   "yaml>yaml": "output 91842c4371a331e6e20463d1"
  },
  "tests/core/test_mask.py#663": {

@@ -1,7 +1,8 @@
 """Time large JSON documents and check the format size gates.
 
-Large and deeply nested XML (#63) is timed by ``perf_budget`` behind the
-``perf`` marker. XML is core-only until slice 3, so it has no editor rows.
+Large and deeply nested XML and HTML (#63) are timed by ``perf_budget``
+behind the ``perf`` marker. XML is core-only until slice 3 and HTML until
+slice 5, so neither has editor rows.
 
 The 1 MB and 2 MB fixtures are built in memory from ``random.Random`` with a
 fixed seed: nested objects and arrays, long strings, and non-ASCII text.
@@ -60,6 +61,7 @@ from galley.app.main_window import (
 from galley.app.parse_session import ParseSession
 from galley.core.errors import MAX_DEPTH
 from galley.core.format import format_json
+from galley.core.html_format import format_html
 from galley.core.xml_format import format_xml, validate_xml
 
 # SI megabytes, matching the size warning (1 MB is 1_000_000 bytes).
@@ -402,6 +404,78 @@ def test_large_and_deeply_nested_xml_format_within_budget(
         format_xml(text)
 
     perf_budget.within(0.5, format_and_validate, fixture=f"1 MB {shape} XML")
+
+
+def _html_items(target: int, seed: int = FIXTURE_SEED) -> str:
+    """At least ``target`` UTF-8 bytes of HTML from the seeded items.
+
+    Each item is a block with a heading, an inline run, a list whose end
+    tags are left out, a comment, and a ``pre``.
+    """
+    head = (
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        "<title>Galley stress</title>\n</head>\n<body>\n"
+    )
+    tail = "</body>\n</html>\n"
+    parts = [head]
+    size = _utf8_len(head) + _utf8_len(tail)
+    count = 0
+    while size < target:
+        count = max(count * 2, 256)
+        parts = parts[:1]
+        size = _utf8_len(head) + _utf8_len(tail)
+        for item in _items(count, seed):
+            tags = "".join(f"<li>{tag}" for tag in item["tags"])
+            rendered = (
+                f'<section id="s{item["id"]}" data-ok="{item["ok"]}">'
+                f"<h2>{item['title']} {_EMOJI}</h2>"
+                f"<p>{item['note']} <b>{item['child']['label']}</b></p>"
+                f"<ul>{tags}</ul><!-- n {item['n']} -->"
+                f"<pre>  {item['n']}\n    kept</pre></section>\n"
+            )
+            parts.append(rendered)
+            size += _utf8_len(rendered)
+            if size >= target:
+                break
+    parts.append(tail)
+    return "".join(parts)
+
+
+def _html_nested(target: int) -> str:
+    """``target`` bytes of item HTML with a ``div`` chain to ``MAX_DEPTH``.
+
+    ``html`` and ``body`` are the first two levels, so the chain is two
+    shorter than the limit.
+    """
+    depth = MAX_DEPTH - 2
+    chain = "<div>" * depth + "x" + "</div>" * depth + "\n"
+    items = _html_items(target - _utf8_len(chain))
+    middle = items.index("<section ", len(items) // 2)
+    return items[:middle] + chain + items[middle:]
+
+
+# Both HTML shapes, both platforms. Isaac's rule from #108, the worst CI
+# median plus 25%, rounded up to the next 0.1 s: 429.5 ms on perf (Windows)
+# at d031816 x 1.25 = 536.9 ms. It was 0.5 s, Isaac's #63 budget.
+_HTML_STRESS_BUDGET_S = 0.6
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("shape", ["large", "deeply nested"])
+def test_large_and_deeply_nested_html_format_within_budget(
+    perf_budget, shape: str
+) -> None:
+    """Format 1 MB of HTML within ``_HTML_STRESS_BUDGET_S``.
+
+    The deeply nested fixture reaches ``MAX_DEPTH``, so the explicit stacks
+    in ``html_format`` are what is timed.
+    """
+    size = _BYTES["1 MB"]
+    text = _html_items(size) if shape == "large" else _html_nested(size)
+    assert size <= _utf8_len(text) < size * 11 // 10
+    perf_budget.within(
+        _HTML_STRESS_BUDGET_S, lambda: format_html(text), fixture=f"1 MB {shape} HTML"
+    )
 
 
 def _record(

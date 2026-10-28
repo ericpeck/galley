@@ -39,12 +39,31 @@ def _looks_like_yaml(line: str) -> bool:
     return bool(colon and key and (rest == "" or rest.startswith(" ")))
 
 
+def _looks_like_xml(line: str) -> bool:
+    """A leading ``<``, except the start of an HTML document (Bill, #63).
+
+    ``<!doctype html`` and ``<html``, in any case, are HTML's. They stay
+    unsettled until the HTML row arrives in slice 5.
+    """
+    if not line.startswith("<"):
+        return False
+    return not line.casefold().startswith(("<!doctype html", "<html"))
+
+
 # ``.jsonc`` and ``.json5`` are not mapped, since the JSON parser rejects
 # their comments and trailing commas.
 JSON = DocumentFormat("json", "JSON", (".json", ".geojson"), _looks_like_json, True)
 YAML = DocumentFormat("yaml", "YAML", (".yaml", ".yml"), _looks_like_yaml, True)
+# XML is formatted and checked, never converted (#63).
+XML = DocumentFormat(
+    "xml",
+    "XML",
+    (".xml", ".xsd", ".xsl", ".xslt", ".svg", ".xhtml"),
+    _looks_like_xml,
+    False,
+)
 
-FORMATS: tuple[DocumentFormat, ...] = (JSON, YAML)
+FORMATS: tuple[DocumentFormat, ...] = (JSON, YAML, XML)
 FORMAT_LABELS: tuple[str, ...] = tuple(fmt.label for fmt in FORMATS)
 
 

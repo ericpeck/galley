@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 from galley.app.editor import CodeEditor
 from galley.app.fonts import code_font
 from galley.app.icons import toolbar_icon
-from galley.app.limits import JSON_BUSY_BYTES, YAML_BUSY_BYTES
+from galley.app.limits import JSON_BUSY_BYTES, XML_BUSY_BYTES, YAML_BUSY_BYTES
 from galley.app.style import muted_text_style
 from galley.app.theme import error_color
 from galley.core.find import astral_offsets, find_starts, key_mask, utf16_offsets
@@ -52,6 +52,9 @@ NEXT_MATCH = "Next match"
 CLOSE_FIND_BAR = "Close find bar"
 MATCH_CASE = "Match case"
 KEYS_ONLY = "Keys only"
+KEYS_ONLY_TIP = "Match only object keys, not values"
+# Keys only stays visible but greyed out for a format with no keys (#63).
+KEYS_ONLY_NOT_APPLICABLE = "Keys only doesn't apply to {label}"
 _FIELD_MIN_WIDTH = 120
 _FIELD_MAX_WIDTH = 320
 _ERROR_BORDER = 2
@@ -154,6 +157,8 @@ class FindBar(QWidget):
         self._mask: tuple[str, str] | None = None
         self._move_on_search = True
         self._count = ""
+        # The format Keys only doesn't apply to, or "" when it applies.
+        self._keys_unavailable = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(FIND_DELAY_MS)
@@ -198,7 +203,7 @@ class FindBar(QWidget):
             self.keys_only = QCheckBox(KEYS_ONLY)
             self.keys_only.setObjectName(f"{name}FindKeysOnly")
             self.keys_only.setAccessibleName(KEYS_ONLY)
-            self.keys_only.setToolTip("Match object keys only, not values")
+            self.keys_only.setToolTip(KEYS_ONLY_TIP)
             self.keys_only.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             self.keys_only.toggled.connect(self._on_option_changed)
 
@@ -319,13 +324,31 @@ class FindBar(QWidget):
 
     def is_large(self) -> bool:
         """Whether the document is over its #42 busy size, so typing waits."""
-        limit = (
-            YAML_BUSY_BYTES if self._editor.syntax_mode() == "YAML" else JSON_BUSY_BYTES
-        )
+        limits = {"YAML": YAML_BUSY_BYTES, "XML": XML_BUSY_BYTES}
+        limit = limits.get(self._editor.syntax_mode(), JSON_BUSY_BYTES)
         return self._editor.document().characterCount() > limit
 
     def keys_only_active(self) -> bool:
-        return self.keys_only is not None and self.keys_only.isChecked()
+        """Keys only is on and applies. A greyed-out box keeps its check."""
+        box = self.keys_only
+        return box is not None and box.isChecked() and not self._keys_unavailable
+
+    def set_keys_only_unavailable(self, label: str) -> None:
+        """Grey out Keys only for format ``label``, or offer it again with "".
+
+        The box stays visible and keeps its check for when it applies again.
+        Its tooltip and accessible description say why it is greyed out.
+        """
+        box = self.keys_only
+        if box is None or label == self._keys_unavailable:
+            return
+        self._keys_unavailable = label
+        reason = KEYS_ONLY_NOT_APPLICABLE.format(label=label) if label else ""
+        box.setEnabled(not label)
+        box.setToolTip(reason or KEYS_ONLY_TIP)
+        box.setAccessibleDescription(reason)
+        if box.isChecked() and self._open:
+            self.search()
 
     # Events -------------------------------------------------------------
 

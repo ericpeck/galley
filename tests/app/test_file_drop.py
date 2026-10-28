@@ -223,6 +223,28 @@ def test_drop_over_typed_input_asks_before_replacing(qtbot, tmp_path) -> None:
     _wait_loaded(qtbot, window, _SAMPLE)
 
 
+def test_several_files_dropped_over_typed_input_say_so_after_replace(
+    qtbot, tmp_path
+) -> None:
+    """The count of dropped files survives the Replace question (#127)."""
+    paths = [tmp_path / name for name in ("one.json", "two.json", "three.yaml")]
+    for index, path in enumerate(paths):
+        _write(path, f'{{"file": {index}}}')
+    window = _show(qtbot)
+    editor = _input(window)
+    editor.setPlainText("typed")
+    mime = _files(*paths)
+    viewport = editor.viewport()
+
+    _drag(viewport, "enter", mime)
+    _drag(viewport, "drop", mime)
+    box = _require(window, "replaceInput")
+    assert box.text() == "Replace the current input with one.json?"
+    _click(box, "Replace")
+    _wait_loaded(qtbot, window, '{"file": 0}')
+    assert _status(window).text() == "Opened the first of 3 files."
+
+
 def test_drop_while_formatting_gets_no_outline_and_says_why(
     qtbot, tmp_path, monkeypatch
 ) -> None:

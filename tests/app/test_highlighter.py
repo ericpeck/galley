@@ -4,7 +4,14 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette, QTextDocument
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QPalette,
+    QTextCursor,
+    QTextDocument,
+)
 
 from galley.app.editor import CodeEditor
 from galley.app.highlighter import DARK_SYNTAX, LIGHT_SYNTAX, SyntaxHighlighter
@@ -386,3 +393,138 @@ def test_editor_recolors_when_the_scheme_changes(qtbot, color_scheme) -> None:
     _wait_for_palette(qtbot, editor, dark=False)
 
     assert _style(editor.document(), 2, '"name"') == KEY
+
+
+# --- XML (#63 slice 3): Bill's mapping onto the existing roles -------------
+
+PLAIN = ("", False)
+_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!DOCTYPE catalog SYSTEM "catalog.dtd">\n'
+    "<!-- fake catalog -->\n"
+    '<catalog xmlns:geo="urn:fake" id="c1">\n'
+    "  <item sku='A-1'>Widget &amp; co</item>\n"
+    "  <geo:point/>\n"
+    "  <note><![CDATA[a < b]]></note>\n"
+    "  <?app run?>\n"
+    "</catalog>\n"
+)
+
+
+def test_xml_colors_names_attributes_values_and_markup() -> None:
+    document, _highlighter = _document(_XML, "XML")
+
+    assert _style(document, 4, "catalog") == KEY
+    assert _style(document, 5, "item") == KEY
+    assert _style(document, 5, "item", last=True) == KEY
+    assert _style(document, 6, "geo:point") == KEY
+    assert _style(document, 9, "catalog") == KEY
+    assert _style(document, 4, "xmlns:geo") == PUNCT
+    assert _style(document, 4, "id") == PUNCT
+    assert _style(document, 4, "=") == PUNCT
+    assert _style(document, 5, "<") == PUNCT
+    assert _style(document, 5, "</") == PUNCT
+    assert _style(document, 6, "/>") == PUNCT
+    assert _style(document, 4, '"c1"') == STR
+    assert _style(document, 5, "'A-1'") == STR
+    assert _style(document, 1, '<?xml version="1.0" encoding="UTF-8"?>') == PUNCT
+    assert _style(document, 2, '<!DOCTYPE catalog SYSTEM "catalog.dtd">') == PUNCT
+    assert _style(document, 3, "<!-- fake catalog -->") == PUNCT
+    assert _style(document, 8, "<?app run?>") == PUNCT
+    assert _style(document, 7, "<![CDATA[") == PUNCT
+    assert _style(document, 7, "]]>") == PUNCT
+    assert _style(document, 7, "a < b") == PLAIN
+    assert _style(document, 5, "Widget") == PLAIN
+    assert _style(document, 5, "&amp;") == PLAIN
+
+
+def test_xml_carries_open_markup_across_lines() -> None:
+    text = (
+        "<r>\n"
+        "  <!-- a\n"
+        "  long note -->\n"
+        '  <a b="one\n'
+        "  two\" c='x\n"
+        "  y'\n"
+        '     d="z">text</a>\n'
+        "  <![CDATA[ x\n"
+        "  <not-a-tag> ]]>\n"
+        "  <?pi first\n"
+        "  second?>\n"
+        "  <!DOCTYPE fake [\n"
+        "    <!ELEMENT r ANY>\n"
+        "  ]>\n"
+        "  <after/>\n"
+        "</r>\n"
+    )
+    document, _highlighter = _document(text, "XML")
+
+    assert _style(document, 3, "long note -->") == PUNCT
+    assert _style(document, 4, '"one') == STR
+    assert _style(document, 5, 'two"') == STR
+    assert _style(document, 5, "c") == PUNCT
+    assert _style(document, 6, "y'") == STR
+    assert _style(document, 7, "d") == PUNCT
+    assert _style(document, 7, '"z"') == STR
+    assert _style(document, 7, "text") == PLAIN
+    assert _style(document, 9, "<not-a-tag>") == PLAIN
+    assert _style(document, 9, "]]>") == PUNCT
+    assert _style(document, 11, "second?>") == PUNCT
+    assert _style(document, 13, "<!ELEMENT r ANY>") == PUNCT
+    assert _style(document, 14, "]>") == PUNCT
+    assert _style(document, 15, "after") == KEY
+    assert _style(document, 16, "r") == KEY
+
+
+def test_editing_a_line_recolors_the_lines_after_it() -> None:
+    document, _highlighter = _document("<r>\n<a/>\n</r>\n", "XML")
+    assert _style(document, 2, "a") == KEY
+
+    cursor = QTextCursor(document.findBlockByNumber(0))
+    cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+    cursor.insertText("<!--")
+
+    assert _style(document, 2, "<a/>") == PUNCT
+
+
+def test_editor_guesses_xml_from_a_leading_angle_bracket() -> None:
+    editor = CodeEditor()
+
+    editor.setPlainText("\n  " + _XML)
+    assert editor.syntax_mode() == "XML"
+    assert _style(editor.document(), 5, "catalog") == KEY
+
+    editor.setPlainText(_JSON)
+    assert editor.syntax_mode() == "JSON"
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_xml_colors_pass_contrast_on_their_base(
+    qtbot, color_scheme, dark: bool
+) -> None:
+    editor = CodeEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_XML)
+    color_scheme(dark)
+    _wait_for_palette(qtbot, editor, dark)
+    base = _base(editor)
+    band = editor.palette().color(QPalette.ColorRole.Midlight)
+    expected = DARK_SYNTAX if dark else LIGHT_SYNTAX
+    document = editor.document()
+    drawn = {
+        "element": _style(document, 4, "catalog")[0],
+        "attribute": _style(document, 4, "id")[0],
+        "value": _style(document, 4, '"c1"')[0],
+        "comment": _style(document, 3, "<!-- fake catalog -->")[0],
+    }
+    assert drawn == {
+        "element": expected.key,
+        "attribute": expected.punctuation,
+        "value": expected.string,
+        "comment": expected.punctuation,
+    }
+    assert _style(document, 5, "Widget") == PLAIN
+    for role, color in drawn.items():
+        for surface in (base, band):
+            ratio = _contrast(color, surface.name())
+            assert ratio >= _MIN_CONTRAST, (role, color, surface.name(), ratio)

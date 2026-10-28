@@ -1,4 +1,4 @@
-"""JSON, YAML, and XML formatting.
+"""JSON, YAML, XML, and HTML formatting.
 
 Invalid UTF-8, documents nested past ``MAX_DEPTH``, and JSON lone-surrogate
 escapes raise ``InputError``. So does a YAML surrogate escape on its way to
@@ -23,8 +23,9 @@ document that has an alias loads with the pure-Python parser, because the
 C parser gives each alias of a scalar its own string object.
 
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
-It reaches ``format_document`` once the format table has an XML row, which
-#63 slice 3 adds with the picker item.
+HTML is formatted by ``galley.core.html_format`` the same way, and is
+written only as HTML; its table row comes with the picker item in #63
+slice 5.
 """
 
 import datetime
@@ -77,6 +78,7 @@ from galley.core.errors import (
     utf8_input_error,
 )
 from galley.core.formats import format_named, targets_for
+from galley.core.html_format import format_html
 from galley.core.xml_format import format_xml
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
@@ -1262,12 +1264,13 @@ def format_document(
     """Format ``text`` from ``source`` into ``target``.
 
     ``source`` and ``target`` are format names (case-insensitive). Same-format
-    calls go through ``format_json``, ``format_yaml``, and ``format_xml``, so
-    located ``InputError`` checks stay exactly those functions. A pair
-    ``targets_for`` does not list raises ``ValueError``. ``sort_keys`` orders
-    JSON and YAML output keys with :func:`sort_mapping_keys`; XML ignores it.
-    ``prepare`` rewrites the loaded JSON or YAML value before it is written.
-    XML does not load to a value, so it raises ``ValueError`` with ``prepare``.
+    calls go through ``format_json``, ``format_yaml``, ``format_xml``, and
+    ``format_html``, so located ``InputError`` checks stay exactly those
+    functions. A pair ``targets_for`` does not list raises ``ValueError``.
+    ``sort_keys`` orders JSON and YAML output keys with
+    :func:`sort_mapping_keys`; XML and HTML ignore it. ``prepare`` rewrites
+    the loaded JSON or YAML value before it is written. XML and HTML do not
+    load to a value, so they raise ``ValueError`` with ``prepare``.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
@@ -1277,6 +1280,8 @@ def format_document(
         _value_format(source)
     if source_kind == "xml":
         return format_xml(text)
+    if source_kind == "html":
+        return format_html(text)
     if source_kind == "json" and target_kind == "json":
         return format_json(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "yaml" and target_kind == "yaml":
@@ -1422,6 +1427,23 @@ def _not_json_value(value: object) -> object:
     raise NotJSONValueError(f"JSON can't hold a {type(value).__name__} value")
 
 
+# The text of the two errors ``json.dumps`` raises before its hook runs. Like
+# ``InputError.kind`` they are names, and ``galley.app`` chooses the words.
+NOT_JSON_KEY = "not_json_key"
+SELF_REFERENCE = "self_reference"
+# The key types ``json.dumps`` writes; it turns numbers, bools and null into
+# strings.
+_JSON_KEY_TYPES = (str, int, float, bool, type(None))
+
+
+class NotJSONKeyError(NotJSONValueError):
+    """A YAML key JSON can't hold, such as a date or binary data."""
+
+
+class SelfReferenceError(NotJSONValueError):
+    """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
+
+
 def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
@@ -1442,13 +1464,48 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     can't hold a lone surrogate, and JSON input rejects one the same way.
     ``prepare`` goes to ``format_yaml``, so the rendered text is rewritten.
     A reload too deep for ruamel then walks the rendered text, not ``text``,
-    so a value ``prepare`` replaced can't come back.
+    so a value ``prepare`` replaced can't come back. A key JSON can't hold
+    raises ``NotJSONKeyError`` and an alias that contains itself raises
+    ``SelfReferenceError``, because ``json.dumps`` rejects both before its
+    ``default`` hook can.
     """
     rendered = format_yaml(text, prepare=prepare)
     value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
+    _check_json_shape(value)
     return value
+
+
+def _check_json_shape(value: object) -> None:
+    """Raise for a key JSON can't hold, or a mapping or list inside itself.
+
+    Each mapping and list is walked once, with an explicit stack, so an
+    alias shared many times costs no more than one copy. A list or mapping
+    still being walked when it is reached again contains itself.
+    """
+    walking: set[int] = set()
+    walked: set[int] = set()
+    stack: list[tuple[object, bool]] = [(value, False)]
+    while stack:
+        node, leaving = stack.pop()
+        if leaving:
+            walking.discard(id(node))
+            walked.add(id(node))
+            continue
+        if not isinstance(node, (dict, list)) or id(node) in walked:
+            continue
+        if id(node) in walking:
+            raise SelfReferenceError(SELF_REFERENCE)
+        walking.add(id(node))
+        stack.append((node, True))
+        if isinstance(node, dict):
+            if not all(isinstance(key, _JSON_KEY_TYPES) for key in node):
+                raise NotJSONKeyError(NOT_JSON_KEY)
+            children = node.values()
+        else:
+            children = node
+        stack.extend((child, False) for child in children)
 
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:
