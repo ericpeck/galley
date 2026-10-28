@@ -335,6 +335,67 @@ def test_the_line_column_fits_the_largest_line_number(qtbot, line: int) -> None:
         assert needed <= box, f"{text!r} needs {needed} px in a {box} px box"
 
 
+def _tied_line_texts_report() -> CompareReport:
+    """ "Line 18" and a Moved "22 → 24" have the same number of characters,
+    and the Moved one is wider in most fonts. The Moved row is also a group
+    child, which is not drawn until the group is expanded."""
+    changed = ChangeRow(
+        kind="changed",
+        glyph="~",
+        label="Changed",
+        path_text="a",
+        old=Summary("number", "1"),
+        new=Summary("number", "2"),
+        moved_to_text=None,
+        left_span=Span(18, 3, 18, 9),
+        right_span=Span(18, 3, 18, 9),
+        accessible_name="Changed, a, 1 to 2",
+    )
+    moved = ChangeRow(
+        kind="moved",
+        glyph="⇄",
+        label="Moved",
+        path_text="b.x",
+        old=Summary("number", "3"),
+        new=Summary("number", "3"),
+        moved_to_text="c.x",
+        left_span=Span(22, 3, 22, 9),
+        right_span=Span(24, 3, 24, 9),
+        accessible_name="Moved, b, x, now at c, x",
+    )
+    group = GroupRow(
+        path_text="d[0–1]",
+        first=0,
+        last=1,
+        text="d[0–1]: 2 items differ",
+        accessible_name="d, 0 to 1, 2 items differ",
+        children=(moved, changed),
+    )
+    return CompareReport((changed, moved, group), 4, SideMarks(), SideMarks())
+
+
+def test_every_line_text_gets_the_width_it_needs(qtbot) -> None:
+    report = _tied_line_texts_report()
+    pane = _pane(qtbot, report)
+    pane.model().set_expanded(2, True)
+    texts = [line_text(row) for row in report.rows]
+    texts += [line_text(child) for child in report.rows[2].children]
+    assert "Line 18" in texts and "22 → 24" in texts
+    drawn = _drawn(pane)
+    drawn_lines = [entry for entry in drawn if entry[0] in texts and entry[0]]
+    assert {text for text, *_ in drawn_lines} >= {"Line 18", "22 → 24"}
+    for text, box, needed in drawn:
+        assert needed <= box, f"{text!r} needs {needed} px in a {box} px box"
+    # Group children count whether or not they are shown.
+    pane.model().set_expanded(2, False)
+    for text, box, needed in _drawn(pane):
+        if text in texts:
+            metrics = QFontMetrics(pane.list_view().font())
+            widest = max(metrics.horizontalAdvance(t) for t in texts)
+            assert box >= widest, f"the column is {box} px; {widest} px is needed"
+            assert needed <= box
+
+
 def _changed(old: Summary, new: Summary) -> ChangeRow:
     span = Span(2, 3, 2, 9)
     return ChangeRow(
