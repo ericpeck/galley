@@ -16,7 +16,7 @@ One line a user would understand:
 - [ ] 0 behind `main` (syncs use merge commits only; no rebase or force-push)
 - [ ] Perf: for each perf test touched, worst macOS and Windows CI time vs its budget. Flag anything at 90% or more of budget for infra review.
 
-The nightly YAML parser comparison is not a required check; don't wait on it for a PR.
+YAML parser comparison and Disk image (macOS arm64) run only when a PR touches their paths. When they run, they must pass like the six required checks.
 
 | Test | macOS | Windows | Budget |
 | --- | --- | --- | --- |
