@@ -99,7 +99,7 @@ class ResultRow(QWidget):
         25 % white), which fades on the selection fill.
         """
         palette = selected_problem_palette(self.palette())
-        return _readable_on(self.selected_fill(), palette, role)
+        return readable_on(self.selected_fill(), palette, role)
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -115,23 +115,14 @@ class ResultRow(QWidget):
         del event
         if not self._selected and not self._focused:
             return
-        palette = selected_problem_palette(self.palette())
-        fill = palette.color(QPalette.ColorRole.Highlight)
-        accent = visible_edge(
-            palette.color(QPalette.ColorRole.Accent),
-            (fill, palette.color(QPalette.ColorRole.Window)),
-            _readable_on(fill, palette, QPalette.ColorRole.Text),
-        )
-        width, height = self.width(), self.height()
         painter = QPainter(self)
-        if self._selected:
-            painter.fillRect(self.rect(), fill)
-            painter.fillRect(QRect(0, 0, 3, height), accent)
-        if self._focused:
-            painter.fillRect(QRect(0, 0, width, 2), accent)
-            painter.fillRect(QRect(0, height - 2, width, 2), accent)
-            painter.fillRect(QRect(0, 0, 3, height), accent)
-            painter.fillRect(QRect(width - 2, 0, 2, height), accent)
+        paint_row_state(
+            painter,
+            self.rect(),
+            self.palette(),
+            selected=self._selected,
+            focused=self._focused,
+        )
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -251,15 +242,7 @@ class ResultsList(QListWidget):
             )
 
     def _note_focus_reason(self, reason: Qt.FocusReason) -> None:
-        if reason == Qt.FocusReason.MouseFocusReason:
-            self._keyboard_focus = False
-        elif reason not in (
-            Qt.FocusReason.ActiveWindowFocusReason,
-            Qt.FocusReason.PopupFocusReason,
-        ):
-            # Tab, Shift-Tab, shortcuts, and focus moved by a command.
-            # Returning to the window or closing a popup keeps the last mode.
-            self._keyboard_focus = True
+        self._keyboard_focus = keyboard_focus_after(reason, self._keyboard_focus)
 
     def _sync_row_heights(self) -> None:
         # Fit each row to the list's width, so a wrapped message that
@@ -496,6 +479,57 @@ class ResultsPanel(QWidget):
         )
 
 
+def paint_row_state(
+    painter: QPainter,
+    rect: QRect,
+    palette: QPalette,
+    *,
+    selected: bool,
+    focused: bool,
+) -> None:
+    """The selection fill and 3 px bar, and the 2 px focus outline (#68).
+
+    Every results list paints its rows' state with this, so the Problems
+    rows and the Changes rows look the same.
+    """
+    if not selected and not focused:
+        return
+    tinted = selected_problem_palette(palette)
+    fill = tinted.color(QPalette.ColorRole.Highlight)
+    accent = visible_edge(
+        tinted.color(QPalette.ColorRole.Accent),
+        (fill, tinted.color(QPalette.ColorRole.Window)),
+        readable_on(fill, tinted, QPalette.ColorRole.Text),
+    )
+    left, top, width, height = rect.x(), rect.y(), rect.width(), rect.height()
+    if selected:
+        painter.fillRect(rect, fill)
+        painter.fillRect(QRect(left, top, 3, height), accent)
+    if focused:
+        painter.fillRect(QRect(left, top, width, 2), accent)
+        painter.fillRect(QRect(left, top + height - 2, width, 2), accent)
+        painter.fillRect(QRect(left, top, 3, height), accent)
+        painter.fillRect(QRect(left + width - 2, top, 2, height), accent)
+
+
+def keyboard_focus_after(reason: Qt.FocusReason, keyboard_focus: bool) -> bool:
+    """Whether focus arriving for ``reason`` should show the outline.
+
+    The outline is for keyboard focus only, like ``:focus-visible``. A
+    click hides it. Returning to the window or closing a popup keeps the
+    last mode.
+    """
+    if reason == Qt.FocusReason.MouseFocusReason:
+        return False
+    if reason in (
+        Qt.FocusReason.ActiveWindowFocusReason,
+        Qt.FocusReason.PopupFocusReason,
+    ):
+        return keyboard_focus
+    # Tab, Shift-Tab, shortcuts, and focus moved by a command.
+    return True
+
+
 def set_style(widget: QWidget, sheet: str) -> None:
     """Set ``sheet`` only when it changed.
 
@@ -531,7 +565,7 @@ class _RowWidgetDelegate(QStyledItemDelegate):
         del painter, option, index
 
 
-def _readable_on(fill: QColor, palette: QPalette, role: QPalette.ColorRole) -> QColor:
+def readable_on(fill: QColor, palette: QPalette, role: QPalette.ColorRole) -> QColor:
     """``role`` made opaque on ``fill``, or full text if that is too faint."""
     color = composite(palette.color(role), fill)
     if contrast_ratio(color, fill) >= _TEXT_CONTRAST:
