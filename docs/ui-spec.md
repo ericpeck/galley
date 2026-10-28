@@ -403,7 +403,7 @@ Architecture:
 ## 12. Platform-swappable layer
 
 Isolate behind a `platform` module for macOS and Windows:
-- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About, Preferences, and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
+- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
 - **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).

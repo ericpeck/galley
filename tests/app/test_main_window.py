@@ -99,8 +99,8 @@ def _action(window, text: str) -> QAction:
 
 def _menu(window, title: str) -> QMenu:
     # PySide 6.9 drops the wrapper from QAction.menu() for the Galley menu
-    # once the temporary list from QMenuBar.actions() is released. About,
-    # Preferences, and Quit use menu roles. The menu is still in the bar;
+    # once the temporary list from QMenuBar.actions() is released. About
+    # and Quit use menu roles. The menu is still in the bar;
     # the object name set when it was created still finds it.
     menu = window.findChild(QMenu, "menu" + title.replace(" ", ""))
     assert menu is not None, title
@@ -158,11 +158,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     titles = [action.text() for action in window.menuBar().actions()]
     assert titles == ["Galley", "File", "Edit", "View", "Window", "Help"]
 
-    assert _labels(_menu(window, "Galley")) == [
-        "Preferences…",
-        "|",
-        "Quit",
-    ]
+    assert _labels(_menu(window, "Galley")) == ["Quit"]
     assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
     assert _labels(_menu(window, "Edit")) == [
         "Undo",
@@ -238,6 +234,92 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "Close others",
         "Close tabs to the right",
     ]
+
+
+def _menu_bar_actions(window) -> list[QAction]:
+    """Every item in the menu bar's menus, submenus included."""
+    found: list[QAction] = []
+
+    def walk(menu: QMenu) -> None:
+        children = menu.findChildren(QMenu, options=Qt.FindDirectChildrenOnly)
+        child_by_action = {id(child.menuAction()): child for child in children}
+        for action in menu.actions():
+            found.append(action)
+            child = child_by_action.get(id(action))
+            if child is not None:
+                walk(child)
+
+    for title in [action.text() for action in window.menuBar().actions()]:
+        walk(_menu(window, title))
+    return found
+
+
+def _app_menu_role(action: QAction) -> QAction.MenuRole:
+    """The role macOS gives an item, which decides if it moves to the app menu.
+
+    A TextHeuristicRole item moves by its text: About, Config, Preference,
+    Options, Setting, Setup, Quit, or Exit.
+    """
+    role = action.menuRole()
+    if role != QAction.MenuRole.TextHeuristicRole:
+        return role
+    text = action.text().replace("&", "").lower()
+    if text.startswith("about") or text.endswith("about"):
+        return QAction.MenuRole.AboutRole
+    if text.startswith(("config", "preference", "options", "setting", "setup")):
+        return QAction.MenuRole.PreferencesRole
+    if text.startswith(("quit", "exit")):
+        return QAction.MenuRole.QuitRole
+    return QAction.MenuRole.NoRole
+
+
+def test_preferences_is_removed(qtbot) -> None:
+    """Preferences isn't built for v1: no action, menu item, or shortcut."""
+    window = _show(qtbot)
+    assert not hasattr(window._actions, "preferences")
+    preferences_keys = {
+        _sequence_id(sequence)
+        for sequence in QKeySequence.keyBindings(QKeySequence.StandardKey.Preferences)
+        if not sequence.isEmpty()
+    }
+    for action in window.findChildren(QAction):
+        assert "preferences" not in action.text().lower(), action.text()
+        assert action.menuRole() != QAction.MenuRole.PreferencesRole, action.text()
+        keys = {_sequence_id(sequence) for sequence in action.shortcuts()}
+        assert keys.isdisjoint(preferences_keys), action.text()
+    for menu in window.findChildren(QMenu):
+        assert "preferences" not in menu.title().lower(), menu.title()
+
+
+def test_galley_menu_has_no_dangling_separator(qtbot) -> None:
+    window = _show(qtbot)
+    galley = _menu(window, "Galley")
+    assert _labels(galley) == ["Quit"]
+    assert [action.menuRole() for action in galley.actions()] == [
+        QAction.MenuRole.QuitRole
+    ]
+    for title in [action.text() for action in window.menuBar().actions()]:
+        labels = _labels(_menu(window, title))
+        assert labels, title
+        assert labels[0] != "|", title
+        assert labels[-1] != "|", title
+        pairs = zip(labels, labels[1:], strict=False)
+        assert not any(a == b == "|" for a, b in pairs), title
+
+
+def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
+    window = _show(qtbot)
+    moved = {
+        action.text(): _app_menu_role(action)
+        for action in _menu_bar_actions(window)
+        if not action.isSeparator()
+        and _app_menu_role(action)
+        not in (QAction.MenuRole.NoRole, QAction.MenuRole.ApplicationSpecificRole)
+    }
+    assert moved == {
+        "About Galley": QAction.MenuRole.AboutRole,
+        "Quit": QAction.MenuRole.QuitRole,
+    }
 
 
 def test_view_defaults_match_spec(qtbot) -> None:
