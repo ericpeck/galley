@@ -626,7 +626,9 @@ def test_a_large_paste_into_input_or_output_colors_every_line(
         assert _cold_numbers(editor) == [], editor.objectName()
 
 
-def test_a_line_whose_coloring_raises_is_skipped_not_retried(qtbot, chunk: int) -> None:
+def test_a_line_whose_coloring_raises_is_skipped_not_retried(
+    qtbot, monkeypatch, chunk: int
+) -> None:
     """A raising ``highlightBlock`` leaves its line cold; the walk moves past
     it instead of retrying that line on every timer pass."""
     editor = _editor(qtbot, "JSON")
@@ -639,7 +641,9 @@ def test_a_line_whose_coloring_raises_is_skipped_not_retried(qtbot, chunk: int) 
             raise RuntimeError("bad line")
         original(text)
 
-    highlighter.highlightBlock = raising
+    # Undone at teardown: the closure and the highlighter would otherwise
+    # form a cycle that outlives the editor's C++ side.
+    monkeypatch.setattr(highlighter, "highlightBlock", raising)
     with qtbot.capture_exceptions() as raised:
         _replace_as_one_undo(editor, _json_lines(10 * chunk))
         assert editor.coloring_pending()

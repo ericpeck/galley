@@ -80,11 +80,13 @@ _FOLD_ARROW_BOX = 10
 # Quiet time after an edit in a folding editor before its ranges are found
 # again. Folds open on the edit itself.
 _FOLD_RESCAN_MS = 300
-# Cold blocks colored per pass once a document is set or colors turn on
-# (#117). A pass over 1000 JSON or YAML lines takes about 15 ms on an Apple
-# M-series Mac, so the event loop paints and reads input between passes.
-# The lines on screen are colored first, before each paint; the rest follow
-# on a zero-delay timer, in order from the top.
+# Cold blocks colored per pass once a document is set, colors turn on, or an
+# edit adds more lines than this (#117). A pass over 1000 JSON or YAML lines
+# takes 15 ms on an Apple M4 Pro and up to 35 ms on a slower Mac, so the
+# event loop paints and reads input between passes. The 1.44 MB JSON result
+# at the Convert limit takes 67 passes, 0.9 to 1.8 s of UI-thread time in
+# all. The lines on screen are colored first, before each paint; the rest
+# follow on a zero-delay timer, in order from the top.
 HIGHLIGHT_CHUNK_BLOCKS = 1000
 
 PROBLEM_MARKERS = "problem"
@@ -1072,6 +1074,8 @@ class CodeEditor(QPlainTextEdit):
         self._line_numbers.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
+        # Coloring here changes the layouts of the lines on screen, which
+        # queues one more repaint of them after this one.
         self._color_visible_cold_blocks()
         self._fold_summaries = []
         if not self._folded:
@@ -1544,11 +1548,24 @@ class CodeEditor(QPlainTextEdit):
         self._apply_display_options()
         if whole:
             self._begin_cold_pass()
-        elif self._cold_number is not None:
+            return
+        first = document.findBlock(position).blockNumber()
+        last_block = document.findBlock(position + added)
+        past = last_block.next()
+        if self._cold_number is not None:
             # Blocks above the edit are unchanged. Start the walk no lower
             # than the edit, whose blocks may have moved.
-            first = document.findBlock(position).blockNumber()
             self._cold_number = min(self._cold_number, first)
+            self._cold_timer.start()
+        elif self._highlighter.is_enabled() and (
+            last_block.blockNumber() - first >= HIGHLIGHT_CHUNK_BLOCKS
+            or (past.isValid() and self._highlighter.is_cold(past))
+        ):
+            # A paste, an undo or a redo that adds more lines than one chunk
+            # into a document with nothing pending: Qt's pass colors the
+            # first chunk of the new lines and leaves the rest cold, so the
+            # walk has to start again from the edit.
+            self._cold_number = first
             self._cold_timer.start()
 
     def _track_changed_blocks(self, position: int, added: int) -> None:
@@ -1620,9 +1637,13 @@ class CodeEditor(QPlainTextEdit):
         if not block.isValid():
             self._cold_number = None
             return
-        self._cold_number = block.blockNumber()
-        self._recolor(block, HIGHLIGHT_CHUNK_BLOCKS)
-        self._cold_timer.start()
+        try:
+            self._recolor(block, HIGHLIGHT_CHUNK_BLOCKS)
+        finally:
+            # Past this line whether or not its coloring raised: a line that
+            # stays cold must not be retried on every timer pass.
+            self._cold_number = block.blockNumber() + 1
+            self._cold_timer.start()
 
     def _color_visible_cold_blocks(self) -> None:
         """Color the cold lines on screen now, so a paint never shows plain text."""
