@@ -529,3 +529,121 @@ def test_a_long_line_still_switches_colors_off(qtbot, chunk: int) -> None:
     assert editor.coloring_pending()
     qtbot.waitUntil(lambda: not editor.coloring_pending())
     assert _cold_numbers(editor) == []
+
+
+def _settled(qtbot, editor: CodeEditor) -> None:
+    qtbot.waitUntil(lambda: not editor.coloring_pending())
+    assert not editor._cold_timer.isActive()
+
+
+def _eager_formats(qtbot, monkeypatch, mode: str, text: str) -> list:
+    """The colors one unlimited pass gives ``text``."""
+    monkeypatch.setattr(editor_module, "HIGHLIGHT_CHUNK_BLOCKS", 10**9)
+    eager = _editor(qtbot, mode)
+    _replace_as_one_undo(eager, text)
+    assert not eager.coloring_pending()
+    assert _cold_numbers(eager) == []
+    monkeypatch.setattr(editor_module, "HIGHLIGHT_CHUNK_BLOCKS", _CHUNK)
+    return _formats(eager)
+
+
+def _insert_at(editor: CodeEditor, operation: QTextCursor.MoveOperation, text: str):
+    cursor = QTextCursor(editor.document())
+    cursor.movePosition(operation)
+    cursor.insertText(text)
+
+
+def _paste_at_end(qtbot, editor: CodeEditor, chunk: int) -> None:
+    _insert_at(editor, QTextCursor.MoveOperation.End, _json_lines(20 * chunk))
+
+
+def _prepend(qtbot, editor: CodeEditor, chunk: int) -> None:
+    _insert_at(editor, QTextCursor.MoveOperation.Start, _json_lines(20 * chunk))
+
+
+def _delete_then_undo(qtbot, editor: CodeEditor, chunk: int) -> None:
+    _replace_as_one_undo(editor, _json_lines(15 * chunk))
+    _settled(qtbot, editor)
+    cursor = QTextCursor(_block(editor, 2))
+    cursor.movePosition(
+        QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.KeepAnchor, 10 * chunk
+    )
+    cursor.removeSelectedText()
+    assert editor.blockCount() < 6 * chunk
+    _settled(qtbot, editor)
+    editor.undo()
+
+
+def _paste_undo_redo(qtbot, editor: CodeEditor, chunk: int) -> None:
+    _paste_at_end(qtbot, editor, chunk)
+    _settled(qtbot, editor)
+    editor.undo()
+    assert editor.blockCount() < chunk
+    _settled(qtbot, editor)
+    editor.redo()
+
+
+_LARGE_EDITS: dict[str, Callable[[object, CodeEditor, int], None]] = {
+    "paste at end": _paste_at_end,
+    "prepend": _prepend,
+    "delete then undo": _delete_then_undo,
+    "paste, undo, redo": _paste_undo_redo,
+}
+
+
+@pytest.mark.parametrize("edit", list(_LARGE_EDITS))
+def test_a_large_edit_in_a_colored_document_colors_every_line(
+    qtbot, monkeypatch, chunk: int, edit: str
+) -> None:
+    """An edit that adds more lines than one chunk, into a document with
+    nothing pending, colors the rest of them on the timer."""
+    editor = _editor(qtbot, "JSON")
+    _replace_as_one_undo(editor, _json_lines(chunk // 10))
+    _settled(qtbot, editor)
+    assert _cold_numbers(editor) == []
+
+    _LARGE_EDITS[edit](qtbot, editor, chunk)
+    # Any lines left cold after the edit are colored in order, and the
+    # walk ends with the timer stopped.
+    assert editor.blockCount() > 5 * chunk
+    _settled(qtbot, editor)
+    assert _cold_numbers(editor) == []
+    assert _formats(editor) == _eager_formats(
+        qtbot, monkeypatch, "JSON", editor.toPlainText()
+    )
+
+
+def test_a_large_paste_into_input_or_output_colors_every_line(
+    qtbot, chunk: int
+) -> None:
+    window = _show_window(qtbot)
+    for editor in (window._input_pane.editor, window._output_pane.editor):
+        editor.set_syntax_mode("JSON")
+        _replace_as_one_undo(editor, _json_lines(chunk // 10))
+        _settled(qtbot, editor)
+        _paste_at_end(qtbot, editor, chunk)
+        _settled(qtbot, editor)
+        assert _cold_numbers(editor) == [], editor.objectName()
+
+
+def test_a_line_whose_coloring_raises_is_skipped_not_retried(qtbot, chunk: int) -> None:
+    """A raising ``highlightBlock`` leaves its line cold; the walk moves past
+    it instead of retrying that line on every timer pass."""
+    editor = _editor(qtbot, "JSON")
+    highlighter = editor._highlighter
+    original = highlighter.highlightBlock
+    bad = 3 * chunk + 7
+
+    def raising(text: str) -> None:
+        if highlighter.currentBlock().blockNumber() == bad:
+            raise RuntimeError("bad line")
+        original(text)
+
+    highlighter.highlightBlock = raising
+    with qtbot.capture_exceptions() as raised:
+        _replace_as_one_undo(editor, _json_lines(10 * chunk))
+        assert editor.coloring_pending()
+        _settled(qtbot, editor)
+    assert _cold_numbers(editor) == [bad]
+    # Once in the walk; the paints and the pass before it may add a couple.
+    assert 1 <= len(raised) <= 3
