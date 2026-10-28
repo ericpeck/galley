@@ -18,6 +18,7 @@ from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.problems_settings import problems_settings
 from galley.app.recent_files import (
+    CHECK_THREADS,
     RECENT_FILES_KEY,
     FileChecker,
     load_recent_files,
@@ -327,6 +328,32 @@ def test_a_stuck_file_holds_one_check_and_not_the_others(
     slow_stat.release()
     _settle(qtbot, window)
     assert _entries(window)[0].text() == "stuck.json"
+
+
+def test_stuck_checks_in_two_windows_share_the_slots(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    stuck = [
+        _write(tmp_path / "share" / f"lost{index}.json")
+        for index in range(CHECK_THREADS + 1)
+    ]
+    for path in stuck:
+        remember_recent_file(path)
+    slow_stat.hold(*stuck)
+    first = _show(qtbot, settle=False)
+    second = _show(qtbot, settle=False)
+
+    # Every row in both windows has a check, but only the slots reach stat.
+    qtbot.waitUntil(lambda: len(slow_stat.calls) >= CHECK_THREADS)
+    qtbot.wait(200)
+    assert slow_stat.most_at_once == CHECK_THREADS
+    assert len(slow_stat.calls) == CHECK_THREADS
+
+    slow_stat.release()
+    _settle(qtbot, first)
+    _settle(qtbot, second)
+    assert slow_stat.most_at_once == CHECK_THREADS
+    assert len(slow_stat.calls) == 2 * len(stuck)
 
 
 def test_choosing_a_row_before_its_check_returns_opens_it(
@@ -672,6 +699,8 @@ class _SlowStat:
         self._lock = threading.Lock()
         self.calls: list[Path] = []
         self.main_thread_calls: list[Path] = []
+        self._inside = 0
+        self.most_at_once = 0
 
     def hold(self, *paths: Path) -> None:
         self._held.update(os.fspath(path) for path in paths)
@@ -690,8 +719,12 @@ class _SlowStat:
             return
         with self._lock:
             self.calls.append(path)
+            self._inside += 1
+            self.most_at_once = max(self.most_at_once, self._inside)
         # A hang guard, not a timing: a check never outlives the test.
         self._gate.wait(10)
+        with self._lock:
+            self._inside -= 1
 
 
 @pytest.fixture
