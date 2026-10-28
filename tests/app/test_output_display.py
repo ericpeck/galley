@@ -10,13 +10,15 @@ that every line still ends up with the colors an eager pass gives it.
 """
 
 import json
+import time
 from collections.abc import Callable
 
 import pytest
 import ruamel.yaml.main as ruamel_main
 from benchmarks.size_bench import render_python_literal
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QImage, QTextBlock, QTextCursor
-from tests.perf import time_runs
+from tests.perf import STRICT, TIMED_RUNS, WARMUP_RUNS, Timing, current_mode, time_runs
 
 import galley.app.editor as editor_module
 import galley.core.format as format_module
@@ -27,10 +29,14 @@ from galley.app.main_window import _replace_as_one_undo, si_size
 from galley.core.convert_python import ConvertResult, convert_python
 from galley.core.folds import fold_ranges, line_count
 
-# Placeholders until Isaac sets the budgets from the worst CI times (worst
-# x 1.25, rounded up to the next 0.1 s). Local medians are about 0.22 s for
-# the JSON result and 0.05 s for YAML.
-_OUTPUT_BUDGET_S = {"JSON": 0.6, "YAML": 0.3}
+# Isaac's budgets from the worst CI medians at 04dd435 (JSON 445.8 ms on
+# Windows, YAML 74.5 ms on macOS) x 1.25, rounded up. Local medians are
+# about 0.22 s for the JSON result and 0.03 s for YAML.
+_OUTPUT_BUDGET_S = {"JSON": 0.6, "YAML": 0.10}
+# Isaac's budget for the longest UI-thread pause while the rest of a result
+# is colored in the background: the largest gap between heartbeat ticks.
+_PAUSE_BUDGET_S = 0.2
+_HEARTBEAT_MS = 5
 _RESULTS = pytest.mark.parametrize(
     ("target", "engine"),
     [("JSON", "c"), ("YAML", "c"), ("YAML", "pure")],
@@ -144,6 +150,62 @@ def test_showing_a_result_in_output_is_within_budget(
     )
     perf_budget.within(_OUTPUT_BUDGET_S[target], show, fixture=fixture, setup=clear)
     qtbot.waitUntil(lambda: not output.coloring_pending(), timeout=60_000)
+
+
+@pytest.mark.perf
+def test_background_coloring_never_blocks_the_ui_thread(
+    perf_budget, qtbot, qapp
+) -> None:
+    """The chunks that color the rest of a result keep the UI thread free.
+
+    A heartbeat ticks on the UI thread from the moment the 1.4 MB JSON
+    result is shown until every block is colored. The largest gap between
+    ticks is the longest the UI thread was blocked by a chunk and the paint
+    around it. As in ``test_mask_session``, gate mode checks the median of
+    the runs' largest gaps and strict mode the largest gap of all. Showing
+    the result itself is the other test's budget.
+    """
+    text = _result_text("JSON")
+    window = _show_window(qtbot)
+    output = window._output_pane.editor
+    output.set_syntax_mode("JSON")
+    folds = fold_ranges(text, "json")
+    lines = line_count(text)
+    gaps = []
+    for _ in range(WARMUP_RUNS + TIMED_RUNS):
+        output.setPlainText("")
+        qapp.processEvents()
+        _replace_as_one_undo(output, text)
+        output.set_fold_ranges(folds, lines)
+        assert output.coloring_pending()
+        gaps.append(_largest_gap(qtbot, output))
+        assert _cold_numbers(output) == []
+    largest = Timing(tuple(gaps[WARMUP_RUNS:]))
+    if current_mode() == STRICT:
+        largest = Timing((max(largest.samples),))
+    perf_budget.check(
+        largest,
+        _PAUSE_BUDGET_S,
+        fixture=(
+            f"1.4 MB JSON result, chunks of {editor_module.HIGHLIGHT_CHUNK_BLOCKS} "
+            "lines: largest UI-thread gap"
+        ),
+    )
+
+
+def _largest_gap(qtbot, editor: CodeEditor) -> float:
+    """Let the coloring finish and return the largest gap between heartbeats."""
+    ticks = [time.monotonic()]
+    heartbeat = QTimer()
+    heartbeat.setInterval(_HEARTBEAT_MS)
+    heartbeat.timeout.connect(lambda: ticks.append(time.monotonic()))
+    heartbeat.start()
+    try:
+        qtbot.waitUntil(lambda: not editor.coloring_pending(), timeout=120_000)
+        ticks.append(time.monotonic())
+    finally:
+        heartbeat.stop()
+    return max(later - earlier for earlier, later in zip(ticks, ticks[1:]))
 
 
 def _json_lines(count: int) -> str:
