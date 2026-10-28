@@ -348,7 +348,7 @@ def test_choosing_a_row_before_its_check_returns_opens_it(
 def test_building_the_menu_with_a_slow_disk_is_within_budget(
     qtbot, tmp_path, slow_stat, perf_budget
 ) -> None:
-    """Placeholder budget: Isaac sets it at the worst CI median × 1.25."""
+    """10 ms to build the menu while every file's stat hangs."""
     paths = [_write(tmp_path / f"file{index}.json") for index in range(10)]
     for path in paths:
         remember_recent_file(path)
@@ -518,7 +518,9 @@ def test_recent_entries_reach_four_and_a_half_to_one(
     recent.close()
 
 
-_SLOW_DISK_BUILD_S = 0.05
+# Worst CI median 1.0 ms (Windows) x 1.25, rounded up to the next 0.01 s:
+# budgets under 0.1 s round up that way (Isaac).
+_SLOW_DISK_BUILD_S = 0.01
 
 
 class _SlowStat:
