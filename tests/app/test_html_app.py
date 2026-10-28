@@ -28,6 +28,7 @@ from galley.app.main_window import (
     _busy_progress_bytes,
     _format_limit_bytes,
     _warning_bytes,
+    si_size_up,
 )
 from galley.app.pane import PaneWidget
 from galley.app.problem_text import _html_text, display_problem, message_for
@@ -306,9 +307,9 @@ def test_format_refuses_markup_over_two_megabytes(qtbot, fmt: str) -> None:
 
     window._actions.format.trigger()
 
+    # Just over the limit, the size rounds up, so it never reads as 2 MB.
     assert _status(window).text() == (
-        f"This document is too large to format ({size / 1_000_000:.1f} MB). "
-        "The limit is 2 MB."
+        "This document is too large to format (2.1 MB). The limit is 2 MB."
     )
     assert not window._formatting
     assert window.findChild(QMessageBox, "sizeWarning") is None
@@ -337,6 +338,25 @@ def test_markup_at_the_limit_still_formats_after_the_size_prompt(qtbot) -> None:
     # At the limit, the usual size prompt asks, as for any large document.
     qtbot.waitUntil(lambda: window.findChild(QMessageBox, "sizeWarning") is not None)
     assert "too large" not in _status(window).text()
+
+
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [
+        (205, "205 B"),
+        (2_500, "2.5 KB"),
+        (250_000, "250 KB"),
+        (3_300_000, "3.3 MB"),
+        (2_000_000, "2 MB"),
+        (2_000_001, "2.1 MB"),
+        (2_048_023, "2.1 MB"),
+        (1_000_001, "1.1 MB"),
+        (192_001, "192.1 KB"),
+    ],
+)
+def test_too_large_sizes_round_up(size: int, shown: str) -> None:
+    """Bill's #148 rule: a size just over a limit never reads as the limit."""
+    assert si_size_up(size) == shown
 
 
 # --- Problem sentences (Bill's slice 5 wording) -------------------------------
