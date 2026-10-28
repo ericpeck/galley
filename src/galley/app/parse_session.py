@@ -33,7 +33,7 @@ from queue import Empty
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from galley.app.banner import FORMATTER_STOPPED, banner_text
-from galley.app.escape_string import NOT_JSON_VALUE_MESSAGE
+from galley.app.escape_string import not_json_text
 from galley.app.problem_text import (
     DisplayProblem,
     display_input_error,
@@ -838,7 +838,8 @@ def _failure_text(event: FailureEvent) -> str:
     Other failures keep their message.
     """
     if event.not_json_value:
-        return NOT_JSON_VALUE_MESSAGE
+        # The message is the error's kind, also when masking rebuilt it.
+        return not_json_text(event.message)
     if event.error is None:
         return event.message
     return banner_text(event.error)
