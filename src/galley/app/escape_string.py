@@ -58,6 +58,14 @@ def unescape_too_large_message(size: str, limit: str) -> str:
     return f"This document is too large to unescape ({size}). The limit is {limit}."
 
 
+def format_too_large_message(size: str, limit: str) -> str:
+    """Status when XML or HTML Input is larger than Format takes.
+
+    The same sentence as Escape's, which #104 set for every size limit.
+    """
+    return f"This document is too large to format ({size}). The limit is {limit}."
+
+
 def convert_python_too_large_message(size: str) -> str:
     """Status when Input is too large for Convert from Python on the UI thread.
 

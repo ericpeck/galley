@@ -30,7 +30,8 @@ def test_format_xml_is_a_plain_corpus_ui_row_on_the_json_ladder() -> None:
     assert operation.fn is format_xml
     assert _operation_selected(operation, "plain")
     assert not _operation_selected(operation, "realistic")
-    assert DEFAULT_XML_SIZES_MB == DEFAULT_JSON_SIZES_MB
+    # The JSON ladder, plus the 2 MB Format limit XML shares with HTML.
+    assert DEFAULT_XML_SIZES_MB == (1, 2, *DEFAULT_JSON_SIZES_MB[1:])
     assert _sizes_for_operation(operation, None) == [
         float(size) for size in DEFAULT_XML_SIZES_MB
     ]

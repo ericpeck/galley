@@ -64,6 +64,7 @@ from galley.app.escape_string import (
     convert_python_too_large_message,
     escape_input,
     escape_too_large_message,
+    format_too_large_message,
     unescape_input,
     unescape_too_large_message,
 )
@@ -76,9 +77,13 @@ from galley.app.icons import toolbar_icon
 from galley.app.limits import (
     _SI_KB,
     _SI_MB,
+    HTML_BUSY_BYTES,
+    HTML_PROGRESS_BYTES,
+    HTML_WARNING_BYTES,
     JSON_BUSY_BYTES,
     JSON_PROGRESS_BYTES,
     JSON_WARNING_BYTES,
+    MARKUP_FORMAT_LIMIT_BYTES,
     PYTHON_TO_JSON_BYTES,
     PYTHON_TO_YAML_BYTES,
     XML_BUSY_BYTES,
@@ -153,7 +158,7 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
-from galley.core.formats import XML, YAML, format_named, targets_for
+from galley.core.formats import HTML, XML, YAML, format_named, targets_for
 from galley.core.load import LoadedDocument, LoadError
 from galley.core.mask import CopyAsMode, CopyAsResult
 from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
@@ -816,6 +821,13 @@ class MainWindow(QMainWindow):
             return
         source = self._input_pane.format_name()
         size = _utf8_size(text)
+        limit = _format_limit_bytes(source)
+        if limit is not None and size > limit:
+            # Like #104's guard: nothing is parsed, and both panes stay.
+            self._status.set_state(
+                format_too_large_message(si_size(size), si_size(limit))
+            )
+            return
         if size >= _warning_bytes(source) and not self._size_warning_accepted:
             self._open_size_warning(text, size)
             return
@@ -1313,6 +1325,9 @@ class MainWindow(QMainWindow):
             status = "Valid YAML"
         elif target == "xml":
             status = "Valid XML"
+        elif target == "html":
+            # Not "Valid": the HTML check reads the tag structure only (Bill).
+            status = "Formatted HTML"
         else:
             status = "Valid JSON"
         if self._format_sorted:
@@ -2041,6 +2056,8 @@ def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
     if fmt is XML:
         return XML_BUSY_BYTES, XML_PROGRESS_BYTES
+    if fmt is HTML:
+        return HTML_BUSY_BYTES, HTML_PROGRESS_BYTES
     return JSON_BUSY_BYTES, JSON_PROGRESS_BYTES
 
 
@@ -2048,9 +2065,18 @@ def _warning_bytes(source: str) -> int:
     fmt = format_named(source)
     if fmt is XML:
         return XML_WARNING_BYTES
+    if fmt is HTML:
+        return HTML_WARNING_BYTES
     if fmt is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
+
+
+def _format_limit_bytes(source: str) -> int | None:
+    """The size Format refuses ``source`` above, or None for no limit."""
+    if format_named(source) in (XML, HTML):
+        return MARKUP_FORMAT_LIMIT_BYTES
+    return None
 
 
 def compare_needs_size_warning(

@@ -39,7 +39,12 @@ from PySide6.QtWidgets import (
 from galley.app.editor import CodeEditor
 from galley.app.fonts import code_font
 from galley.app.icons import toolbar_icon
-from galley.app.limits import JSON_BUSY_BYTES, XML_BUSY_BYTES, YAML_BUSY_BYTES
+from galley.app.limits import (
+    HTML_BUSY_BYTES,
+    JSON_BUSY_BYTES,
+    XML_BUSY_BYTES,
+    YAML_BUSY_BYTES,
+)
 from galley.app.style import muted_text_style
 from galley.app.theme import error_color
 from galley.core.find import astral_offsets, find_starts, key_mask, utf16_offsets
@@ -324,7 +329,11 @@ class FindBar(QWidget):
 
     def is_large(self) -> bool:
         """Whether the document is over its #42 busy size, so typing waits."""
-        limits = {"YAML": YAML_BUSY_BYTES, "XML": XML_BUSY_BYTES}
+        limits = {
+            "YAML": YAML_BUSY_BYTES,
+            "XML": XML_BUSY_BYTES,
+            "HTML": HTML_BUSY_BYTES,
+        }
         limit = limits.get(self._editor.syntax_mode(), JSON_BUSY_BYTES)
         return self._editor.document().characterCount() > limit
 
