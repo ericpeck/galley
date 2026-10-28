@@ -1,9 +1,16 @@
 """File › Open Recent lists opened files and reopens them through Open (#85)."""
 
+import itertools
+import os
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QThreadPool
 from PySide6.QtGui import QAccessible, QAction, QColor, QImage, QPalette
 from PySide6.QtWidgets import QLabel, QMenu, QMessageBox
 
@@ -11,7 +18,9 @@ from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.problems_settings import problems_settings
 from galley.app.recent_files import (
+    CHECK_THREADS,
     RECENT_FILES_KEY,
+    FileChecker,
     load_recent_files,
     remember_recent_file,
 )
@@ -170,11 +179,16 @@ def test_the_menu_rechecks_files_each_time_it_opens(qtbot, tmp_path) -> None:
 
     path.unlink()
     recent.aboutToShow.emit()
+    # The menu shows the last answer until the new check comes back.
+    assert _entries(window)[0].isEnabled()
+    _settle(qtbot, window)
     assert not _entries(window)[0].isEnabled()
     assert _entries(window)[0].text() == "flaky.json (not found)"
 
     _write(path)
     recent.aboutToShow.emit()
+    assert not _entries(window)[0].isEnabled()
+    _settle(qtbot, window)
     assert _entries(window)[0].isEnabled()
     assert _entries(window)[0].text() == "flaky.json"
 
@@ -196,6 +210,7 @@ def test_a_file_deleted_after_the_menu_opened_reports_it(qtbot, tmp_path) -> Non
     assert editor.toPlainText() == ""
     assert load_recent_files() == [str(path)]
     _recent(window).aboutToShow.emit()
+    _settle(qtbot, window)
     assert not _entries(window)[0].isEnabled()
     assert _entries(window)[0].text() == "moved.json (not found)"
 
@@ -254,6 +269,219 @@ def test_another_window_sees_new_files_when_its_menu_opens(
     _recent(second).aboutToShow.emit()
 
     assert _labels(_recent(second))[0] == "shared.json"
+
+
+def test_the_menu_opens_without_waiting_on_a_slow_disk(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    kept = _write(tmp_path / "kept.json")
+    gone = _write(tmp_path / "gone.json")
+    remember_recent_file(gone)
+    remember_recent_file(kept)
+    slow_stat.hold(kept, gone)
+    window = _show(qtbot, settle=False)
+    recent = _recent(window)
+    gone.unlink()
+
+    recent.aboutToShow.emit()
+
+    # Built while every stat is still stuck: both rows, both enabled.
+    assert _labels(recent) == ["kept.json", "gone.json", "|", "Clear Menu"]
+    assert all(action.isEnabled() for action in _entries(window))
+    assert recent.checking()
+    qtbot.waitUntil(lambda: len(slow_stat.calls) == 2)
+    assert slow_stat.main_thread_calls == []
+
+    slow_stat.release()
+    _settle(qtbot, window)
+
+    kept_action, gone_action = _entries(window)
+    assert kept_action.text() == "kept.json"
+    assert kept_action.isEnabled()
+    assert gone_action.text() == "gone.json (not found)"
+    assert not gone_action.isEnabled()
+    assert gone_action.toolTip() == "File not found"
+    assert slow_stat.main_thread_calls == []
+
+
+def test_a_stuck_file_holds_one_check_and_not_the_others(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    stuck = _write(tmp_path / "stuck.json")
+    gone = _write(tmp_path / "gone.json")
+    remember_recent_file(gone)
+    remember_recent_file(stuck)
+    gone.unlink()
+    slow_stat.hold(stuck)
+    window = _show(qtbot, settle=False)
+    recent = _recent(window)
+
+    # The missing file's answer arrives while stuck.json's stat hangs.
+    qtbot.waitUntil(lambda: _entries(window)[1].text() == "gone.json (not found)")
+    for _ in range(3):
+        recent.aboutToShow.emit()
+    assert _entries(window)[1].text() == "gone.json (not found)"
+    assert _entries(window)[0].isEnabled()
+    assert recent.checking()
+    assert slow_stat.calls == [stuck]
+
+    slow_stat.release()
+    _settle(qtbot, window)
+    assert _entries(window)[0].text() == "stuck.json"
+
+
+def test_stuck_checks_in_two_windows_share_the_slots(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    stuck = [
+        _write(tmp_path / "share" / f"lost{index}.json")
+        for index in range(CHECK_THREADS + 1)
+    ]
+    for path in stuck:
+        remember_recent_file(path)
+    slow_stat.hold(*stuck)
+    first = _show(qtbot, settle=False)
+    second = _show(qtbot, settle=False)
+
+    # Every row in both windows has a check, but only the slots reach stat.
+    qtbot.waitUntil(lambda: len(slow_stat.calls) >= CHECK_THREADS)
+    qtbot.wait(200)
+    assert slow_stat.most_at_once == CHECK_THREADS
+    assert len(slow_stat.calls) == CHECK_THREADS
+
+    slow_stat.release()
+    _settle(qtbot, first)
+    _settle(qtbot, second)
+    assert slow_stat.most_at_once == CHECK_THREADS
+    assert len(slow_stat.calls) == 2 * len(stuck)
+
+
+def test_choosing_a_row_before_its_check_returns_opens_it(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    path = _write(tmp_path / "early.json")
+    remember_recent_file(path)
+    slow_stat.hold(path)
+    window = _show(qtbot, settle=False)
+
+    _entries(window)[0].trigger()
+
+    # Open reads the file on its own thread while the menu's check hangs.
+    qtbot.waitUntil(lambda: _input(window).toPlainText() == _SAMPLE)
+    assert _recent(window).checking()
+    slow_stat.release()
+    _settle(qtbot, window)
+    assert slow_stat.main_thread_calls == []
+
+
+def test_the_checker_reports_files_through_its_stat_function(qtbot, tmp_path) -> None:
+    file = _write(tmp_path / "file.json")
+    folder = tmp_path / "folder.json"
+    folder.mkdir()
+    asked: list[tuple[str, bool]] = []
+
+    def fake_stat(entry: str) -> os.stat_result:
+        asked.append((entry, threading.current_thread() is threading.main_thread()))
+        if entry == "missing.json":
+            raise FileNotFoundError(entry)
+        if entry == "broken.json":
+            raise ValueError(entry)
+        return os.stat(entry)
+
+    checker = FileChecker(stat_file=fake_stat)
+    answers: dict[str, bool] = {}
+    checker.checked.connect(answers.__setitem__)
+    entries = [str(file), str(folder), "missing.json", "broken.json"]
+
+    checker.check(entries)
+    qtbot.waitUntil(lambda: not checker.busy())
+
+    assert answers == {
+        str(file): True,
+        str(folder): False,
+        "missing.json": False,
+        "broken.json": False,
+    }
+    assert sorted(asked) == sorted((entry, False) for entry in entries)
+
+
+def test_stuck_checks_do_not_delay_opening_a_healthy_file(
+    qtbot, tmp_path, monkeypatch, slow_stat
+) -> None:
+    stuck = [_write(tmp_path / "share" / f"lost{index}.json") for index in range(8)]
+    for path in stuck:
+        remember_recent_file(path)
+    slow_stat.hold(*stuck)
+    healthy = _write(tmp_path / "local.json")
+    # A small laptop: Open's reader shares no threads with recent checks.
+    pool = QThreadPool.globalInstance()
+    cores = pool.maxThreadCount()
+    pool.setMaxThreadCount(2)
+    try:
+        window = _show(qtbot, settle=False)
+        _recent(window).aboutToShow.emit()
+        qtbot.waitUntil(lambda: len(slow_stat.calls) >= 2)
+
+        _open_with_dialog(qtbot, monkeypatch, window, healthy, _SAMPLE)
+
+        assert _recent(window).checking()
+    finally:
+        slow_stat.release()
+        pool.setMaxThreadCount(cores)
+
+
+def test_quitting_does_not_wait_on_a_stuck_check(tmp_path) -> None:
+    stuck = _write(tmp_path / "share" / "lost.json")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    try:
+        finished = subprocess.run(
+            [sys.executable, "-c", _QUIT_WITH_A_STUCK_CHECK, str(tmp_path), str(stuck)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_QUIT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"Galley was still exiting {_QUIT_TIMEOUT_S} s after quit; "
+            f"it printed {exc.stdout!r}"
+        )
+    assert finished.returncode == 0, finished.stderr
+    assert finished.stdout.splitlines() == ["check started", "event loop done"]
+
+
+@pytest.mark.perf
+def test_building_the_menu_with_a_slow_disk_is_within_budget(
+    qtbot, tmp_path, slow_stat, perf_budget
+) -> None:
+    """10 ms to build the menu while every file's stat hangs.
+
+    Every run lists ten new files, so each build starts ten new checks. A
+    stat back on the UI thread sleeps 0.2 s and misses the budget.
+    """
+    window = _show(qtbot, settle=False)
+    recent = _recent(window)
+    runs = itertools.count()
+
+    def ten_new_files() -> None:
+        run = next(runs)
+        paths = [tmp_path / f"run{run}" / f"file{index}.json" for index in range(10)]
+        slow_stat.hold(*paths)
+        for path in paths:
+            remember_recent_file(path)
+
+    perf_budget.within(
+        _SLOW_DISK_BUILD_S,
+        recent.aboutToShow.emit,
+        setup=ten_new_files,
+        fixture="10 new recent files a build, every stat stuck",
+    )
+
+    assert len(_entries(window)) == 10
+    assert slow_stat.main_thread_calls == []
+    slow_stat.release()
+    _settle(qtbot, window)
 
 
 def test_settings_junk_is_ignored(qtbot, tmp_path) -> None:
@@ -406,6 +634,121 @@ def test_recent_entries_reach_four_and_a_half_to_one(
     recent.close()
 
 
+# Worst CI median 1.0 ms (Windows) x 1.25, rounded up to the next 0.01 s:
+# budgets under 0.1 s round up that way (Isaac).
+_SLOW_DISK_BUILD_S = 0.01
+
+
+# The child's stat hangs far longer than this, so only an exit that skips
+# the stuck check finishes in time.
+_QUIT_TIMEOUT_S = 30
+_QUIT_WITH_A_STUCK_CHECK = """
+import os, sys, threading, time
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtWidgets import QApplication
+
+settings_dir, stuck = sys.argv[1], sys.argv[2]
+app = QApplication([])
+QSettings.setPath(
+    QSettings.Format.IniFormat, QSettings.Scope.UserScope, settings_dir
+)
+started = threading.Event()
+
+from galley.app import recent_files
+from galley.app.main import create_main_window
+from galley.app.recent_files import remember_recent_file
+
+
+def slow_stat(entry):
+    if entry == stuck:
+        started.set()
+        time.sleep(600)
+    return os.stat(entry)
+
+
+recent_files.recent_stat = slow_stat
+
+remember_recent_file(Path(stuck))
+window = create_main_window()
+window.show()
+
+
+def quit_once_stuck():
+    if not started.is_set():
+        QTimer.singleShot(10, quit_once_stuck)
+        return
+    print("check started", flush=True)
+    window.close()
+    app.quit()
+
+
+QTimer.singleShot(0, quit_once_stuck)
+app.exec()
+print("event loop done", flush=True)
+"""
+
+
+class _SlowStat:
+    """A ``recent_stat`` that blocks on held paths until released."""
+
+    def __init__(self) -> None:
+        self._held: set[str] = set()
+        self._gate = threading.Event()
+        self._lock = threading.Lock()
+        self.calls: list[Path] = []
+        self.main_thread_calls: list[Path] = []
+        self._inside = 0
+        self.most_at_once = 0
+
+    def hold(self, *paths: Path) -> None:
+        self._held.update(os.fspath(path) for path in paths)
+
+    def release(self) -> None:
+        self._gate.set()
+
+    def wait_if_held(self, path: Path) -> None:
+        if os.fspath(path) not in self._held:
+            return
+        if threading.current_thread() is threading.main_thread():
+            # Never hang the test: record it, and cost what a slow disk
+            # would, so the perf budget fails too.
+            self.main_thread_calls.append(path)
+            time.sleep(0.2)
+            return
+        with self._lock:
+            self.calls.append(path)
+            self._inside += 1
+            self.most_at_once = max(self.most_at_once, self._inside)
+        # A hang guard, not a timing: a check never outlives the test.
+        self._gate.wait(10)
+        with self._lock:
+            self._inside -= 1
+
+
+@pytest.fixture
+def slow_stat(monkeypatch) -> Iterator[_SlowStat]:
+    """Replace the checks' stat only; Open's reader still reads the disk."""
+    slow = _SlowStat()
+
+    def _stat(entry: str) -> os.stat_result:
+        slow.wait_if_held(Path(entry))
+        return os.stat(entry)
+
+    monkeypatch.setattr("galley.app.recent_files.recent_stat", _stat)
+    yield slow
+    slow.release()
+    # Free the shared check slots before the next test.
+    for thread in threading.enumerate():
+        if thread.name == "Open Recent check":
+            thread.join(10)
+
+
+def _settle(qtbot, window) -> None:
+    qtbot.waitUntil(lambda: not _recent(window).checking())
+
+
 def _row(image: QImage, menu: QMenu, action: QAction) -> QImage:
     rect = menu.actionGeometry(action)
     ratio = image.devicePixelRatio()
@@ -436,11 +779,13 @@ def _open_with_dialog(qtbot, monkeypatch, window, path: Path, text: str) -> None
     )
 
 
-def _show(qtbot):
+def _show(qtbot, *, settle: bool = True):
     window = create_main_window()
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
+    if settle:
+        _settle(qtbot, window)
     return window
 
 
