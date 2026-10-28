@@ -148,7 +148,7 @@ class ChangesModel(QAbstractListModel):
         self._entries: list[_Entry] = []
         self._expanded: set[int] = set()
         self._stops: list[int] | None = None
-        self._widest_line = ""
+        self._line_texts: tuple[str, ...] = ()
 
     def set_report(self, report: CompareReport | None) -> None:
         """Show ``report``'s rows with every group collapsed."""
@@ -161,13 +161,13 @@ class ChangesModel(QAbstractListModel):
             for index, row in enumerate(rows)
         ]
         self._stops = None
-        self._widest_line = _widest_line_text(rows)
+        self._line_texts = _line_texts(rows)
         self.endResetModel()
 
-    def widest_line_text(self) -> str:
-        """The longest line-column text among every row, grouped ones too,
-        so the column fits the report's largest line number."""
-        return self._widest_line
+    def line_texts(self) -> tuple[str, ...]:
+        """Every distinct line-column text, group children included, so the
+        column can fit the widest one. A new tuple for each report."""
+        return self._line_texts
 
     def report(self) -> CompareReport | None:
         return self._report
@@ -299,15 +299,13 @@ class ChangesModel(QAbstractListModel):
         return self._stops
 
 
-def _widest_line_text(rows: tuple[ReportRow, ...]) -> str:
-    widest = ""
+def _line_texts(rows: tuple[ReportRow, ...]) -> tuple[str, ...]:
+    texts: set[str] = set()
     for row in rows:
         children = row.children if isinstance(row, GroupRow) else ()
-        for shown in (row, *children):
-            text = line_text(shown)
-            if len(text) > len(widest):
-                widest = text
-    return widest
+        texts.update(line_text(shown) for shown in (row, *children))
+    texts.discard("")
+    return tuple(sorted(texts))
 
 
 @dataclass(frozen=True)
@@ -357,6 +355,8 @@ class ChangesDelegate(QStyledItemDelegate):
     def __init__(self, view: "ChangesList") -> None:
         super().__init__(view)
         self._view = view
+        # (line texts, font key, width) for the last report and font.
+        self._line_column: tuple[tuple[str, ...], str, int] | None = None
 
     def sizeHint(
         self,
@@ -410,7 +410,7 @@ class ChangesDelegate(QStyledItemDelegate):
         bold.setBold(True)
         bold_metrics = QFontMetrics(bold)
         metrics = QFontMetrics(font)
-        line_width = self._line_width(metrics)
+        line_width = self._line_width(font)
         x = rect.left()
         painter.setFont(bold)
         painter.setPen(colors.glyph)
@@ -442,9 +442,19 @@ class ChangesDelegate(QStyledItemDelegate):
         painter.setPen(colors.muted)
         _draw(painter, line_left, rect, line_width, line_text(row), right=True)
 
-    def _line_width(self, metrics: QFontMetrics) -> int:
-        """The line column, as wide as the report's widest line text."""
-        return metrics.horizontalAdvance(self._view.model().widest_line_text())
+    def _line_width(self, font: QFont) -> int:
+        """The line column: the widest of the report's line texts in
+        ``font``, measured, not counted, since "22 → 24" is wider than
+        "Line 18". Cached per report and font."""
+        texts = self._view.model().line_texts()
+        key = font.key()
+        cached = self._line_column
+        if cached is not None and cached[0] is texts and cached[1] == key:
+            return cached[2]
+        metrics = QFontMetrics(font)
+        width = max((metrics.horizontalAdvance(text) for text in texts), default=0)
+        self._line_column = (texts, key, width)
+        return width
 
     def _paint_group(
         self,
@@ -458,7 +468,7 @@ class ChangesDelegate(QStyledItemDelegate):
         metrics = QFontMetrics(font)
         _paint_arrow(painter, rect, colors.text, expanded=expanded)
         x = rect.left() + _GLYPH_WIDTH + _GAP
-        line_width = self._line_width(metrics)
+        line_width = self._line_width(font)
         line_left = rect.right() - line_width
         width = max(0, line_left - _GAP - x)
         painter.setFont(font)
