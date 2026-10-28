@@ -13,7 +13,14 @@ from unittest import mock
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QFontMetrics, QPalette
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPalette,
+    QTextLayout,
+    QTextOption,
+)
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
 from galley.app import changes_pane as changes_pane_module
@@ -228,6 +235,63 @@ def test_the_line_column_fits_the_largest_line_number(qtbot, line: int) -> None:
     assert len(shown) == 1
     for text, box, needed in drawn:
         assert needed <= box, f"{text!r} needs {needed} px in a {box} px box"
+
+
+def _changed(old: Summary, new: Summary) -> ChangeRow:
+    span = Span(2, 3, 2, 9)
+    return ChangeRow(
+        kind="changed",
+        glyph="~",
+        label="Changed",
+        path_text="greeting",
+        old=old,
+        new=new,
+        moved_to_text=None,
+        left_span=span,
+        right_span=span,
+        accessible_name="Changed, greeting",
+    )
+
+
+# Fake right-to-left values: Hebrew "shalom" and "olam", Arabic "marhaba".
+_SHALOM = '"\u05e9\u05dc\u05d5\u05dd"'
+_OLAM = '"\u05e2\u05d5\u05dc\u05dd"'
+_MARHABA = '"\u0645\u0631\u062d\u0628\u0627"'
+
+
+def _visual_span(text: str, start: int, end: int) -> tuple[float, float]:
+    """Where ``text[start:end]`` lands, laid out the way the painter lays out
+    a row: the paragraph direction comes from the text itself."""
+    layout = QTextLayout(text, QFont())
+    option = QTextOption()
+    option.setTextDirection(Qt.LayoutDirection.LayoutDirectionAuto)
+    layout.setTextOption(option)
+    layout.beginLayout()
+    line = layout.createLine()
+    layout.endLayout()
+    xs = []
+    for index in range(start, end + 1):
+        x = line.cursorToX(index)
+        xs.append(x[0] if isinstance(x, tuple) else x)
+    return min(xs), max(xs)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (Summary("string", _SHALOM), Summary("string", _OLAM)),
+        (Summary("string", _SHALOM), Summary("number", "2")),
+        (Summary("number", "1"), Summary("string", _MARHABA)),
+    ],
+)
+def test_right_to_left_values_keep_old_before_new(old: Summary, new: Summary) -> None:
+    detail = change_detail(_changed(old, new))
+    old_at = detail.find(old.text)
+    new_at = detail.rfind(new.text)
+    assert 0 <= old_at < new_at
+    old_left, old_right = _visual_span(detail, old_at, old_at + len(old.text))
+    new_left, new_right = _visual_span(detail, new_at, new_at + len(new.text))
+    assert old_right <= new_left, (detail, (old_left, old_right), (new_left, new_right))
 
 
 # --- Keys -------------------------------------------------------------
