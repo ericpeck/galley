@@ -139,22 +139,13 @@ def _visit_output_footer(window, note: Callable[[QAction], None]) -> None:
 
 def _not_yet_menu_order(window) -> list[str]:
     """Not yet release labels as they first appear: menu bar, toolbar, footer."""
-    actions = window._actions
-    guides = {
-        id(actions.guides_off),
-        id(actions.guides_lines),
-        id(actions.guides_depth),
-    }
-    pending = {id(action) for action in actions._not_yet_actions()}
+    pending = {id(action) for action in window._actions._not_yet_actions()}
     found: list[str] = []
 
     def note(action: QAction) -> None:
         if id(action) not in pending:
             return
-        text = action.text()
-        if id(action) in guides:
-            text = f"Guides › {text}"
-        found.append(text)
+        found.append(action.text())
         pending.remove(id(action))
 
     _visit_shell(window, note)
@@ -545,35 +536,6 @@ def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
     assert submenu.menuAction().isEnabled()
 
 
-def test_indent_guides_are_coming_soon_and_off_stays_checked(qtbot) -> None:
-    window = _show(qtbot)
-    actions = window._actions
-    off, lines, depth = actions.guides_off, actions.guides_lines, actions.guides_depth
-    assert "Guides" in UNBUILT_ACTIONS
-    for action in (off, lines, depth):
-        assert is_unbuilt(action)
-        assert action.property("unbuiltName") == "Guides"
-        assert not action.isEnabled()
-        assert action.isVisible()
-        assert action.toolTip() == COMING_SOON
-        assert action.isCheckable()
-    assert off.isChecked()
-    assert not lines.isChecked()
-    assert not depth.isChecked()
-    lines.trigger()
-    depth.trigger()
-    assert off.isChecked()
-    assert not lines.isChecked()
-    assert not depth.isChecked()
-    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
-    message = release_failure()
-    assert message is not None
-    assert "Guides" in message
-    not_yet = not_yet_failure()
-    assert not_yet is not None
-    assert "Guides" not in not_yet
-
-
 def test_pop_out_is_coming_soon_without_a_status_message(qtbot) -> None:
     """#91 D8: Pop out and its Window menu items are disabled and Coming soon."""
     window = _show(qtbot)
@@ -642,3 +604,15 @@ def test_release_check_no_longer_lists_preferences() -> None:
     assert not_yet is not None
     assert "Preferences" not in coming
     assert "Preferences" not in not_yet
+
+
+def test_release_check_no_longer_lists_guides() -> None:
+    """Release-check PR 2b removed Indent Guides instead of building them."""
+    assert "Guides" not in UNBUILT_ACTIONS
+    assert "Guides" not in _ACTION_ATTRS
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    assert "Guides" not in coming
+    assert "Guides" not in not_yet

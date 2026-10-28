@@ -28,8 +28,6 @@ SPEC_COLORS = {
     "error.icon.ring": "#EEC3D4",
     "amber.tint": "#F1E3BE",
     "amber.ink": "#6E4604",
-    "guide.depth.blue": "#62C5EE",
-    "guide.depth.pink": "#FF90B1",
 }
 
 
