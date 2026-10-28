@@ -1,14 +1,20 @@
 """View › Font: Default Font, a picked monospace family, and the size steps.
 
 No test opens a real font dialog: ``QFontDialog.getFont`` is stubbed. No
-test names a family the runner must have. A picked family is any second
-monospace family the runner lists, and a test skips when there is none.
-Settings go to the throwaway INI folder from ``tests/app/conftest.py``.
+test needs a font the runner has installed. The offscreen Windows runner
+lists none. The picked family is the code test font that ``tests/conftest.py``
+loads from the repo. Default Font asks for the generic ``monospace`` family,
+so the two are different choices even though tests map ``monospace`` to
+that same font. For a proportional family, the same font is made to read as
+proportional. Settings go to the throwaway INI folder from
+``tests/app/conftest.py``.
 """
+
+import time
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QAction, QFont, QFontDatabase, QFontInfo, QKeySequence
+from PySide6.QtGui import QAction, QFont, QFontDatabase, QKeySequence
 from PySide6.QtWidgets import QApplication, QDialog, QFontDialog, QMenu
 from tests.app.test_large_file_stress import _document, _first_block_is_colored
 from tests.perf import time_runs
@@ -29,8 +35,10 @@ _FAMILY_KEY = "editor/font_family"
 _SIZE_KEY = "editor/font_size"
 _MISSING_FAMILY = "Galley Test Mono That Is Not Installed"
 _JSON_LINES = "".join(f'{{"id": {n}, "name": "row {n}"}}\n' for n in range(300))
-# A hang guard for coloring the 2 MB document, not a performance budget.
+# Hang guards, not performance budgets: coloring the 2 MB document, and
+# one timed font change reaching the editor.
 _COLORING_HANG_MS = 120_000
+_FONT_CHANGE_HANG_S = 10.0
 
 
 @pytest.fixture(autouse=True)
@@ -98,29 +106,24 @@ def _settled(qtbot, window, size: int) -> None:
     )
 
 
-def _monospace_family() -> str:
-    """A monospace family on this runner that Default Font does not resolve to."""
-    default = QFontInfo(code_font()).family()
-    for family in QFontDatabase.families():
-        if (
-            family != default
-            and not family.startswith(".")
-            and not QFontDatabase.isPrivateFamily(family)
-            and QFontDatabase.isFixedPitch(family)
-        ):
-            return family
-    pytest.skip("this runner lists no second monospace family")
+@pytest.fixture
+def mono(code_test_font: str) -> str:
+    """A monospace family every runner lists: the loaded code test font."""
+    assert QFontDatabase.isFixedPitch(code_test_font)
+    assert code_font().family() != code_test_font
+    return code_test_font
 
 
-def _proportional_family() -> str:
-    for family in QFontDatabase.families():
-        if (
-            not family.startswith(".")
-            and not QFontDatabase.isPrivateFamily(family)
-            and not QFontDatabase.isFixedPitch(family)
-        ):
-            return family
-    pytest.skip("this runner lists no proportional family")
+@pytest.fixture
+def proportional(monkeypatch: pytest.MonkeyPatch, code_test_font: str) -> str:
+    """A listed family that reads as proportional: the test font, patched."""
+    fixed_pitch = QFontDatabase.isFixedPitch
+
+    def is_fixed_pitch(family: str, style: str = "") -> bool:
+        return family != code_test_font and fixed_pitch(family, style)
+
+    monkeypatch.setattr(QFontDatabase, "isFixedPitch", staticmethod(is_fixed_pitch))
+    return code_test_font
 
 
 def _pick(monkeypatch, font: QFont | None) -> list[tuple]:
@@ -212,8 +215,10 @@ def test_font_items_keep_out_of_the_macos_app_menu(qtbot) -> None:
             assert action.menuRole() == QAction.MenuRole.NoRole, action.text()
 
 
-def test_choose_font_shows_the_family_checked_above_choose(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_choose_font_shows_the_family_checked_above_choose(
+    qtbot, monkeypatch, mono
+) -> None:
+    family = mono
     window = _show(qtbot)
     calls = _choose(qtbot, window, monkeypatch, family, 14)
 
@@ -243,8 +248,8 @@ def test_a_canceled_dialog_changes_nothing(qtbot, monkeypatch) -> None:
     assert problems_settings().value(_FAMILY_KEY) is None
 
 
-def test_a_proportional_pick_is_not_applied(qtbot, monkeypatch) -> None:
-    family = _proportional_family()
+def test_a_proportional_pick_is_not_applied(qtbot, monkeypatch, proportional) -> None:
+    family = proportional
     window = _show(qtbot)
     _pick(monkeypatch, QFont(family, 20))
     _item(window, "Choose Font…").trigger()
@@ -255,8 +260,8 @@ def test_a_proportional_pick_is_not_applied(qtbot, monkeypatch) -> None:
         assert editor.font().pointSize() == DEFAULT_SIZE
 
 
-def test_the_dialog_size_is_clamped(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_the_dialog_size_is_clamped(qtbot, monkeypatch, mono) -> None:
+    family = mono
     window = _show(qtbot)
     _pick(monkeypatch, QFont(family, 72))
     _item(window, "Choose Font…").trigger()
@@ -264,8 +269,10 @@ def test_the_dialog_size_is_clamped(qtbot, monkeypatch) -> None:
     assert _checked(window) == [family]
 
 
-def test_default_font_after_a_pick_keeps_the_family_item(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_default_font_after_a_pick_keeps_the_family_item(
+    qtbot, monkeypatch, mono
+) -> None:
+    family = mono
     window = _show(qtbot)
     _choose(qtbot, window, monkeypatch, family, 15)
     _item(window, "Default Font").trigger()
@@ -303,8 +310,8 @@ def test_size_steps_one_point_and_grey_out_at_the_limits(qtbot) -> None:
     assert application_editor_font().size() == MAX_SIZE
 
 
-def test_actual_size_resets_only_the_size(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_actual_size_resets_only_the_size(qtbot, monkeypatch, mono) -> None:
+    family = mono
     window = _show(qtbot)
     _choose(qtbot, window, monkeypatch, family, 20)
     assert _item(window, "Actual Size").isEnabled()
@@ -353,8 +360,8 @@ def test_five_bigger_steps_relayout_once(qtbot) -> None:
     assert int(problems_settings().value(_SIZE_KEY)) == DEFAULT_SIZE + 5
 
 
-def test_a_font_change_does_not_recolor(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_a_font_change_does_not_recolor(qtbot, monkeypatch, mono) -> None:
+    family = mono
     window = _show(qtbot)
     source = _editors(window)[0]
     source.setPlainText(_JSON_LINES)
@@ -389,8 +396,8 @@ def test_size_shortcuts_still_work_from_the_editor(qtbot) -> None:
     assert source.toPlainText() == ""
 
 
-def test_family_and_size_persist_across_a_restart(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_family_and_size_persist_across_a_restart(qtbot, monkeypatch, mono) -> None:
+    family = mono
     window = _show(qtbot)
     _choose(qtbot, window, monkeypatch, family, 16)
     _step(qtbot, window, "Bigger", 2)
@@ -410,8 +417,8 @@ def test_family_and_size_persist_across_a_restart(qtbot, monkeypatch) -> None:
     assert _checked(restarted) == [family]
 
 
-def test_default_font_persists_across_a_restart(qtbot, monkeypatch) -> None:
-    family = _monospace_family()
+def test_default_font_persists_across_a_restart(qtbot, monkeypatch, mono) -> None:
+    family = mono
     window = _show(qtbot)
     _choose(qtbot, window, monkeypatch, family, 13)
     _item(window, "Default Font").trigger()
@@ -425,8 +432,13 @@ def test_default_font_persists_across_a_restart(qtbot, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("saved", ["missing", "proportional"])
-def test_an_unusable_saved_family_falls_back_quietly(qtbot, saved: str) -> None:
-    family = _MISSING_FAMILY if saved == "missing" else _proportional_family()
+def test_an_unusable_saved_family_falls_back_quietly(
+    qtbot, request: pytest.FixtureRequest, saved: str
+) -> None:
+    if saved == "missing":
+        family = _MISSING_FAMILY
+    else:
+        family = request.getfixturevalue("proportional")
     _save(family, 17)
     window = _show(qtbot)
 
@@ -454,9 +466,14 @@ def test_a_saved_size_is_clamped(qtbot, saved, expected: int) -> None:
         assert editor.font().pointSize() == expected
 
 
-def _timed_change(qapp, window, change, done) -> None:
+def _timed_change(qapp, window, label: str, change, done) -> None:
     change()
+    deadline = time.monotonic() + _FONT_CHANGE_HANG_S
     while not done():
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"{label} did not reach the editor in {_FONT_CHANGE_HANG_S:g} s"
+            )
         qapp.processEvents()
     for editor in _editors(window):
         editor.viewport().repaint()
@@ -464,14 +481,16 @@ def _timed_change(qapp, window, change, done) -> None:
 
 @pytest.mark.perf
 def test_font_change_repaint_on_two_megabytes_is_timed(
-    qtbot, qapp, monkeypatch
+    qtbot, qapp, monkeypatch, mono
 ) -> None:
     """Time a size step and a family change to repaint on 2 MB of JSON.
 
     Provisional: the medians are printed with no budget. Infra sets the
-    budget under #152. Coloring must not run again either way.
+    budget under #152. Coloring must not run again either way. The family
+    change swaps Default Font and the code test font, which tests also
+    draw Default Font in, so it times the relayout, not a glyph change.
     """
-    other = _monospace_family()
+    other = mono
     window = _show(qtbot)
     window.resize(1280, 800)
     source = _editors(window)[0]
@@ -489,6 +508,7 @@ def test_font_change_repaint_on_two_megabytes_is_timed(
         _timed_change(
             qapp,
             window,
+            "size step",
             lambda: fonts.set_size(target),
             lambda: source.font().pointSize() == target,
         )
@@ -500,6 +520,7 @@ def test_font_change_repaint_on_two_megabytes_is_timed(
         _timed_change(
             qapp,
             window,
+            "family change",
             lambda: fonts.set_family(target),
             lambda: (source.font().family() == other) == bool(target),
         )
