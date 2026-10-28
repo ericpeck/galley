@@ -238,7 +238,7 @@ def change_row(change: Change) -> ChangeRow:
     elif kind == "removed":
         detail = _spoken_value(change.old)
     else:
-        detail = f"to {_spoken_path(change.moved_to or ())}"
+        detail = f"now at {_spoken_path(change.moved_to or ())}"
     return ChangeRow(
         kind=kind,
         glyph=KIND_GLYPHS[kind],
