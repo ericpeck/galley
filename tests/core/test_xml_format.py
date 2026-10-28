@@ -2,8 +2,7 @@
 
 Output is built from source slices, so the golden files pin every byte.
 Hostile DTDs live in ``test_hostile.py``. Worker jobs live in
-``test_worker.py``. XML has no row in the format table until slice 3, so
-tests that route it by name add the row from ``xml_row`` first.
+``test_worker.py``.
 """
 
 import os
@@ -15,7 +14,6 @@ from xml.parsers import expat
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from tests.core.xml_row import XML_ROW, add_xml_row
 
 from galley.core import xml_format
 from galley.core.diff import load_document as diff_load_document
@@ -24,6 +22,7 @@ from galley.core.escape import escape_document, unescape_document
 from galley.core.format import dump_value, format_document, load_document
 from galley.core.formats import (
     FORMATS,
+    XML,
     format_for_extension,
     format_named,
     sniff_format,
@@ -160,9 +159,27 @@ def test_validate_checks_without_output() -> None:
     [
         ("<r>\n  <a>\n  </b>\n</r>", "xml_mismatched_tag", 3, 3, "a"),
         ("<r>\n  <a>\n", "xml_unclosed", 2, 3, "a"),
-        ("<r>\n  a & b\n</r>", "xml_bad_token", 2, 6, ""),
+        ("<r>\n  a & b\n</r>", "xml_bad_token", 2, 5, ""),
+        # The column is the stray & or < itself, not the byte after it.
+        ("<r>\n  <name>A & B</name>\n</r>", "xml_bad_token", 2, 11, ""),
+        ("<r>\n  a < b\n</r>", "xml_bad_token", 2, 5, ""),
+        # A stray & that runs into a word: expat reads on as an entity name
+        # and stops later, but the column is still the & (#135 review).
+        ("<r>AT&T rocks</r>", "xml_bad_token", 1, 6, ""),
+        ("<r>R&D</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>a&b</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>x &nbsp y</r>", "xml_bad_token", 1, 6, ""),
+        ("<r>Tom & Jerry</r>", "xml_bad_token", 1, 8, ""),
+        ("<r>a&#;b</r>", "xml_bad_token", 1, 5, ""),
+        # Multibyte text before the & still counts one column per character.
+        ("<r>é&é</r>", "xml_bad_token", 1, 5, ""),
+        ("<r>日本&語</r>", "xml_bad_token", 1, 6, ""),
         ('<r a="<"/>', "xml_bad_token", 1, 7, ""),
         ("<r>\n  <a</r>", "xml_bad_token", 2, 5, ""),
+        # The text ends inside a tag: the column is the tag's <.
+        ('<item id="1', "xml_unfinished_tag", 1, 1, ""),
+        ('<r>\n  <item id="1', "xml_unfinished_tag", 2, 3, ""),
+        ("<r>\n</r", "xml_unfinished_tag", 2, 1, ""),
         ('<r>\n  <a x="1" y="2" x="3"/>\n</r>', "xml_duplicate_attribute", 2, 18, "x"),
         ("<r>\n  <a>&nbsp;</a>\n</r>", "xml_undefined_entity", 2, 6, "nbsp"),
         (
@@ -178,9 +195,12 @@ def test_validate_checks_without_output() -> None:
         ('<r xmlns:a="u">\n  <a:b c:x="1"/>\n</r>', "xml_unbound_prefix", 2, 3, "c"),
         ("<r/>\n<s/>", "xml_after_root", 2, 1, ""),
         ("<r><a/></r>text", "xml_after_root", 1, 12, ""),
-        ("", "xml_no_root", 1, 1, ""),
-        ('<?xml version="1.0"?>\n<!-- only -->\n', "xml_no_root", 3, 1, ""),
-        ("<r>\n  <![CDATA[ open\n</r>", "xml_other", 3, 5, ""),
+        # Found at the end of the text: the line alone, no column (#131).
+        ("", "xml_no_root", 1, 0, ""),
+        ('<?xml version="1.0"?>\n<!-- only -->\n', "xml_no_root", 3, 0, ""),
+        ("<!-- c -->\n", "xml_no_root", 2, 0, ""),
+        ("\n  ", "xml_no_root", 2, 0, ""),
+        ("<r>\n  <![CDATA[ open\n</r>", "xml_other", 3, 0, ""),
     ],
 )
 def test_error_codes_with_their_lines(
@@ -196,8 +216,40 @@ def test_error_codes_with_their_lines(
         token,
     )
     problems = collect_problems(text, "xml", error)
-    assert problems == (Problem(code, line, token, column),)
+    assert problems == (Problem(code, line, token, column, found=error.found),)
     assert problems[0].colno == column
+    assert error.found == ("b" if code == "xml_mismatched_tag" else "")
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["LF", "CRLF", "CR"])
+@pytest.mark.parametrize(
+    ("third_line", "code", "column"),
+    [
+        ("  </b>", "xml_mismatched_tag", 3),
+        ("  a & b", "xml_bad_token", 5),
+        ("  <c>&nbsp;</c>", "xml_undefined_entity", 6),
+    ],
+)
+def test_every_line_ending_counts_as_one_line(
+    newline: str, third_line: str, code: str, column: int
+) -> None:
+    """A bare CR is a line break, as it is for expat and the editor (#123)."""
+    text = newline.join(["<r>", "  <a>", third_line, "</a></r>", ""])
+    with pytest.raises(XMLSyntaxError) as caught:
+        format_xml(text)
+    assert (caught.value.code, caught.value.lineno, caught.value.colno) == (
+        code,
+        3,
+        column,
+    )
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["LF", "CRLF", "CR"])
+def test_too_deep_counts_every_line_ending(newline: str) -> None:
+    text = newline.join(["<a>"] * (MAX_DEPTH + 1)) + "</a>" * (MAX_DEPTH + 1)
+    with pytest.raises(InputError) as caught:
+        format_xml(text)
+    assert (caught.value.lineno, caught.value.colno) == (MAX_DEPTH + 1, 1)
 
 
 def test_columns_count_code_points() -> None:
@@ -214,16 +266,19 @@ def test_an_astral_name_is_a_bad_token() -> None:
 
 
 def test_the_error_pickles_with_its_fields() -> None:
-    error = XMLSyntaxError("xml_unclosed", lineno=4, colno=2, token="b")
+    error = XMLSyntaxError(
+        "xml_mismatched_tag", lineno=4, colno=2, token="b", found="c"
+    )
     copy = pickle.loads(pickle.dumps(error))
     assert isinstance(copy, XMLSyntaxError)
-    assert (copy.code, copy.lineno, copy.colno, copy.token) == (
-        "xml_unclosed",
+    assert (copy.code, copy.lineno, copy.colno, copy.token, copy.found) == (
+        "xml_mismatched_tag",
         4,
         2,
         "b",
+        "c",
     )
-    assert str(copy) == "xml_unclosed"
+    assert str(copy) == "xml_mismatched_tag"
 
 
 # --- Depth ----------------------------------------------------------------
@@ -260,22 +315,22 @@ def test_a_hundred_thousand_levels_raise_too_deep_not_recursion_error() -> None:
 # --- The format table -------------------------------------------------------
 
 
-def test_xml_stays_out_of_the_table_until_slice_3() -> None:
-    # The pickers, the status reserve, and Open all read FORMATS.
-    assert [fmt.name for fmt in FORMATS] == ["json", "yaml"]
-    assert format_for_extension(".xml") is None
-    assert sniff_format('<?xml version="1.0"?>\n<a/>') is None
-    assert detect_format(Path("a.xml"), "<a/>") is None
-    with pytest.raises(ValueError, match="Unsupported format: xml"):
-        format_document("<a/>", "xml", "xml")
+@pytest.mark.parametrize("suffix", [".xml", ".XSD", ".xsl", ".xslt", ".svg", ".xhtml"])
+def test_open_maps_xml_extensions(suffix: str) -> None:
+    assert format_for_extension(suffix) is XML
+    assert detect_format(Path(f"feed{suffix}"), "{}") == "XML"
 
 
-def test_with_the_slice_3_row_format_document_formats_xml(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    add_xml_row(monkeypatch)
-    assert format_named("XML") is XML_ROW
-    assert targets_for("xml") == (XML_ROW,)
+def test_xml_is_the_third_row_and_targets_only_itself() -> None:
+    assert [fmt.label for fmt in FORMATS] == ["JSON", "YAML", "XML"]
+    assert format_named("XML") is XML
+    assert not XML.loads_to_value
+    assert targets_for("xml") == (XML,)
+    assert sniff_format('\n<?xml version="1.0"?>\n<a/>') is XML
+    assert detect_format(Path("notes.txt"), "<a/>") == "XML"
+
+
+def test_format_document_formats_xml() -> None:
     text = _read("element_only.xml")
     assert format_document(text, "xml", "XML") == format_xml(text)
     assert _scan_folds(format_xml(text), "xml") == b""
@@ -288,10 +343,9 @@ _UNSORTED_XML = (
 )
 
 
-def test_sort_keys_leaves_xml_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sort_keys_leaves_xml_unchanged() -> None:
     # Sort keys orders JSON and YAML keys only. XML keeps attribute and
     # element order exactly as written, whatever the toggle says.
-    add_xml_row(monkeypatch)
     plain = format_document(_UNSORTED_XML, "xml", "xml")
     assert plain == format_xml(_UNSORTED_XML)
     assert format_document(_UNSORTED_XML, "xml", "xml", sort_keys=True) == plain
@@ -301,16 +355,12 @@ def test_sort_keys_leaves_xml_unchanged(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.parametrize(("source", "target"), [("xml", "json"), ("json", "xml")])
-def test_xml_does_not_convert(
-    monkeypatch: pytest.MonkeyPatch, source: str, target: str
-) -> None:
-    add_xml_row(monkeypatch)
+def test_xml_does_not_convert(source: str, target: str) -> None:
     with pytest.raises(ValueError, match="Can't write"):
         format_document("<a/>", source, target)
 
 
-def test_xml_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    add_xml_row(monkeypatch)
+def test_xml_does_not_load_to_a_value() -> None:
     for call in (
         lambda: load_document("<a/>", "xml"),
         lambda: diff_load_document("<a/>", "xml"),
@@ -326,10 +376,7 @@ def test_xml_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
     ("left", "right", "side"),
     [("xml", "json", "left"), ("json", "XML", "right"), ("xml", "xml", "left")],
 )
-def test_run_compare_rejects_xml(
-    monkeypatch: pytest.MonkeyPatch, left: str, right: str, side: str
-) -> None:
-    add_xml_row(monkeypatch)
+def test_run_compare_rejects_xml(left: str, right: str, side: str) -> None:
     job = CompareJob(7, "<a/>", left, "{}", right)
     event = run_compare(job)
     assert isinstance(event, CompareFailureEvent)

@@ -14,7 +14,7 @@ import re
 from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -33,6 +33,23 @@ _STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
 _CLOSERS = {"[": "]", "{": "}"}
 _NEWLINE = re.compile("\n")
 
+# Every code the XML check reports. A type checker sees the app's sentence
+# for each one, since that function ends in ``assert_never`` (#135).
+XMLProblemCode = Literal[
+    "xml_mismatched_tag",
+    "xml_unclosed",
+    "xml_unfinished_tag",
+    "xml_bad_token",
+    "xml_duplicate_attribute",
+    "xml_undefined_entity",
+    "xml_entity_declared",
+    "xml_unbound_prefix",
+    "xml_after_root",
+    "xml_no_root",
+    "xml_other",
+]
+XML_PROBLEM_CODES: tuple[XMLProblemCode, ...] = get_args(XMLProblemCode)
+
 ProblemCode = Literal[
     "missing_comma",
     "unclosed_quote",
@@ -50,19 +67,15 @@ ProblemCode = Literal[
     "yaml_duplicate",
     "yaml_colon",
     "yaml_other",
-    "xml_mismatched_tag",
-    "xml_unclosed",
-    "xml_bad_token",
-    "xml_duplicate_attribute",
-    "xml_undefined_entity",
-    "xml_entity_declared",
-    "xml_unbound_prefix",
-    "xml_after_root",
-    "xml_no_root",
-    "xml_other",
+    XMLProblemCode,
     "html_unexpected_close",
     "html_unclosed",
 ]
+
+
+def is_xml_code(code: str) -> TypeGuard[XMLProblemCode]:
+    """True for a code the XML check reports."""
+    return code in XML_PROBLEM_CODES
 
 
 @dataclass(frozen=True)
@@ -73,14 +86,17 @@ class Problem:
     a duplicate (empty when a YAML key is not a plain or quoted scalar).
     For XML it is the element, attribute, entity, or prefix named. For
     HTML it is the tag name as written.
-    ``colno`` is 0 when the parser gives no column. ``uncertain`` is True
-    when the problem was found after the JSON scan guessed at a repair,
-    so an earlier problem may have caused it.
+    ``found`` is what stood where ``token`` was expected: for
+    ``xml_mismatched_tag`` the name in the end tag, while ``token`` is the
+    element still open. ``colno`` is 0 when the parser gives no column.
+    ``uncertain`` is True when the problem was found after the JSON scan
+    guessed at a repair, so an earlier problem may have caused it.
 
     ``json_stopped`` is not a problem: it ends the list when the scan
     stopped at ``MAX_FINDINGS``, on the line where it stopped.
 
-    Problems compare by code, line, and token, the parts a sentence says.
+    Problems compare by code, line, token, and found, the parts a sentence
+    says.
     """
 
     code: ProblemCode
@@ -88,6 +104,7 @@ class Problem:
     token: str = ""
     colno: int = field(default=0, compare=False)
     uncertain: bool = field(default=False, compare=False)
+    found: str = ""
 
 
 def collect_problems(
@@ -207,7 +224,7 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
     if isinstance(exc, YAMLError):
         return _classify_yaml(exc, text)
     if isinstance(exc, XMLSyntaxError):
-        return Problem(exc.code, exc.lineno, exc.token, exc.colno)
+        return Problem(exc.code, exc.lineno, exc.token, exc.colno, found=exc.found)
     if isinstance(exc, HTMLStructureError):
         return html_problems(exc)[0]
     return None

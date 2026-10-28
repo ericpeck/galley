@@ -14,7 +14,12 @@ from galley.app.problems_settings import problems_settings
 from galley.core.load import LoadedDocument, LoadError, LoadErrorKind, read_document
 
 LAST_DIR_KEY = "open/lastDir"
-OPEN_FILE_FILTER = "JSON and YAML (*.json *.yaml *.yml);;All Files (*)"
+# Bill's wording (#135). Every extension Open maps through the table.
+OPEN_FILE_FILTER = (
+    "JSON, YAML, and XML "
+    "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml)"
+    ";;All Files (*)"
+)
 OPEN_DIALOG_CAPTION = "Open"
 REPLACE_BUTTON = "Replace"
 OPEN_WHILE_FORMATTING_TOOLTIP = "Wait for formatting to finish"

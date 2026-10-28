@@ -54,14 +54,18 @@ _ATTRIBUTE = re.compile(rb"""\s([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')""")
 _TAG_SPACE = re.compile(rb"""("[^"]*"|'[^']*')|\s+""")
 _NAME = re.compile(rb"[^\s/>=;&<]+")
 _CONTINUATION = re.compile(rb"[\x80-\xbf]")
+# What expat reads after ``&`` as a name or character reference: anything
+# but whitespace, markup, quotes, or the ``;`` that would end it.
+_REFERENCE_TAIL = re.compile(rb"""[^\s<>&;"']*""")
 
 _BAD_TOKEN_ERRORS = frozenset(
     {
         expat.errors.codes[expat.errors.XML_ERROR_INVALID_TOKEN],
-        expat.errors.codes[expat.errors.XML_ERROR_UNCLOSED_TOKEN],
         expat.errors.codes[expat.errors.XML_ERROR_PARTIAL_CHAR],
     }
 )
+# The text ends inside a tag, comment, or PI. Expat points at its ``<``.
+_UNFINISHED = expat.errors.codes[expat.errors.XML_ERROR_UNCLOSED_TOKEN]
 _ERROR_CODES = {
     expat.errors.codes[expat.errors.XML_ERROR_TAG_MISMATCH]: "xml_mismatched_tag",
     expat.errors.codes[expat.errors.XML_ERROR_DUPLICATE_ATTRIBUTE]: (
@@ -237,14 +241,18 @@ def _expat_error(
             where = opened[-1]
             return _located("xml_unclosed", data, where, _name_at(data, where + 1))
         return _located("xml_no_root", data, max(index, 0))
+    if code == _UNFINISHED:
+        return _located("xml_unfinished_tag", data, max(index, 0))
     if code in _BAD_TOKEN_ERRORS:
-        return _located("xml_bad_token", data, max(index, 0))
+        return _located("xml_bad_token", data, _stray_at(data, max(index, 0)))
     kind = _ERROR_CODES.get(code, "xml_other")
     if index < 0:
         return XMLSyntaxError(kind, lineno=exc.lineno, colno=exc.offset + 1)
     token = ""
+    found = ""
     if kind == "xml_mismatched_tag":
         # Expat points at the name. The end tag starts two bytes earlier.
+        found = _name_at(data, index)
         if data[index - 2 : index] == b"</":
             index -= 2
         if opened:
@@ -255,7 +263,23 @@ def _expat_error(
         token = _name_at(data, index + 1)
     elif kind == "xml_unbound_prefix":
         token = _unbound_prefix(data, index, opened)
-    return _located(kind, data, index, token)
+    return _located(kind, data, index, token, found)
+
+
+def _stray_at(data: bytes, index: int) -> int:
+    """Where a bad-token error really starts, given expat's ``index``.
+
+    Expat stops on the byte after a stray ``<``. After a stray ``&`` it
+    first reads any letters, digits, or ``#`` that follow as an entity or
+    character reference, as in ``AT&T`` or ``&nbsp`` with no ``;``. Either
+    way the ``&`` or ``<`` is what to fix, so the error points at it.
+    """
+    if index > 0 and data[index - 1 : index] == b"<":
+        return index - 1
+    amp = data.rfind(b"&", 0, index)
+    if amp >= 0 and _REFERENCE_TAIL.fullmatch(data, amp + 1, index):
+        return amp
+    return index
 
 
 def _unbound_prefix(data: bytes, index: int, opened: list[int]) -> str:
@@ -288,9 +312,19 @@ def _tag_names(tag: bytes) -> list[bytes]:
     return names
 
 
-def _located(code: str, data: bytes, index: int, token: str = "") -> XMLSyntaxError:
+def _located(
+    code: str, data: bytes, index: int, token: str = "", found: str = ""
+) -> XMLSyntaxError:
+    """An error at byte ``index``. At the end of the text it has no column.
+
+    A problem found only because the text ran out, such as no root element
+    or an unclosed CDATA section, names its line alone, as YAML problems
+    do (#131). Its column would only point past the last character.
+    """
     line, column = _line_column(data, index)
-    return XMLSyntaxError(code, lineno=line, colno=column, token=token)
+    if index >= len(data):
+        column = 0
+    return XMLSyntaxError(code, lineno=line, colno=column, token=token, found=found)
 
 
 def _name_at(data: bytes, index: int) -> str:
@@ -303,13 +337,19 @@ def _name_at(data: bytes, index: int) -> str:
 def _line_column(data: bytes, index: int) -> tuple[int, int]:
     """1-based line and code-point column of byte ``index``.
 
-    UTF-8 continuation bytes are not counted, so each code point is one
-    column, a character past U+FFFF included.
+    LF, CRLF, and a bare CR each end one line, as expat and the editor
+    count them (#123). UTF-8 continuation bytes are not counted, so each
+    code point is one column, a character past U+FFFF included.
     """
-    line_start = data.rfind(b"\n", 0, index) + 1
+    breaks = (
+        data.count(b"\n", 0, index)
+        + data.count(b"\r", 0, index)
+        - data.count(b"\r\n", 0, index)
+    )
+    line_start = max(data.rfind(b"\n", 0, index), data.rfind(b"\r", 0, index)) + 1
     prefix = data[line_start:index]
     column = len(prefix) - len(_CONTINUATION.findall(prefix)) + 1
-    return data.count(b"\n", 0, index) + 1, column
+    return breaks + 1, column
 
 
 def _render(data: bytes, events: list[tuple[int, int]]) -> bytes:

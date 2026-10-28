@@ -1,13 +1,19 @@
-"""JSON and YAML syntax colors for the code editors.
+"""JSON, YAML, and XML syntax colors for the code editors.
 
 Colors follow spec §3: keys ``accent.ink``, strings ``string``, numbers and
 literals ``text.code.value`` bold, punctuation and comments ``text.muted``.
 YAML uses the same colors as JSON. A dark editor Base switches to the
 ``*_DARK`` set from ``theme.py``.
 
-Highlighting works one line at a time with precompiled patterns. The only
-state carried between lines is a YAML block scalar (``|`` or ``>``), whose
-indented lines are string content.
+XML adds no colors (Bill, #63): element names use the key color, attribute
+names and ``< > / =`` punctuation, attribute values the string color, and
+comments, the doctype, PIs, the XML declaration, and the CDATA markers the
+muted punctuation color. Text, the CDATA body, and entities stay plain.
+
+Highlighting works one line at a time with precompiled patterns. Between
+lines it carries a YAML block scalar (``|`` or ``>``), whose indented lines
+are string content, and for XML an open comment, CDATA section, PI,
+doctype, start tag, or quoted attribute value.
 """
 
 import re
@@ -32,8 +38,8 @@ from galley.app.theme import (
     TEXT_MUTED_DARK,
 )
 
-SyntaxMode = Literal["JSON", "YAML"]
-SYNTAX_MODES: Final[tuple[SyntaxMode, ...]] = ("JSON", "YAML")
+SyntaxMode = Literal["JSON", "YAML", "XML"]
+SYNTAX_MODES: Final[tuple[SyntaxMode, ...]] = ("JSON", "YAML", "XML")
 
 
 class SyntaxColors(NamedTuple):
@@ -119,6 +125,36 @@ _YAML_LITERALS: Final = frozenset(
 )
 _ASTRAL: Final = re.compile("[\U00010000-\U0010ffff]")
 
+# XML block states: what is still open at the end of a line. YAML's states
+# are positive too, but a highlighter colors one mode at a time.
+_XML_COMMENT: Final = 1
+_XML_CDATA: Final = 2
+_XML_PI: Final = 3
+_XML_DOCTYPE: Final = 4
+_XML_SUBSET: Final = 5
+_XML_TAG: Final = 6
+_XML_TAG_DOUBLE: Final = 7
+_XML_TAG_SINGLE: Final = 8
+_XML_CLOSERS: Final = {
+    _XML_COMMENT: "-->",
+    _XML_CDATA: "]]>",
+    _XML_PI: "?>",
+}
+_XML_MARKUP: Final = re.compile(r"<(?:!--|!\[CDATA\[|\?|!|/|(?=[^\s<>/=!?]))")
+_XML_NAME: Final = re.compile(r"[^\s<>/=\"']+")
+_XML_TAG_PART: Final = re.compile(
+    r"""
+      (?P<space>\s+)
+    | (?P<close>/?>)
+    | (?P<equals>=)
+    | (?P<quote>["'])
+    | (?P<name>[^\s<>/=\"']+)
+    | (?P<other>.)
+    """,
+    re.VERBOSE,
+)
+_XML_DOCTYPE_PART: Final = re.compile(r"[\[\]>]")
+
 
 def _color_format(color: str, *, bold: bool = False) -> QTextCharFormat:
     fmt = QTextCharFormat()
@@ -144,7 +180,7 @@ def _utf16_offsets(text: str) -> list[int] | None:
 
 
 class SyntaxHighlighter(QSyntaxHighlighter):
-    """Character formats for JSON or YAML. Never touches extra selections."""
+    """Character formats for JSON, YAML, or XML. Never touches extra selections."""
 
     def __init__(self, document: QTextDocument, mode: SyntaxMode = "JSON") -> None:
         if mode not in SYNTAX_MODES:
@@ -161,7 +197,7 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         return self._mode
 
     def set_mode(self, mode: SyntaxMode, *, rehighlight: bool = True) -> None:
-        """Switch between ``"JSON"`` and ``"YAML"``.
+        """Switch between ``"JSON"``, ``"YAML"``, and ``"XML"``.
 
         Pass ``rehighlight=False`` when the caller knows every block is about
         to be reformatted anyway.
@@ -212,6 +248,8 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self._offsets = _utf16_offsets(text)
         if self._mode == "JSON":
             self._highlight_json(text)
+        elif self._mode == "XML":
+            self._highlight_xml(text)
         else:
             self._highlight_yaml(text)
 
@@ -302,6 +340,104 @@ class SyntaxHighlighter(QSyntaxHighlighter):
             else:
                 fmt = self._scalar_format(match.group())
             self._paint(match.start(), match.end(), fmt)
+
+    def _highlight_xml(self, text: str) -> None:
+        state = self.previousBlockState()
+        if not _XML_COMMENT <= state <= _XML_TAG_SINGLE:
+            state = _PLAIN_STATE
+        pos = 0
+        if state in (_XML_TAG_DOUBLE, _XML_TAG_SINGLE):
+            pos, state = self._xml_value(text, 0, state)
+        while pos < len(text):
+            if state == _PLAIN_STATE:
+                found = _XML_MARKUP.search(text, pos)
+                if found is None:
+                    break
+                pos, state = self._xml_markup(text, found)
+            elif state in _XML_CLOSERS:
+                pos, state = self._xml_until(text, pos, state)
+            elif state in (_XML_DOCTYPE, _XML_SUBSET):
+                pos, state = self._xml_doctype(text, pos, state)
+            else:
+                pos, state = self._xml_tag(text, pos)
+        self.setCurrentBlockState(state)
+
+    def _xml_markup(self, text: str, found: re.Match[str]) -> tuple[int, int]:
+        """Color the opener ``found`` points at and return where to go on."""
+        start = found.start()
+        opener = found.group()
+        if opener == "<!--":
+            return self._xml_until(text, start, _XML_COMMENT)
+        if opener == "<![CDATA[":
+            self._paint(start, found.end(), self.punctuation_format)
+            return found.end(), _XML_CDATA
+        if opener == "<?":
+            return self._xml_until(text, start, _XML_PI)
+        if opener == "<!":
+            return self._xml_doctype(text, start, _XML_DOCTYPE)
+        self._paint(start, found.end(), self.punctuation_format)
+        name = _XML_NAME.match(text, found.end())
+        if name is None:
+            return found.end(), _XML_TAG
+        self._paint(name.start(), name.end(), self.key_format)
+        return name.end(), _XML_TAG
+
+    def _xml_until(self, text: str, pos: int, state: int) -> tuple[int, int]:
+        """A comment, PI, or CDATA end from ``pos``. The CDATA body is plain."""
+        closer = _XML_CLOSERS[state]
+        close = text.find(closer, pos)
+        stop = len(text) if close < 0 else close + len(closer)
+        if state == _XML_CDATA:
+            if close >= 0:
+                self._paint(close, stop, self.punctuation_format)
+        else:
+            self._paint(pos, stop, self.punctuation_format)
+        return stop, state if close < 0 else _PLAIN_STATE
+
+    def _xml_doctype(self, text: str, pos: int, state: int) -> tuple[int, int]:
+        """A doctype, muted, until the ``>`` outside its internal subset."""
+        start = pos
+        for found in _XML_DOCTYPE_PART.finditer(text, pos):
+            char = found.group()
+            if char == "[":
+                state = _XML_SUBSET
+            elif char == "]":
+                state = _XML_DOCTYPE
+            elif state == _XML_DOCTYPE:
+                self._paint(start, found.end(), self.punctuation_format)
+                return found.end(), _PLAIN_STATE
+        self._paint(start, len(text), self.punctuation_format)
+        return len(text), state
+
+    def _xml_tag(self, text: str, pos: int) -> tuple[int, int]:
+        """Attributes and the end of a start or end tag, from ``pos``."""
+        while pos < len(text):
+            part = _XML_TAG_PART.match(text, pos)
+            if part is None:
+                break
+            kind = part.lastgroup
+            if kind == "close":
+                self._paint(part.start(), part.end(), self.punctuation_format)
+                return part.end(), _PLAIN_STATE
+            if kind == "quote":
+                quoted = _XML_TAG_DOUBLE if part.group() == '"' else _XML_TAG_SINGLE
+                return self._xml_value(text, part.start(), quoted, opening=True)
+            if kind in ("name", "equals"):
+                self._paint(part.start(), part.end(), self.punctuation_format)
+            pos = part.end()
+        return len(text), _XML_TAG
+
+    def _xml_value(
+        self, text: str, pos: int, state: int, *, opening: bool = False
+    ) -> tuple[int, int]:
+        """A quoted attribute value from ``pos``, quotes included."""
+        quote = '"' if state == _XML_TAG_DOUBLE else "'"
+        close = text.find(quote, pos + 1 if opening else pos)
+        if close < 0:
+            self._paint(pos, len(text), self.string_format)
+            return len(text), state
+        self._paint(pos, close + 1, self.string_format)
+        return close + 1, _XML_TAG
 
     def _scalar_format(self, value: str) -> QTextCharFormat:
         if value in _YAML_LITERALS or _YAML_NUMBER.fullmatch(value):

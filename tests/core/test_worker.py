@@ -10,7 +10,6 @@ from pathlib import Path
 from queue import Empty
 
 from tests.core.html_row import run_worker_with_html_row
-from tests.core.xml_row import run_worker_with_xml_row
 
 from galley.core.errors import MAX_DEPTH, InputError
 from galley.core.format import format_json
@@ -261,14 +260,9 @@ def test_worker_without_the_html_row_rejects_an_html_job() -> None:
     assert failure.message == "Unsupported format: html"
 
 
-def _run_xml_job(job: FormatJob) -> list[object]:
-    """Run one job in a spawn child whose table has the slice 3 XML row."""
-    return _run_job(job, target=run_worker_with_xml_row)
-
-
 def test_worker_formats_xml_with_no_fold_ranges() -> None:
     text = '<?xml version="1.0"?><r><a x="1"/><b>t</b></r>'
-    events = _run_xml_job(FormatJob(job_id=3, text=text, source="xml", target="XML"))
+    events = _run_job(FormatJob(job_id=3, text=text, source="xml", target="XML"))
     success = events[-1]
     assert isinstance(success, SuccessEvent)
     assert success.text == format_xml(text)
@@ -278,8 +272,8 @@ def test_worker_formats_xml_with_no_fold_ranges() -> None:
 def test_worker_xml_job_ignores_sort_keys() -> None:
     # The sort flag crosses spawn with the job, and XML output stays as written.
     text = '<r zeta="1" alpha="2"><z/><a/></r>'
-    plain = _run_xml_job(FormatJob(job_id=6, text=text, source="xml", target="xml"))
-    sorted_on = _run_xml_job(
+    plain = _run_job(FormatJob(job_id=6, text=text, source="xml", target="xml"))
+    sorted_on = _run_job(
         FormatJob(job_id=7, text=text, source="xml", target="xml", sort_keys=True)
     )
     assert isinstance(plain[-1], SuccessEvent)
@@ -289,30 +283,23 @@ def test_worker_xml_job_ignores_sort_keys() -> None:
 
 def test_worker_xml_problem_crosses_spawn() -> None:
     text = "<r>\n  <a>\n  </b>\n</r>\n"
-    events = _run_xml_job(FormatJob(job_id=4, text=text, source="xml", target="xml"))
+    events = _run_job(FormatJob(job_id=4, text=text, source="xml", target="xml"))
     failure = events[-1]
     assert isinstance(failure, FailureEvent)
     assert failure.error is None
     assert failure.message == "xml_mismatched_tag"
-    assert failure.problems == (Problem("xml_mismatched_tag", 3, "a", 3),)
+    assert failure.problems == (Problem("xml_mismatched_tag", 3, "a", 3, found="b"),)
     assert failure.problems[0].colno == 3
 
 
 def test_worker_xml_too_deep_crosses_spawn() -> None:
     text = "<a>" * (MAX_DEPTH + 1) + "</a>" * (MAX_DEPTH + 1)
-    events = _run_xml_job(FormatJob(job_id=5, text=text, source="xml", target="xml"))
+    events = _run_job(FormatJob(job_id=5, text=text, source="xml", target="xml"))
     failure = events[-1]
     assert isinstance(failure, FailureEvent)
     assert isinstance(failure.error, InputError)
     assert failure.error.kind == "too_deep"
     assert failure.error.details == {"depth": MAX_DEPTH + 1}
-
-
-def test_worker_without_the_xml_row_rejects_an_xml_job() -> None:
-    events = _run_job(FormatJob(job_id=8, text="<a/>", source="xml", target="xml"))
-    failure = events[-1]
-    assert isinstance(failure, FailureEvent)
-    assert failure.message == "Unsupported format: xml"
 
 
 def test_an_xml_job_cancelled_mid_write_leaves_the_destination(
@@ -335,7 +322,7 @@ def test_an_xml_job_cancelled_mid_write_leaves_the_destination(
     ctx = multiprocessing.get_context("spawn")
     jobs = ctx.Queue()
     events = ctx.Queue()
-    process = ctx.Process(target=run_worker_with_xml_row, args=(jobs, events))
+    process = ctx.Process(target=run_worker, args=(jobs, events))
     process.start()
     temp_path: str | None = None
     try:

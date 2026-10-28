@@ -17,17 +17,26 @@ from galley.app.pane import PaneRole, PaneSpec, PaneWidget
 from galley.app.status_bar import INFO_RESERVE
 
 
-@pytest.mark.parametrize("role", [PaneRole.INPUT, PaneRole.OUTPUT])
-def test_both_pickers_list_json_then_yaml(qtbot, role: PaneSpec) -> None:
+@pytest.mark.parametrize(
+    ("role", "labels"),
+    [
+        (PaneRole.INPUT, ["JSON", "YAML", "XML"]),
+        # Output offers what JSON Input writes. XML follows XML Input (#63).
+        (PaneRole.OUTPUT, ["JSON", "YAML"]),
+    ],
+)
+def test_the_pickers_list_the_table_in_order(
+    qtbot, role: PaneSpec, labels: list[str]
+) -> None:
     pane = PaneWidget(role)
     qtbot.addWidget(pane)
     combo = pane.format_combo
-    assert [combo.itemText(i) for i in range(combo.count())] == ["JSON", "YAML"]
+    assert [combo.itemText(i) for i in range(combo.count())] == labels
     assert pane.format_name() == "JSON"
 
 
-def test_the_status_reserve_is_unchanged() -> None:
-    names = ("JSON", "YAML", "Python")
+def test_the_status_reserve_covers_every_format() -> None:
+    names = ("JSON", "YAML", "XML", "Python")
     assert INFO_RESERVE == (
         *(f"{left} → {right}" for left in names for right in names),
         "Ln 99999, Col 999",
