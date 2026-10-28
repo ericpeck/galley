@@ -30,7 +30,7 @@ from galley.app.style import (
     primary_button_style,
     secondary_button_style,
 )
-from galley.core.formats import FORMAT_LABELS, FORMATS, targets_for
+from galley.core.formats import FORMAT_LABELS, FORMATS, format_named, targets_for
 
 EMPTY_HEADING = "Paste JSON, YAML, XML, or HTML, or drop a file here."
 
@@ -339,7 +339,23 @@ class PaneWidget(QWidget):
             labels = tuple(fmt.label for fmt in targets_for(FORMATS[0].name))
         self.format_combo.addItems(list(labels))
         self.format_combo.currentTextChanged.connect(self.format_changed.emit)
+        self.format_changed.connect(self._follow_format_colors)
         return self.format_combo
+
+    def _follow_format_colors(self, label: str) -> None:
+        """Color the editor as the picker's XML or HTML (Erik, #148 review).
+
+        Markup is colored as the picker says, whatever the text looks like,
+        so an HTML fragment keeps its raw ``script`` body. JSON and YAML
+        still guess from the text, as they always have.
+        """
+        if label not in FORMAT_LABELS:
+            return
+        fmt = format_named(label)
+        if fmt.loads_to_value:
+            self.editor.guess_syntax_mode()
+        else:
+            self.editor.set_syntax_mode(fmt.label)
 
     def _build_empty_state(self) -> QWidget:
         match self.spec.kind:

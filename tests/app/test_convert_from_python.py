@@ -15,7 +15,7 @@ from galley.app.editor import CodeEditor
 from galley.app.escape_string import convert_python_too_large_message
 from galley.app.limits import PYTHON_TO_JSON_BYTES, PYTHON_TO_YAML_BYTES
 from galley.app.main import create_main_window
-from galley.app.main_window import si_size
+from galley.app.main_window import si_size, si_size_up
 from galley.app.parse_session import ParseSession
 from galley.core.convert_python import ConvertResult, convert_python
 
@@ -227,7 +227,10 @@ def test_convert_refuses_one_byte_over_the_limit(
 
     assert output.toPlainText() == "previous\n"
     assert editor.toPlainText() == text
-    assert status.text() == convert_python_too_large_message(si_size(limit + 1))
+    assert status.text() == convert_python_too_large_message(si_size_up(limit + 1))
+    # One byte over reads above the limit, never as the limit itself.
+    shown = {"JSON": "(1.1 MB)", "YAML": "(192.1 KB)"}[target]
+    assert shown in status.text()
 
 
 @pytest.mark.parametrize(
@@ -268,7 +271,7 @@ def test_size_is_utf8_bytes_of_input(qtbot, monkeypatch) -> None:
     editor.setPlainText(text)
     monkeypatch.setattr(main_window_module, "convert_python", _refuse_to_convert)
     _action(window, "Convert from Python").trigger()
-    size = si_size(len(text.encode("utf-8")))
+    size = si_size_up(len(text.encode("utf-8")))
     assert status.text() == convert_python_too_large_message(size)
     assert output.toPlainText() == "previous\n"
 

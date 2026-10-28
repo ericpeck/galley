@@ -26,6 +26,13 @@ JSON_WARNING_BYTES = 100 * _SI_MB
 XML_BUSY_BYTES = YAML_BUSY_BYTES
 XML_PROGRESS_BYTES = YAML_PROGRESS_BYTES
 XML_WARNING_BYTES = YAML_WARNING_BYTES
+# HTML takes the same placeholders. Its Format is pure Python and slower.
+HTML_BUSY_BYTES = YAML_BUSY_BYTES
+HTML_PROGRESS_BYTES = YAML_PROGRESS_BYTES
+HTML_WARNING_BYTES = YAML_WARNING_BYTES
+# Format refuses XML and HTML larger than this, with #104's message (Eric,
+# #63): one limit and one message for both. JSON and YAML have none.
+MARKUP_FORMAT_LIMIT_BYTES = 2 * _SI_MB
 # Convert from Python runs on the UI thread with no busy indicator. Above
 # these UTF-8 sizes of Input, it is refused so the window stays responsive.
 # The size bench rows ``python_to_json`` and ``python_to_yaml`` time them.

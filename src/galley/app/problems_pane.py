@@ -158,10 +158,13 @@ class _ProblemRow(ResultRow):
         self._marker = marker
 
         line = QLabel(f"Error · {place_text(problem.lineno, problem.colno)}")
+        # Plain text: Qt would read "<div> opened…" as markup and drop <div>.
+        line.setTextFormat(Qt.TextFormat.PlainText)
         line.setStyleSheet("font-weight: 700;")
         self._line = line
 
         message = QLabel(problem.full_message())
+        message.setTextFormat(Qt.TextFormat.PlainText)
         message.setWordWrap(True)
         message.setStyleSheet(muted_text_style())
         self._message = message

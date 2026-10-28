@@ -282,5 +282,6 @@ def test_format_pickers_keep_their_items(qtbot) -> None:
         "JSON",
         "YAML",
         "XML",
+        "HTML",
     ]
     assert pop.accessibleName() == "Pop out into window"

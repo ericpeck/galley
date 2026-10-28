@@ -1,9 +1,7 @@
 """HTML Format on stdlib html.parser (#63 slice 4).
 
 Output is built from source slices, so the golden files pin every byte.
-Worker jobs live in ``test_worker.py``. HTML has no row in the format table
-until slice 5, so tests that route it by name add the row from ``html_row``
-first.
+Worker jobs live in ``test_worker.py``.
 """
 
 import os
@@ -15,7 +13,6 @@ from pathlib import Path
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from tests.core.html_row import HTML_ROW, add_html_row
 
 from galley.core.diff import load_document as diff_load_document
 from galley.core.errors import (
@@ -28,6 +25,7 @@ from galley.core.escape import escape_document, unescape_document
 from galley.core.format import dump_value, format_document, load_document
 from galley.core.formats import (
     FORMATS,
+    HTML,
     format_for_extension,
     format_named,
     sniff_format,
@@ -317,30 +315,28 @@ def test_deep_block_nesting_lays_out_without_recursion() -> None:
 # --- The format table -------------------------------------------------------
 
 
-def test_html_stays_out_of_the_table_until_slice_5() -> None:
-    # The pickers, the status reserve, and Open all read FORMATS.
-    assert "html" not in [fmt.name for fmt in FORMATS]
-    assert format_for_extension(".html") is None
-    assert format_for_extension(".htm") is None
-    assert sniff_format("<!DOCTYPE html>\n<p>a") is None
-    assert detect_format(Path("a.html"), "<html></html>") is None
-    with pytest.raises(ValueError, match="Unsupported format: html"):
-        format_document("<p>a</p>", "html", "html")
+@pytest.mark.parametrize("suffix", [".html", ".HTM"])
+def test_open_maps_html_extensions(suffix: str) -> None:
+    assert format_for_extension(suffix) is HTML
+    assert detect_format(Path(f"page{suffix}"), "<p>a") == "HTML"
 
 
-def test_with_the_slice_5_row_format_document_formats_html(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    add_html_row(monkeypatch)
-    assert format_named("HTML") is HTML_ROW
-    assert targets_for("html") == (HTML_ROW,)
+def test_html_is_the_fourth_row_and_targets_only_itself() -> None:
+    assert [fmt.label for fmt in FORMATS] == ["JSON", "YAML", "XML", "HTML"]
+    assert format_named("HTML") is HTML
+    assert not HTML.loads_to_value
+    assert targets_for("html") == (HTML,)
+    assert sniff_format("<!DOCTYPE html>\n<p>a") is HTML
+    assert detect_format(Path("a.txt"), "<html></html>") == "HTML"
+
+
+def test_format_document_formats_html() -> None:
     text = _read("document.html")
     assert format_document(text, "html", "HTML") == format_html(text)
     assert _scan_folds(format_html(text), "html") == b""
 
 
-def test_sort_keys_leaves_html_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    add_html_row(monkeypatch)
+def test_sort_keys_leaves_html_unchanged() -> None:
     text = '<div z="1" a="2"><p>b</p><p>a</p></div>'
     plain = format_document(text, "html", "html")
     assert format_document(text, "html", "html", sort_keys=True) == plain
@@ -350,16 +346,12 @@ def test_sort_keys_leaves_html_unchanged(monkeypatch: pytest.MonkeyPatch) -> Non
 @pytest.mark.parametrize(
     ("source", "target"), [("html", "json"), ("yaml", "html"), ("html", "yaml")]
 )
-def test_html_does_not_convert(
-    monkeypatch: pytest.MonkeyPatch, source: str, target: str
-) -> None:
-    add_html_row(monkeypatch)
+def test_html_does_not_convert(source: str, target: str) -> None:
     with pytest.raises(ValueError, match="Can't write"):
         format_document("<p>a</p>", source, target)
 
 
-def test_html_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    add_html_row(monkeypatch)
+def test_html_does_not_load_to_a_value() -> None:
     for call in (
         lambda: load_document("<p>a</p>", "html"),
         lambda: diff_load_document("<p>a</p>", "html"),
@@ -376,10 +368,7 @@ def test_html_does_not_load_to_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
     ("left", "right", "side"),
     [("html", "json", "left"), ("yaml", "HTML", "right"), ("html", "html", "left")],
 )
-def test_run_compare_rejects_html(
-    monkeypatch: pytest.MonkeyPatch, left: str, right: str, side: str
-) -> None:
-    add_html_row(monkeypatch)
+def test_run_compare_rejects_html(left: str, right: str, side: str) -> None:
     event = run_compare(CompareJob(7, "<p>a</p>", left, "a: 1", right))
     assert isinstance(event, CompareFailureEvent)
     assert (event.job_id, event.side) == (7, side)

@@ -35,6 +35,7 @@ import importlib
 import importlib.util
 import json
 import random
+import sys
 import time
 
 import pytest
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.editor import CHANGE_MARKERS, CodeEditor, LineMarker
+from galley.app.limits import MARKUP_FORMAT_LIMIT_BYTES
 from galley.app.main import create_main_window
 from galley.app.main_window import (
     FORMATTING_MESSAGE,
@@ -475,6 +477,39 @@ def test_large_and_deeply_nested_html_format_within_budget(
     assert size <= _utf8_len(text) < size * 11 // 10
     perf_budget.within(
         _HTML_STRESS_BUDGET_S, lambda: format_html(text), fixture=f"1 MB {shape} HTML"
+    )
+
+
+# The largest XML and HTML Format takes: the shared 2 MB limit (Eric, #63
+# slice 5). Isaac's #108 rule: the worst CI median × 1.25, rounded up to the
+# next 0.1 s. Medians at 81d295a: XML 371.1 ms (Windows); HTML 637.4 ms
+# (macOS) and 865.5 ms (Windows).
+_TWO_MB_XML_BUDGET_S = 0.5
+_TWO_MB_HTML_BUDGET_S = 1.1 if sys.platform == "win32" else 0.8
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("fmt", ["XML", "HTML"])
+def test_two_megabytes_of_markup_format_within_budget(perf_budget, fmt: str) -> None:
+    """Format the largest XML and HTML documents the 2 MB limit lets through.
+
+    Only Format is timed, as the app runs it. The XML fixture is checked
+    once before, outside the clock (Isaac, #148). Each fixture ends within
+    one item of the limit and never past it.
+    """
+    limit = MARKUP_FORMAT_LIMIT_BYTES
+    build = _xml_items if fmt == "XML" else _html_items
+    text = build(limit - 2048)
+    assert limit - 4096 < _utf8_len(text) <= limit
+
+    if fmt == "XML":
+        validate_xml(text)
+        perf_budget.within(
+            _TWO_MB_XML_BUDGET_S, lambda: format_xml(text), fixture="2 MB XML"
+        )
+        return
+    perf_budget.within(
+        _TWO_MB_HTML_BUDGET_S, lambda: format_html(text), fixture="2 MB HTML"
     )
 
 
