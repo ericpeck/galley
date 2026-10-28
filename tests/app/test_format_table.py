@@ -20,7 +20,7 @@ from galley.app.status_bar import INFO_RESERVE
 @pytest.mark.parametrize(
     ("role", "labels"),
     [
-        (PaneRole.INPUT, ["JSON", "YAML", "XML"]),
+        (PaneRole.INPUT, ["JSON", "YAML", "XML", "HTML"]),
         # Output offers what JSON Input writes. XML follows XML Input (#63).
         (PaneRole.OUTPUT, ["JSON", "YAML"]),
     ],
@@ -36,7 +36,7 @@ def test_the_pickers_list_the_table_in_order(
 
 
 def test_the_status_reserve_covers_every_format() -> None:
-    names = ("JSON", "YAML", "XML", "Python")
+    names = ("JSON", "YAML", "XML", "HTML", "Python")
     assert INFO_RESERVE == (
         *(f"{left} → {right}" for left in names for right in names),
         "Ln 99999, Col 999",

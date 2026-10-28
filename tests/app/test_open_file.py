@@ -70,9 +70,9 @@ def test_open_file_button_loads_text_without_formatting(
     assert seen["caption"] == "Open"
     assert seen["filter"] == OPEN_FILE_FILTER
     assert OPEN_FILE_FILTER == (
-        "JSON, YAML, and XML "
-        "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml)"
-        ";;All Files (*)"
+        "JSON, YAML, XML, and HTML "
+        "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml"
+        " *.html *.htm);;All Files (*)"
     )
     assert Path(str(seen["directory"])) == Path(_default_folder())
     qtbot.waitUntil(lambda: editor.hasFocus())
@@ -729,4 +729,4 @@ def test_the_open_filter_lists_every_extension_open_maps() -> None:
     listed = first[first.index("(") + 1 : first.index(")")].split()
     mapped = [f"*{suffix}" for fmt in FORMATS for suffix in fmt.extensions]
     assert listed == mapped
-    assert first.startswith("JSON, YAML, and XML (")
+    assert first.startswith("JSON, YAML, XML, and HTML (")

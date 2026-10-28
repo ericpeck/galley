@@ -528,3 +528,90 @@ def test_xml_colors_pass_contrast_on_their_base(
         for surface in (base, band):
             ratio = _contrast(color, surface.name())
             assert ratio >= _MIN_CONTRAST, (role, color, surface.name(), ratio)
+
+
+# --- HTML (#63 slice 5): the XML mapping, with raw bodies --------------------
+
+_HTML = (
+    "<!DOCTYPE html>\n"
+    "<html lang=en>\n"
+    "<head><title>Fake page</title>\n"
+    '<SCRIPT type="text/javascript">\n'
+    '  if (a < b && c > d) { x = "<p>"; }\n'
+    "</Script>\n"
+    "<style>p > b { color: red }</style>\n"
+    "</head>\n"
+    "<body><input disabled value=on>\n"
+    "<pre class=x>  <b>kept</b> <!-- not a comment here -->\n"
+    "  </PRE>\n"
+    "<p>a <b>b</b> &amp; c<!-- note --></p></body></html>\n"
+)
+
+
+def test_html_colors_names_attributes_values_and_markup() -> None:
+    document, _highlighter = _document(_HTML, "HTML")
+
+    assert _style(document, 1, "<!DOCTYPE html>") == PUNCT
+    assert _style(document, 2, "html") == KEY
+    assert _style(document, 2, "lang") == PUNCT
+    assert _style(document, 2, "en") == STR
+    assert _style(document, 4, "SCRIPT") == KEY
+    assert _style(document, 4, '"text/javascript"') == STR
+    assert _style(document, 9, "input") == KEY
+    assert _style(document, 9, "disabled") == PUNCT
+    assert _style(document, 9, "on") == STR
+    assert _style(document, 12, "<!-- note -->") == PUNCT
+    assert _style(document, 12, "&amp;") == PLAIN
+    assert _style(document, 12, "a") == PLAIN
+
+
+def test_html_script_style_and_pre_bodies_stay_plain_across_lines() -> None:
+    document, _highlighter = _document(_HTML, "HTML")
+
+    assert _style(document, 5, 'if (a < b && c > d) { x = "<p>"; }') == PLAIN
+    assert _style(document, 6, "Script") == KEY
+    assert _style(document, 7, "p > b { color: red }") == PLAIN
+    assert _style(document, 7, "style", last=True) == KEY
+    assert _style(document, 10, "<b>kept</b> <!-- not a comment here -->") == PLAIN
+    assert _style(document, 11, "PRE") == KEY
+    assert _style(document, 12, "b") == KEY
+
+
+def test_xml_keeps_script_markup_colored() -> None:
+    # Raw bodies are HTML's. In XML a script element is markup like any other.
+    document, _highlighter = _document('<script>\n  <b x="1"/>\n</script>\n', "XML")
+    assert _style(document, 2, "b") == KEY
+    assert _style(document, 2, '"1"') == STR
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_html_colors_pass_contrast_on_their_base(
+    qtbot, color_scheme, dark: bool
+) -> None:
+    editor = CodeEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_HTML)
+    assert editor.syntax_mode() == "HTML"
+    color_scheme(dark)
+    _wait_for_palette(qtbot, editor, dark)
+    base = _base(editor)
+    band = editor.palette().color(QPalette.ColorRole.Midlight)
+    expected = DARK_SYNTAX if dark else LIGHT_SYNTAX
+    document = editor.document()
+    drawn = {
+        "element": _style(document, 2, "html")[0],
+        "attribute": _style(document, 2, "lang")[0],
+        "value": _style(document, 2, "en")[0],
+        "doctype": _style(document, 1, "<!DOCTYPE html>")[0],
+    }
+    assert drawn == {
+        "element": expected.key,
+        "attribute": expected.punctuation,
+        "value": expected.string,
+        "doctype": expected.punctuation,
+    }
+    assert _style(document, 5, "if (a < b") == PLAIN
+    for role, color in drawn.items():
+        for surface in (base, band):
+            ratio = _contrast(color, surface.name())
+            assert ratio >= _MIN_CONTRAST, (role, color, surface.name(), ratio)

@@ -248,10 +248,37 @@ def _xml_lines(count: int) -> str:
     return "".join(parts)
 
 
+def _html_lines(count: int) -> str:
+    """Script bodies and comments that span lines.
+
+    Their lines color differently inside a script body or a comment than
+    outside one, so a line colored with a cold line before it is wrong
+    until Qt's pass reaches it. Each item starts inside a script body, so
+    the painted windows below start on such lines.
+    """
+    parts = ["<!DOCTYPE html>\n<body>\n<script>\n"]
+    for index in range(count // 10):
+        parts.append(
+            f"      if (a < {index}) {{\n"
+            f'        b = "<p class=x>not a tag</p>";\n'
+            f"      }}\n"
+            f"    </SCRIPT>\n"
+            f'    <p class="item" id="item-{index}">item {index}</p>\n'
+            f"    <!-- a comment\n"
+            f"         with <b>markup</b> in it\n"
+            f"         and more <i>markup</i>\n"
+            f'         and id="{index}" -->\n'
+            f"    <script>\n"
+        )
+    parts.append("</script>\n</body>\n")
+    return "".join(parts)
+
+
 _SHAPES: dict[str, Callable[[int], str]] = {
     "JSON": _json_lines,
     "YAML": _yaml_lines,
     "XML": _xml_lines,
+    "HTML": _html_lines,
 }
 
 
@@ -406,16 +433,17 @@ def test_removing_lines_during_the_walk_does_not_leave_cold_lines(
     assert _cold_numbers(editor) == []
 
 
-@pytest.mark.parametrize("mode", ["JSON", "YAML", "XML"])
+@pytest.mark.parametrize("mode", ["JSON", "YAML", "XML", "HTML"])
 def test_chunked_colors_match_one_eager_pass(
     qtbot, qapp, monkeypatch, mode: str
 ) -> None:
     """Out-of-order coloring settles to the same colors as a single pass.
 
-    YAML block scalars and XML comments depend on the line before them. The
-    lines on screen are colored before the lines above them, so a line is
-    colored with a cold line before it, and Qt's pass fixes it when that
-    line is colored. The test scrolls into the cold middle to force that.
+    YAML block scalars, XML comments, and HTML comments and script bodies
+    depend on the line before them. The lines on screen are colored before
+    the lines above them, so a line is colored with a cold line before it,
+    and Qt's pass fixes it when that line is colored. The test scrolls into
+    the cold middle to force that.
     """
     text = _SHAPES[mode](15 * _CHUNK)
 

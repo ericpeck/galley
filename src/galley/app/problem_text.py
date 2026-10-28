@@ -10,9 +10,11 @@ from typing import assert_never
 from galley.app.banner import banner_text
 from galley.core.errors import InputError
 from galley.core.problems import (
+    HTMLProblemCode,
     Problem,
     ProblemCode,
     XMLProblemCode,
+    is_html_code,
     is_xml_code,
 )
 
@@ -63,6 +65,8 @@ def message_for(problem: Problem) -> str:
         return f"Couldn't read this YAML on line {line}."
     if is_xml_code(code):
         return _xml_text(problem, code)
+    if is_html_code(code):
+        return _html_text(problem, code)
     assert_never(code)
 
 
@@ -73,9 +77,9 @@ def _xml_text(problem: Problem, code: XMLProblemCode) -> str:
     an unknown one raises.
     """
     line = problem.lineno
-    name = _xml_name(problem.token)
+    name = _markup_name(problem.token)
     if code == "xml_mismatched_tag":
-        closing = _xml_name(problem.found)
+        closing = _markup_name(problem.found)
         return f"Line {line} closes </{closing}>, but <{name}> is still open."
     if code == "xml_unclosed":
         return f"<{name}> opened on line {line} is never closed."
@@ -105,8 +109,23 @@ def _xml_text(problem: Problem, code: XMLProblemCode) -> str:
     assert_never(code)
 
 
-def _xml_name(name: str) -> str:
-    """An element, attribute, entity, or prefix name, cut like a long key."""
+def _html_text(problem: Problem, code: HTMLProblemCode) -> str:
+    """The sentence for an HTML structure problem (#63, Bill's slice 5 wording).
+
+    The tag name is shown as written. Each code has its own branch, and an
+    unknown one raises.
+    """
+    line = problem.lineno
+    name = _markup_name(problem.token)
+    if code == "html_unexpected_close":
+        return f"Line {line} closes </{name}>, but nothing open matches it."
+    if code == "html_unclosed":
+        return f"<{name}> opened on line {line} is never closed."
+    assert_never(code)
+
+
+def _markup_name(name: str) -> str:
+    """An XML or HTML name, such as a tag or an entity, cut like a long key."""
     if len(name) > KEY_DISPLAY_LIMIT:
         return name[:KEY_DISPLAY_LIMIT] + "…"
     return name

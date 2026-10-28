@@ -5,6 +5,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
+from PySide6 import QtGui
 from PySide6.QtCore import (
     QEvent,
     QPoint,
@@ -52,7 +53,7 @@ from PySide6.QtWidgets import (
 from galley.app.file_drop import dropped_paths
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
-from galley.app.limits import JSON_BUSY_BYTES, XML_BUSY_BYTES
+from galley.app.limits import HTML_BUSY_BYTES, JSON_BUSY_BYTES, XML_BUSY_BYTES
 from galley.app.theme import (
     change_color,
     change_tint,
@@ -64,6 +65,7 @@ from galley.app.theme import find_highlight_color as brand_find_highlight
 from galley.app.theme import line_number_color as theme_line_number_color
 from galley.core.diff import ChangeKind, Span
 from galley.core.folds import FoldKind, FoldRange, fold_ranges, line_count
+from galley.core.formats import HTML, sniff_format
 
 GUTTER_MIN_WIDTH = 50
 _GUTTER_PAD = 8
@@ -338,7 +340,9 @@ class LineNumberArea(QWidget):
             hit = self._editor.marker_at(event.pos())
             text = hit.marker.description() if hit is not None else ""
             if hit is not None and text:
-                QToolTip.showText(event.globalPos(), text, self, hit.rect)
+                QToolTip.showText(
+                    event.globalPos(), marker_tooltip_text(text), self, hit.rect
+                )
             else:
                 QToolTip.hideText()
                 event.ignore()
@@ -721,17 +725,29 @@ class CodeEditor(QPlainTextEdit):
         return ranked
 
     def syntax_mode(self) -> SyntaxMode:
-        """``"JSON"``, ``"YAML"``, or ``"XML"``, the colors the editor applies."""
+        """``"JSON"``, ``"YAML"``, ``"XML"``, or ``"HTML"``: the colors applied."""
         return self._highlighter.mode()
 
     def set_syntax_mode(self, mode: SyntaxMode) -> None:
         """Color as ``mode`` from now on and stop guessing from the text.
 
         Until this is called, the first non-blank character picks the mode:
-        ``{`` or ``[`` means JSON, ``<`` means XML, anything else YAML.
+        ``{`` or ``[`` means JSON, and anything else but ``<`` YAML. A ``<``
+        means HTML when the text opens like an HTML document (the doctype,
+        or an ``html``, ``head``, or ``body`` tag, after any comments), and
+        XML otherwise. :meth:`guess_syntax_mode` goes back to guessing.
         """
         self._syntax_mode_set = True
+        changed = mode != self._highlighter.mode()
         self._highlighter.set_mode(mode)
+        if changed:
+            # XML and HTML have their own busy sizes for colors.
+            self._apply_display_options()
+
+    def guess_syntax_mode(self) -> None:
+        """Pick the colors from the text again, as before ``set_syntax_mode``."""
+        self._syntax_mode_set = False
+        self._detect_syntax(0, 0, 0)
 
     def syntax_colors_enabled(self) -> bool:
         """Whether the highlighter is attached: wanted, and no limit applies."""
@@ -768,8 +784,9 @@ class CodeEditor(QPlainTextEdit):
         ``WHITESPACE_LIMIT`` means Show Whitespace is on but a line is longer
         than ``WHITESPACE_LONG_LINE_CHARS``. ``COLORS_LIMIT`` means colors
         are wanted but a line is longer than ``COLORS_LONG_LINE_CHARS`` or
-        the document is over its busy size: ``XML_BUSY_BYTES`` for XML and
-        ``JSON_BUSY_BYTES`` otherwise. The long-line notice will read this.
+        the document is over its busy size: ``XML_BUSY_BYTES`` for XML,
+        ``HTML_BUSY_BYTES`` for HTML, and ``JSON_BUSY_BYTES`` otherwise. The
+        long-line notice will read this.
         """
         limits: list[str] = []
         if self._whitespace_wanted and self._whitespace_limited():
@@ -797,7 +814,7 @@ class CodeEditor(QPlainTextEdit):
     def _colors_limited(self) -> bool:
         # characterCount is a lower bound on the UTF-8 size and costs nothing
         # to read; the exact byte count would mean copying the document.
-        limit = XML_BUSY_BYTES if self.syntax_mode() == "XML" else JSON_BUSY_BYTES
+        limit = _COLOR_LIMITS.get(self.syntax_mode(), JSON_BUSY_BYTES)
         over_bytes = self.document().characterCount() - 1 > limit
         return self._longest_chars > COLORS_LONG_LINE_CHARS or over_bytes
 
@@ -901,7 +918,7 @@ class CodeEditor(QPlainTextEdit):
         if not self._folding:
             return
         mode = self.syntax_mode()
-        if mode == "XML":
+        if mode in ("XML", "HTML"):
             self._replace_folds([])
             return
         text = self.toPlainText()
@@ -1703,13 +1720,15 @@ class CodeEditor(QPlainTextEdit):
         if index >= count:
             return
         mode = _mode_for(document.characterAt(index))
+        if mode == "XML" and _opens_like_html(document, index):
+            mode = "HTML"
         # An edit that replaced everything is reformatted by the highlighter
         # right after this slot, so a full pass here would be wasted.
         whole = position == 0 and added >= count - 1
         changed = mode != self._highlighter.mode()
         self._highlighter.set_mode(mode, rehighlight=not whole)
         if changed:
-            # XML has its own busy size for colors.
+            # XML and HTML have their own busy sizes for colors.
             self._apply_display_options()
 
     def _update_line_number_width(self, _block_count: int) -> None:
@@ -2025,6 +2044,40 @@ def _subtract(
         if current <= last:
             result.append((current, last))
     return result
+
+
+# Busy sizes for syntax colors, by mode. Other modes use JSON_BUSY_BYTES.
+_COLOR_LIMITS: dict[str, int] = {"XML": XML_BUSY_BYTES, "HTML": HTML_BUSY_BYTES}
+# How much of the opening a ``<`` document reads to tell HTML from XML.
+_SNIFF_BLOCKS = 20
+_SNIFF_CHARS = 4096
+
+
+def _opens_like_html(document: QTextDocument, index: int) -> bool:
+    """True when the text from ``index`` opens like an HTML document.
+
+    Only the first blocks are read, so a keystroke stays cheap. The rule is
+    the format table's sniff, which skips leading comments.
+    """
+    block = document.findBlock(index)
+    parts: list[str] = []
+    size = 0
+    while block.isValid() and len(parts) < _SNIFF_BLOCKS and size < _SNIFF_CHARS:
+        text = block.text()
+        parts.append(text)
+        size += len(text)
+        block = block.next()
+    return sniff_format("\n".join(parts)) is HTML
+
+
+def marker_tooltip_text(message: str) -> str:
+    """A gutter marker's tooltip: ``message`` as plain text, tags and all.
+
+    A tooltip reads rich text, so a problem that names a tag, such as
+    ``<div> opened on line 3 is never closed.``, is escaped first. Lines
+    stay lines, and spaces still wrap.
+    """
+    return QtGui.Qt.convertFromPlainText(message, Qt.WhiteSpaceMode.WhiteSpaceNormal)
 
 
 def _mode_for(first: str) -> SyntaxMode:

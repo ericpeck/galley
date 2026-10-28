@@ -124,7 +124,7 @@ def test_input_lists_json_yaml_xml_and_output_follows(qtbot) -> None:
     window = _show(qtbot)
     source = _pane(window, "input")
     result = _pane(window, "output")
-    assert _choices(source) == ["JSON", "YAML", "XML"]
+    assert _choices(source) == ["JSON", "YAML", "XML", "HTML"]
     assert _choices(result) == ["JSON", "YAML"]
 
     _choose(result, "YAML")

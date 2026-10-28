@@ -105,7 +105,8 @@ above the caps.
 ``format_xml`` (#63) times XML Format on the plain catalog written as XML:
 one ``<item>`` element per record, with attributes, nested elements, and
 text-only leaves. Its 0.5 s and 2 s points are where the XML busy and
-progress bands in ``galley.app.limits`` come from. It uses the JSON ladder.
+progress bands in ``galley.app.limits`` come from. It uses the JSON ladder
+plus 2 MB, the Format limit XML shares with HTML.
 
 ``format_html`` (#63) times HTML Format on the plain catalog written as an
 HTML page: one ``<article>`` per record, with a heading, an inline run, a
@@ -181,9 +182,10 @@ DEFAULT_TRIGGER_SIZES_MB = (0.05, 0.1, 0.25, 0.5, 1)
 # Convert from Python rows. The UI limits in ``galley.app.limits`` are about
 # 1 MB to JSON and 192 KB to YAML, so the ladder brackets both.
 DEFAULT_PYTHON_SIZES_MB = (0.1, 0.25, 0.5, 1, 2, 5)
-# XML Format is expat in C plus slicing, close to JSON, so it shares that
-# ladder. 1 MB is Isaac's 0.5 s budget point.
-DEFAULT_XML_SIZES_MB = DEFAULT_JSON_SIZES_MB
+# XML Format is expat in C plus slicing, close to JSON, so it follows that
+# ladder. 1 MB is Isaac's 0.5 s budget point, and 2 MB is the Format limit
+# XML shares with HTML (#63 slice 5).
+DEFAULT_XML_SIZES_MB = (1, 2, 5, 10, 50, 100)
 # HTML Format tokenizes in pure Python, about 0.25 s per MB on macOS arm64,
 # so 1 MB is the 0.7 s macOS budget point (1.0 s on Windows) and 20 MB is
 # past the 2 s band.

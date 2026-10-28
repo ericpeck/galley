@@ -14,11 +14,12 @@ from galley.app.problems_settings import problems_settings
 from galley.core.load import LoadedDocument, LoadError, LoadErrorKind, read_document
 
 LAST_DIR_KEY = "open/lastDir"
-# Bill's wording (#135). Every extension Open maps through the table.
+# Bill's wording (#135), with HTML added in slice 5 (#63). Every extension
+# Open maps through the table, in table order.
 OPEN_FILE_FILTER = (
-    "JSON, YAML, and XML "
-    "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml)"
-    ";;All Files (*)"
+    "JSON, YAML, XML, and HTML "
+    "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml"
+    " *.html *.htm);;All Files (*)"
 )
 OPEN_DIALOG_CAPTION = "Open"
 REPLACE_BUTTON = "Replace"

@@ -5,6 +5,7 @@ this table instead of their own list of names, so a later format is one new
 row plus its parser. This module has no Qt and no message strings.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -39,22 +40,25 @@ def _looks_like_yaml(line: str) -> bool:
     return bool(colon and key and (rest == "" or rest.startswith(" ")))
 
 
-def _looks_like_xml(line: str) -> bool:
-    """A leading ``<``, except the start of an HTML document (Bill, #63).
+# The start of an HTML document: the HTML doctype, or an ``html``, ``head``,
+# or ``body`` tag, in any case (Bill and Erik, #63).
+_HTML_START = re.compile(r"<(?:!doctype\s+html|html|head|body)(?=[\s>/]|$)", re.I)
 
-    ``<!doctype html`` and ``<html``, in any case, are HTML's. They stay
-    unsettled until the HTML row arrives in slice 5.
-    """
-    if not line.startswith("<"):
-        return False
-    return not line.casefold().startswith(("<!doctype html", "<html"))
+
+def _looks_like_html(line: str) -> bool:
+    return _HTML_START.match(line) is not None
+
+
+def _looks_like_xml(line: str) -> bool:
+    """A leading ``<`` that doesn't start an HTML document (Bill, #63)."""
+    return line.startswith("<") and not _looks_like_html(line)
 
 
 # ``.jsonc`` and ``.json5`` are not mapped, since the JSON parser rejects
 # their comments and trailing commas.
 JSON = DocumentFormat("json", "JSON", (".json", ".geojson"), _looks_like_json, True)
 YAML = DocumentFormat("yaml", "YAML", (".yaml", ".yml"), _looks_like_yaml, True)
-# XML is formatted and checked, never converted (#63).
+# XML and HTML are formatted and checked, never converted (#63).
 XML = DocumentFormat(
     "xml",
     "XML",
@@ -62,8 +66,9 @@ XML = DocumentFormat(
     _looks_like_xml,
     False,
 )
+HTML = DocumentFormat("html", "HTML", (".html", ".htm"), _looks_like_html, False)
 
-FORMATS: tuple[DocumentFormat, ...] = (JSON, YAML, XML)
+FORMATS: tuple[DocumentFormat, ...] = (JSON, YAML, XML, HTML)
 FORMAT_LABELS: tuple[str, ...] = tuple(fmt.label for fmt in FORMATS)
 
 
@@ -92,11 +97,17 @@ def format_for_extension(suffix: str) -> DocumentFormat | None:
 def sniff_format(text: str) -> DocumentFormat | None:
     """Return the format the first meaningful line of ``text`` looks like.
 
-    Blank lines and ``#`` comment lines are skipped. Formats are tried in
-    table order. None means that line settles nothing.
+    Blank lines, ``#`` comment lines, and ``<!-- -->`` comments are skipped,
+    so an HTML file that opens with a comment is read by what follows it.
+    Formats are tried in table order. None means that line settles nothing.
     """
+    in_comment = False
     for raw in text.splitlines():
         line = raw.strip()
+        if in_comment or line.startswith("<!--"):
+            end = line.find("-->", 0 if in_comment else 4)
+            in_comment = end < 0
+            line = "" if in_comment else line[end + 3 :].strip()
         if not line or line.startswith("#"):
             continue
         for fmt in FORMATS:

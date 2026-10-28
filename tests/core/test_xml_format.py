@@ -322,7 +322,7 @@ def test_open_maps_xml_extensions(suffix: str) -> None:
 
 
 def test_xml_is_the_third_row_and_targets_only_itself() -> None:
-    assert [fmt.label for fmt in FORMATS] == ["JSON", "YAML", "XML"]
+    assert [fmt.label for fmt in FORMATS][:3] == ["JSON", "YAML", "XML"]
     assert format_named("XML") is XML
     assert not XML.loads_to_value
     assert targets_for("xml") == (XML,)
@@ -385,9 +385,9 @@ def test_run_compare_rejects_xml(left: str, right: str, side: str) -> None:
 
 
 def test_run_compare_still_reports_an_unknown_format_as_a_failure() -> None:
-    event = run_compare(CompareJob(9, "{}", "json", "<a/>", "html"))
+    event = run_compare(CompareJob(9, "{}", "json", "<a/>", "toml"))
     assert isinstance(event, CompareFailureEvent)
-    assert (event.side, event.message) == ("right", "Unsupported format: html")
+    assert (event.side, event.message) == ("right", "Unsupported format: toml")
 
 
 # --- Properties -----------------------------------------------------------
