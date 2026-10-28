@@ -69,9 +69,11 @@ def recent_stat(entry: str) -> os.stat_result:
 class FileChecker(QObject):
     """Check on daemon threads whether recent files still exist.
 
-    ``checked`` carries the entry and whether it is a file. An entry has at
-    most one check running, and at most :data:`CHECK_THREADS` checks sit in
-    ``stat`` at once, so a lost share ties up two threads at most.
+    ``checked`` carries the entry and whether it is a file. Each check has
+    its own thread, so a menu starts one thread per row, and an entry has at
+    most one check running per menu. Across every window, at most
+    :data:`CHECK_THREADS` checks sit in ``stat`` at once; the rest wait on a
+    shared semaphore until a slot frees.
 
     The threads are not Qt's: Open's reader never waits behind a stuck
     check, and quitting never waits for one either, since Python leaves a
@@ -140,8 +142,10 @@ class RecentFilesMenu(QMenu):
     or is enabled before its first check, and a check runs for every row
     each time the menu is built. Opening a file that has gone since still
     gets Open's "Couldn't find" message. Known limits: a check that started
-    before a file was deleted can call it found until the next build, and a
-    row whose stat never returns stays enabled.
+    before a file was deleted can call it found until the next build, a row
+    whose stat never returns stays enabled, and two paths that hang hold
+    both check slots, so the other rows keep their last state until one
+    returns.
     """
 
     open_requested = Signal(object)
