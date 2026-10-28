@@ -127,11 +127,12 @@ def test_a_row_per_change_with_its_kind_path_detail_and_line(qtbot) -> None:
         ("Moved", "from.x"),
         ("Added", "new"),
     ]
+    # Each value sits in a direction isolate, U+2068 ... U+2069.
     assert [change_detail(row) for row in rows] == [
-        '"user" → "admin"',
-        "1",
-        "→ to.x",
-        "true",
+        '\u2068"user"\u2069 → \u2068"admin"\u2069',
+        "\u20681\u2069",
+        "→ \u2068to.x\u2069",
+        "\u2068true\u2069",
     ]
     assert rows[0].left_line == 2 and rows[3].right_line == 9
 

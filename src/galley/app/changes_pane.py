@@ -476,13 +476,22 @@ def row_height(metrics: QFontMetrics) -> int:
 
 def change_detail(row: ChangeRow) -> str:
     """``old → new`` for Changed, the one value for Added and Removed, and
-    ``→ path`` for Moved. The view cuts it with "…" to fit."""
+    ``→ path`` for Moved. The view cuts it with "…" to fit.
+
+    Each value is a Unicode direction isolate, so a right-to-left value
+    neither flips the row's direction nor puts new before old.
+    """
     if row.kind == "moved":
-        return f"→ {row.moved_to_text or ''}"
+        return f"→ {_isolated(row.moved_to_text or '')}"
     if row.old is not None and row.new is not None:
-        return f"{row.old.text} → {row.new.text}"
+        return f"{_isolated(row.old.text)} → {_isolated(row.new.text)}"
     summary = row.new if row.old is None else row.old
-    return "" if summary is None else summary.text
+    return "" if summary is None else _isolated(summary.text)
+
+
+def _isolated(text: str) -> str:
+    """``text`` between FIRST STRONG ISOLATE and POP DIRECTIONAL ISOLATE."""
+    return f"\u2068{text}\u2069"
 
 
 def line_text(row: ChangeRow | GroupRow | InfoRow) -> str:
