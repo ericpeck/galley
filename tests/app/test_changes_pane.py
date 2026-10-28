@@ -39,6 +39,7 @@ from galley.app.changes_pane import (
     ChangesState,
     change_detail,
     difference_count_text,
+    line_text,
     row_colors,
 )
 from galley.app.results_panel import ResultRow
@@ -135,6 +136,19 @@ def test_a_row_per_change_with_its_kind_path_detail_and_line(qtbot) -> None:
         "\u2068true\u2069",
     ]
     assert rows[0].left_line == 2 and rows[3].right_line == 9
+    assert [line_text(row) for row in rows] == ["Line 2", "Line 3", "5 → 5", "Line 9"]
+
+
+def test_a_group_shows_its_first_line_and_an_info_row_none(qtbot) -> None:
+    pane = _pane(qtbot, _grouped())
+    rows = _rows(pane)
+    assert [line_text(row) for row in rows] == [
+        "Line 2",
+        "",
+        f"Line {rows[2].left_line}",
+        f"Line {rows[3].left_line}",
+        "Line 11",
+    ]
 
 
 def test_display_and_accessible_text_are_the_spoken_name(qtbot) -> None:
@@ -202,7 +216,9 @@ def _drawn_path(pane: ChangesPane) -> str:
 
 def test_a_long_path_is_cut_in_the_middle_and_keeps_its_last_key(qtbot) -> None:
     pane = _pane(qtbot, _long_path_report())
-    pane.resize(330, 200)
+    metrics = QFontMetrics(pane.list_view().font())
+    # Room for about two thirds of the path beside the value.
+    pane.resize(metrics.horizontalAdvance(_LONG_PATH) + 120, 200)
     path = _drawn_path(pane)
     assert path != _LONG_PATH
     assert path.startswith("shipping.") and path.endswith(_LONG_KEY[-6:])

@@ -534,15 +534,21 @@ def tooltip_text(row: ChangeRow | GroupRow | InfoRow) -> str:
 
 
 def line_text(row: ChangeRow | GroupRow | InfoRow) -> str:
-    """The line column's text: the line on the side the path names, which
-    is Right for Added and Left otherwise. A group shows its first line."""
+    """The line column (Bill, #65 3c review): ``Line 22`` on the side the
+    path names, which is Right for Added and Left otherwise, and ``22 → 24``
+    from Left to Right for Moved. A group shows its first line."""
     if isinstance(row, InfoRow):
         return ""
-    if isinstance(row, ChangeRow) and row.kind == "added":
-        line = row.right_line
+    if isinstance(row, ChangeRow):
+        if row.kind == "moved" and None not in (row.left_line, row.right_line):
+            return f"{row.left_line} → {row.right_line}"
+        if row.kind == "added":
+            line = row.right_line
+        else:
+            line = row.left_line if row.left_line is not None else row.right_line
     else:
         line = row.left_line if row.left_line is not None else row.right_line
-    return "" if line is None else str(line)
+    return "" if line is None else f"Line {line}"
 
 
 def _draw(
