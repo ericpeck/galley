@@ -427,8 +427,6 @@ class MainWindow(QMainWindow):
         bar.setStyleSheet(menu_style())
 
         galley = _add_menu(bar, "Galley")
-        galley.addAction(actions.preferences)
-        galley.addSeparator()
         galley.addAction(actions.quit)
 
         file_menu = _add_menu(bar, "File")

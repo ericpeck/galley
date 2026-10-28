@@ -46,7 +46,6 @@ NOT_AVAILABLE = "Not available for {label}"
 # Menu order: menu bar, then the toolbar, then the tab menu.
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
-    "Preferences",
     "Guides",
     "Pop out",
     "Indent",
@@ -58,7 +57,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
 # ShellActions attributes for each roadmap name. Shipping a command does
 # not edit this map; it only deletes the name from UNBUILT_ACTIONS.
 _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
-    "Preferences": ("preferences",),
     "Open": ("open_file",),
     "Find": ("find",),
     # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
@@ -264,12 +262,6 @@ class ShellActions:
             role=QAction.MenuRole.AboutRole,
         )
         self.about.setObjectName("aboutGalley")
-        self.preferences = _action(
-            parent,
-            "Preferences…",
-            standard=QKeySequence.StandardKey.Preferences,
-            role=QAction.MenuRole.PreferencesRole,
-        )
         self.quit = _action(
             parent,
             "Quit",
@@ -461,7 +453,6 @@ class ShellActions:
     def _stub_actions(self) -> list[QAction]:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
-            self.preferences,
             self.guides_off,
             self.guides_lines,
             self.guides_depth,
