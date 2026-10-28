@@ -49,6 +49,9 @@ XMLProblemCode = Literal[
     "xml_other",
 ]
 XML_PROBLEM_CODES: tuple[XMLProblemCode, ...] = get_args(XMLProblemCode)
+# Every code the HTML structure check reports, typed the same way.
+HTMLProblemCode = Literal["html_unexpected_close", "html_unclosed"]
+HTML_PROBLEM_CODES: tuple[HTMLProblemCode, ...] = get_args(HTMLProblemCode)
 
 ProblemCode = Literal[
     "missing_comma",
@@ -68,14 +71,18 @@ ProblemCode = Literal[
     "yaml_colon",
     "yaml_other",
     XMLProblemCode,
-    "html_unexpected_close",
-    "html_unclosed",
+    HTMLProblemCode,
 ]
 
 
 def is_xml_code(code: str) -> TypeGuard[XMLProblemCode]:
     """True for a code the XML check reports."""
     return code in XML_PROBLEM_CODES
+
+
+def is_html_code(code: str) -> TypeGuard[HTMLProblemCode]:
+    """True for a code the HTML structure check reports."""
+    return code in HTML_PROBLEM_CODES
 
 
 @dataclass(frozen=True)
