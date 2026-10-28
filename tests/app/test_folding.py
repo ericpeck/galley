@@ -32,8 +32,10 @@ from galley.app.theme import EDGE_CONTRAST, composite, contrast_ratio
 from galley.core.folds import FoldKind, fold_ranges, line_count
 
 _LANE = 16
-# Bill's #64 spec and the budget from Erik and Chief.
-_COLLAPSE_BUDGET_S = 0.150
+# Bill's #64 spec set 150 ms. Isaac raised it to 0.18 s: Windows CI medians
+# were 131-139 ms across #147, #148 and #149 (worst 138.9 ms x 1.25, rounded
+# up to the next 0.01 s).
+_COLLAPSE_BUDGET_S = 0.18
 _TEXT_CONTRAST = 4.5
 _SOURCE = json.dumps(
     {"name": "galley", "owner": {"login": "x", "id": 7, "site": True}, "tags": [1, 2]}
