@@ -17,7 +17,7 @@ Main window, top to bottom (ref: 6c):
 1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
 2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input 1</b>` (names the pane that has focus / is the Format target).
 3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes.
-4. Each pane: **tab strip** (tabs + `+` new tab) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
+4. Each pane holds one document: **tab strip** (the pane title, `Input 1` / `Output 1`) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
 5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
 
 Default split is 50/50 (Input / Output). The rail readout shows `50` over `50`. The mocks printed `40` over `60` while the panes looked near equal; the default ratio is 50/50.
@@ -33,7 +33,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `window.bg` | `#F3F2F2` | window, toolbar, status bar, pane footers, menus, popovers, find bar | confirmed |
 | `editor.bg` | `#FFFFFF` | light-mode sample of the editor text area. The editor uses palette Base, not this hex | confirmed |
 | `gutter.bg` | `#EAE7E7` | light-mode sample of the line-number gutter (one step darker than the white page). The gutter uses palette AlternateBase; also the stale-output banner, `Stale` tag fill, and progress-bar track in the light samples | confirmed |
-| `pane.edge` | `#7D7979` | 1 px border around panes and under inactive tabs; ~3.9:1 vs window | confirmed |
+| `pane.edge` | `#7D7979` | 1 px border around panes; ~3.9:1 vs window | confirmed |
 | `line.current` | `#DEDBDB` | current-line band in the editor | measured |
 | `dialog.bg` | `#EAE9E9` | modal dialog surface | measured |
 | `card.bg` | `#F3F2F2` | rows/cards inside dialogs, diff preview box | measured |
@@ -77,7 +77,7 @@ Every place color carries meaning also has an icon or words:
 - Diff preview: changed = blue chip, **and** the margin names the change (`quotes`, `True → true`, `None → null`, `tuple → list · comma`, `trailing comma`). Removed = a small marked glyph with strike, plus a legend row (`"a" changed`, `"a" removed`).
 - 6k amber items: amber fill **plus** a margin tag with a quote icon and the words `to string`, plus a legend entry `"a" source text kept as a string`.
 - Stale output: banner text plus a `Stale` tag with an icon on the tab.
-- Unsaved tab: a dot in place of the close button **plus** `Edited` in the output footer (6g, 6f).
+- Edited output: `Edited` in the output footer (6f).
 - Valid: check icon plus `Valid JSON` text in the status bar.
 - Selected segments/scope toggles: filled accent **plus** checked state exposed to accessibility.
 
@@ -108,7 +108,7 @@ Measured at 1x, approximate:
 - Base unit 4 px; most gaps are 8 / 12 / 16 px.
 - Window outer padding around pane area: ~16 px left/right.
 - Toolbar: ~56 px tall; buttons are icon + label, ~28 px tall, 8 px icon–label gap, ~24 px between groups. Undo/Redo sit in a shared rounded tray (slightly darker fill).
-- Tab strip: ~30 px; tabs ~28 px tall, ~70–100 px wide, 1 px `pane.edge` outline, active tab joins the pane (no bottom border).
+- Tab strip: ~30 px; one row with the pane title and the format picker.
 - Gutter: ~50 px wide; numbers right-aligned with fold arrows (`▾`/`▸`) immediately right of the number.
 - Editor: ~10 px left text inset.
 - Pane footer: ~24 px; status bar: ~24 px.
@@ -133,19 +133,16 @@ Three states:
 - **Working**: full color, small spinner, label `Formatting…`. Never looks disabled. Cancel lives in the status bar, not on the button.
 Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 
-### 5.3 Tabs and tab strip (ref: 6g)
-- Tab = title + close `×`. New tab `+` after the last tab.
-- File-backed tabs show the file name (`orders-2026-10.json`, `deploy.yaml`).
-- Unsaved/edited output tab: dot `●` replaces the close button.
-- Right-click menu: `Rename`, `Duplicate` | `Close` (⌘W), `Close others` (⌘K ⇧⌘W), `Close tabs to the right`.
-- Rename is inline: the tab becomes a text field with accent focus ring.
+### 5.3 Tab strip
+- Galley v1 has no tabs. Each pane holds one document, and the strip has no close `×`, no new tab `+`, and no right-click menu.
+- Left side of strip: the bold pane title (`Input 1`, `Output 1`).
 - Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`).
 
 ### 5.4 Editor (QPlainTextEdit subclass)
 - Background `editor.bg`; current line `line.current`.
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
-- Word wrap toggle (⌥Z on macOS, Alt+Z on Windows), Show Whitespace (⇧⌘8). Close Others is the chord ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Both bindings are swappable per platform (§6, §12).
+- Word wrap toggle (⌥Z on macOS, Alt+Z on Windows), Show Whitespace (⇧⌘8). Both bindings are swappable per platform (§6, §12).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` right after `Copy`, and the fold commands at the end (#66).
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
@@ -197,8 +194,6 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Find | ⌘F | Ctrl+F |
 | Find and Replace | ⌥⌘F | standard Replace |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
-| Close tab | ⌘W | Ctrl+W |
-| Close others | ⌘K ⇧⌘W | Ctrl+K, Ctrl+Shift+W |
 | Escape / Unescape String | ⇧⌘E / ⌘K ⌘E | Ctrl+Shift+E / Ctrl+K, Ctrl+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
 | Word wrap | ⌥Z | Alt+Z |
@@ -211,9 +206,9 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⇧⌘W stays free for a later Close Window binding.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W is unbound, and ⇧⌘W stays free for a later Close Window binding.
 
-Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions. Ctrl+Tab cycles tabs within the focused pane (proposal).
+Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions.
 
 ---
 
@@ -272,7 +267,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Center: `Paste JSON or YAML, or drop a file here`, `⌨ ⌘V to paste · Ctrl+V on Windows`, primary `Paste`, secondary `Open file…`.
 - Output: `Formatted output will appear here.`
 - Format disabled (only state where it is). `Clear` and output `Copy` disabled. Input footer `Empty`. Status `Ready`. Direction `JSON → JSON`.
-- Drag-over (not in mocks): accent outline on the input pane; drop loads the file into a new or the current empty tab (confirm).
+- Drag-over (not in mocks): accent outline on the input pane; drop loads the file into Input, after asking first when Input has unsaved text (#86).
 
 ### 6d — Large file: writing the output (ref: 6d)
 - 4.8 MB minified file `orders-2026-10.json`, one line. Word wrap off; horizontal scrollbar. Input banner: `One 4.8 MB line. Word wrap is off for it so the editor stays fast.` + `{·} Pretty-print to edit`.
@@ -290,18 +285,16 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Footers: `34 lines · 612 characters`; `22 lines · 1 note`. Status `✓ Converted · 1 note`. Direction `JSON → YAML`. Caption `Editing Output 1`.
 
 ### 6f — Replace existing output? (ref: 6f)
-- Shown only when Format would overwrite an output tab the user edited (tab shows dot, footer `Edited`).
-- Title `Output 1 has changes. Replace it?` Body `You edited this tab after the last Format. Replacing it discards those edits.`
-- `☐ Don't ask again` + `Remembered only if you choose Format into a new tab`.
-- Buttons: `Cancel` (text button), `Replace`, primary `⊞ Format into a new tab` (focused default, so Return never throws work away).
-- Don't ask again only takes effect with Format into a new tab. Replace never remembers it.
+- Shown only when Format would overwrite Output the user edited (footer `Edited`).
+- Title `Output 1 has changes. Replace it?` Body `You edited Output 1 after the last Format. Replacing it discards those edits.`
+- Buttons: `Cancel` (text button, focused default, so Return never throws work away), `Replace`.
+- No `Don't ask again`: it only took effect with `Format into a new tab`, which Galley v1 doesn't have.
 
 ### 6g — Tab menu, rename, unsaved changes (ref: 6g)
-- Input: second tab being renamed inline (`payload-v2`). Output: tabs `Output 1 ●`, `Orders YAML`, `Output 3`; context menu open with `Duplicate` highlighted. Output footer `Edited`.
-- Rename: Enter commits, Esc reverts; empty name reverts. Close on a dirty tab: confirm (copy TBD; not in mocks).
+- Removed. Galley v1 has no tabs, so this screen is not built. Edited Output still shows `Edited` in the output footer (6f).
 
 ### 6h — Output options (ref: 6h)
-- Popover from Output footer `Options` (button shows pressed state). Applies to the active output tab. Indent, sort keys, non-ASCII escaping, line endings apply to any format; YAML section appears only when output is YAML. Changes apply on the next Format.
+- Popover from Output footer `Options` (button shows pressed state). Applies to Output. Indent, sort keys, non-ASCII escaping, line endings apply to any format; YAML section appears only when output is YAML. Changes apply on the next Format.
 - Keyboard: Tab through segmented controls; arrows move within a segment; Space toggles checkboxes; Esc closes.
 
 ### 6i — Convert from Python: everything converts (ref: 6i)
@@ -375,7 +368,7 @@ Architecture:
 
 ## 11. Accessibility baseline
 
-- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, reset, close tab, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
+- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, reset, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
 - Visible 2 px accent focus ring on panes, fields, and buttons; default button in dialogs has a ring.
 - Full keyboard operation for every screen (§6, §7). Dialogs trap focus; Esc cancels (except 6l Close).
 - Color never the only cue (§2).
@@ -390,7 +383,7 @@ Architecture:
 
 Isolate behind a `platform` module for macOS and Windows:
 - **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. There is no Window menu. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.
@@ -402,7 +395,7 @@ Isolate behind a `platform` module for macOS and Windows:
 
 - No new brand elements: no logo, icon set, mascot, tagline, or extra colors beyond §2. The empty state (6c) has no download icon.
 - Do not call the app macOS-native.
-- No `QDockWidget`; no tabs dragging into docks.
+- No `QDockWidget`. No tabs: each pane holds one document.
 - No percentage bar during the parse/read step (6m). Progress bar only while writing (6d).
 - No magenta for 6k converted items (amber only).
 - No Replace on Output find.
@@ -424,10 +417,10 @@ Isolate behind a `platform` module for macOS and Windows:
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#EAE7E7` is 5.47:1.
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset split`. The readout's accessible name stays `50 / 50`.
-9. **⌥⌘W conflict**: Resolved by #95. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows.
+9. **⌥⌘W conflict**: Resolved by #95. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. Close Others was removed with Tabs.
 10. File and Help menu contents. Window is resolved: there is no Window menu in v1 (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
-12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.
+12. Quitting with edits — copy and flow not in mocks. Closing a dirty tab is resolved: Galley v1 has no tabs.
 13. Performance bands and thresholds (wrap-off line length, colors-off size, when to show 6m) — TBD by benchmarks.
 14. Whether to commit reference PNGs alongside this spec (currently text only).
 15. Mock set count: the instructions list 18 PNGs including a separate 6d Cancel crop; in the received set the Cancel state appears inside the 6d image ("After Cancel while the output is filling in"). Confirm nothing is missing.

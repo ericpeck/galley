@@ -31,10 +31,10 @@ from galley.core.problems import Problem
 
 _ROLES = (PaneRole.INPUT, PaneRole.OUTPUT)
 # The Windows runner's platform fonts are drawn at the same pixel sizes as
-# macOS's offscreen ones, but its fallback family is much wider: with Pop
-# out still in the strip, its strips shed at 1280 px and the titles
-# shortened at 900 px. The "wide font" variant scales the fonts until these
-# labels are as wide as they are there (what 20 pt draws on macOS), so
+# macOS's offscreen ones, but its fallback family is much wider: with Close,
+# New tab and Pop out still in the strip, its strips shed at 1280 px and the
+# titles shortened at 900 px. The "wide font" variant scales the fonts until
+# these labels are as wide as they are there (what 20 pt draws on macOS), so
 # macOS runs the Windows case too. Where the platform fonts are already
 # that wide, the variant would only repeat the platform one, so it is
 # skipped. The UI sample is the text measured on that runner when the strip
@@ -282,7 +282,7 @@ def test_shed_parts_keep_their_tooltips_on_hover(qtbot) -> None:
     window = _show(qtbot, 1280)
     _open_problems(qtbot, window)
     for pane in _panes(window):
-        pane.fit_tab_strip(200)
+        pane.fit_tab_strip(120)
         _assert_shed_state(pane, StripShed.TITLE)
         for widget, tip in (
             (_title(pane), pane.spec.title),
@@ -361,14 +361,17 @@ def test_900_px_with_problems_open_clips_nothing(
     assert (surface.lightness() < 128) is (scheme == "dark")
     problems = _open_problems(qtbot, window)
     qtbot.waitUntil(lambda: window.width() == 900)
-    # Without Pop out, the platform fonts can fit both unshed strips beside
-    # Problems at 900 px. Wide fonts still push Problems to 200 px and shed.
+    # The platform fonts can fit both unshed strips beside Problems at
+    # 900 px. Wide fonts still push Problems to 200 px, and the wider Output
+    # strip sheds.
     expected = _expected_problems_width(window, DEFAULT_WIDTH)
     _wait_problems(qtbot, window, problems, expected)
     assert _saved_width() == DEFAULT_WIDTH
+    if expected == MIN_WIDTH:
+        assert any(pane.strip_shed() > StripShed.NONE for pane in _panes(window)), (
+            _measured(window, problems)
+        )
     for pane in _panes(window):
-        if expected == MIN_WIDTH:
-            assert pane.strip_shed() > StripShed.NONE, _measured(window, problems)
         picker = pane.format_combo
         assert isinstance(picker, QComboBox)
         assert picker.width() >= picker.sizeHint().width()
@@ -432,14 +435,18 @@ def test_problems_shrinks_first_and_keeps_its_saved_width(
         assert pane.strip_shed() is StripShed.NONE
 
     # Narrow enough that Problems must give up 60 px, but not reach 200 px.
+    # With narrow strips, as with the macOS platform fonts, that is under
+    # the 900 px minimum, so Problems never has to give way there. The
+    # wide-font run still checks it.
     middle = _unshed_window_width(window, 280)
-    window.resize(middle, 800)
-    qtbot.waitUntil(lambda: window.width() == middle)
-    _wait_problems(qtbot, window, problems, 280)
-    for pane in _panes(window):
-        assert pane.strip_shed() is StripShed.NONE, _measured(window, problems)
-    _assert_problems_give_way_first(window, problems)
-    assert _saved_width() == 340
+    if middle >= window.minimumWidth():
+        window.resize(middle, 800)
+        qtbot.waitUntil(lambda: window.width() == middle)
+        _wait_problems(qtbot, window, problems, 280)
+        for pane in _panes(window):
+            assert pane.strip_shed() is StripShed.NONE, _measured(window, problems)
+        _assert_problems_give_way_first(window, problems)
+        assert _saved_width() == 340
 
     window.resize(900, 800)
     qtbot.waitUntil(lambda: window.width() == 900)
