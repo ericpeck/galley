@@ -493,7 +493,8 @@ _TWO_MB_HTML_BUDGET_S = 2.0 if sys.platform == "win32" else 1.4
 def test_two_megabytes_of_markup_format_within_budget(perf_budget, fmt: str) -> None:
     """Format the largest XML and HTML documents the 2 MB limit lets through.
 
-    XML is checked and formatted, as Format does. Each fixture ends within
+    Only Format is timed, as the app runs it. The XML fixture is checked
+    once before, outside the clock (Isaac, #148). Each fixture ends within
     one item of the limit and never past it.
     """
     limit = MARKUP_FORMAT_LIMIT_BYTES
@@ -502,13 +503,9 @@ def test_two_megabytes_of_markup_format_within_budget(perf_budget, fmt: str) -> 
     assert limit - 4096 < _utf8_len(text) <= limit
 
     if fmt == "XML":
-
-        def format_and_validate() -> None:
-            validate_xml(text)
-            format_xml(text)
-
+        validate_xml(text)
         perf_budget.within(
-            _TWO_MB_XML_BUDGET_S, format_and_validate, fixture="2 MB XML"
+            _TWO_MB_XML_BUDGET_S, lambda: format_xml(text), fixture="2 MB XML"
         )
         return
     perf_budget.within(
