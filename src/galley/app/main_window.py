@@ -34,7 +34,13 @@ from PySide6.QtWidgets import (
 )
 
 from galley.app.about import show_about_dialog
-from galley.app.actions import ShellActions, coming_soon_wrapper, is_unbuilt
+from galley.app.actions import (
+    ShellActions,
+    coming_soon_wrapper,
+    is_unbuilt,
+    not_available_text,
+    set_not_available,
+)
 from galley.app.appearance import (
     MODE_DARK,
     MODE_LIGHT,
@@ -75,6 +81,9 @@ from galley.app.limits import (
     JSON_WARNING_BYTES,
     PYTHON_TO_JSON_BYTES,
     PYTHON_TO_YAML_BYTES,
+    XML_BUSY_BYTES,
+    XML_PROGRESS_BYTES,
+    XML_WARNING_BYTES,
     YAML_BUSY_BYTES,
     YAML_PROGRESS_BYTES,
     YAML_TAB_BUSY_BYTES,
@@ -144,7 +153,7 @@ from galley.app.toolbar import MainToolbar
 from galley.core.convert_python import ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
-from galley.core.formats import YAML, format_named
+from galley.core.formats import XML, YAML, format_named, targets_for
 from galley.core.load import LoadedDocument, LoadError
 from galley.core.mask import CopyAsMode, CopyAsResult
 from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
@@ -155,6 +164,8 @@ CANCELLED_MESSAGE = "Formatting canceled."
 FORMATTING_MESSAGE = "Formatting…"
 # Words, not only the pressed Sort keys button, say the output was sorted.
 SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
+# Sort keys has its own reason for a format without keys (Bill, #135).
+SORT_KEYS_NOT_APPLICABLE = "Sort keys doesn't apply to {label}"
 FORMAT_ACCESSIBLE_NAME = "Format"
 FORMAT_BUSY_DESCRIPTION = "Format is running. Press Cancel to stop."
 FORMAT_BUSY_TOOLTIP = "Formatting… press Cancel to stop"
@@ -284,6 +295,8 @@ class MainWindow(QMainWindow):
         # Only Output folds in v1 (#64).
         self._output_pane.editor.set_folding_enabled(True)
         self._active_editor = self._input_pane.editor
+        # The JSON or YAML Output to go back to after XML Input (B1 on #63).
+        self._last_value_output = self._output_pane.format_name()
         self._splitter = self._build_splitter()
         self._problems_state, self._problems_width = load_problems_preferences()
         self._applying_problems_layout = False
@@ -293,6 +306,7 @@ class MainWindow(QMainWindow):
         self._editing = self._build_caption()
         self._format_button = self._build_format_button()
         toolbar = self._build_toolbar()
+        self._toolbar = toolbar
         self._status = self._build_status_bar()
         self._assemble(toolbar)
         self._connect()
@@ -610,7 +624,7 @@ class MainWindow(QMainWindow):
         button.clicked.connect(self._actions.format.trigger)
         return button
 
-    def _build_toolbar(self) -> QWidget:
+    def _build_toolbar(self) -> MainToolbar:
         return MainToolbar(self._actions, self._format_button, self._editing)
 
     def _build_status_bar(self) -> StatusBar:
@@ -695,7 +709,10 @@ class MainWindow(QMainWindow):
 
         self._input_pane.editor.textChanged.connect(self._sync_input_state)
         self._output_pane.editor.textChanged.connect(self._sync_output_state)
+        # Output follows Input before the direction is shown.
+        self._input_pane.format_changed.connect(self._follow_input_format)
         self._input_pane.format_changed.connect(self._sync_direction)
+        self._output_pane.format_changed.connect(self._remember_output_format)
         self._output_pane.format_changed.connect(self._sync_direction)
         self._bind_pane(self._input_pane)
         self._bind_pane(self._output_pane)
@@ -852,7 +869,11 @@ class MainWindow(QMainWindow):
         self._apply_deferred_reveal()
         self._accepted_job_id = None
         self._session.start()
-        self._format_sorted = self._actions.sort_keys.isChecked()
+        # Sort keys is greyed out for XML but keeps its check for JSON and YAML.
+        self._format_sorted = (
+            self._actions.sort_keys.isChecked()
+            and format_named(self._format_source).loads_to_value
+        )
         self._session.submit(
             text,
             self._format_source,
@@ -1290,6 +1311,8 @@ class MainWindow(QMainWindow):
             status = "Converted"
         elif target == "yaml":
             status = "Valid YAML"
+        elif target == "xml":
+            status = "Valid XML"
         else:
             status = "Valid JSON"
         if self._format_sorted:
@@ -1722,13 +1745,13 @@ class MainWindow(QMainWindow):
         )
 
     def _sync_copy_as_actions(self) -> None:
-        available = self._copy_as_available()
-        for item in self._actions.copy_as_actions().values():
+        reason = self._not_available_reason()
+        available = self._copy_as_available() and not reason
+        menu_action = self._copy_as_menu.menuAction()
+        for item in (*self._actions.copy_as_actions().values(), menu_action):
             if item.isEnabled() != available:
                 item.setEnabled(available)
-        menu_action = self._copy_as_menu.menuAction()
-        if menu_action.isEnabled() != available:
-            menu_action.setEnabled(available)
+            set_not_available(item, reason)
 
     def _set_word_wrap(self, checked: bool) -> None:
         mode = (
@@ -1820,9 +1843,18 @@ class MainWindow(QMainWindow):
             button.setAccessibleDescription("")
             button.setToolTip(self._format_idle_tooltip)
             button.unsetCursor()
-        self._actions.convert_python.setEnabled(available)
-        self._actions.escape_string.setEnabled(available)
-        self._actions.unescape_string.setEnabled(available)
+        reason = self._not_available_reason()
+        actions = self._actions
+        for item in (
+            actions.convert_python,
+            actions.escape_string,
+            actions.unescape_string,
+        ):
+            item.setEnabled(available and not reason)
+            set_not_available(item, reason)
+        actions.sort_keys.setEnabled(not reason)
+        set_not_available(actions.sort_keys, self._sort_keys_reason())
+        self._toolbar.sync_not_available()
         self._sync_open_actions()
         self._sync_fold_actions()
         self._sync_copy_as_actions()
@@ -1900,6 +1932,41 @@ class MainWindow(QMainWindow):
             return
         self._output_pane.count_label.setText(_line_label(editor.blockCount()))
 
+    def _not_available_reason(self) -> str:
+        """Why the JSON and YAML commands are greyed out, or "" (B2 on #63).
+
+        They read and write values, so they apply only while the Input
+        format loads to a value. XML doesn't.
+        """
+        fmt = format_named(self._input_pane.format_name())
+        return "" if fmt.loads_to_value else not_available_text(fmt.label)
+
+    def _sort_keys_reason(self) -> str:
+        """Why Sort keys is greyed out, or "". XML has no keys to sort."""
+        fmt = format_named(self._input_pane.format_name())
+        if fmt.loads_to_value:
+            return ""
+        return SORT_KEYS_NOT_APPLICABLE.format(label=fmt.label)
+
+    def _follow_input_format(self) -> None:
+        """Offer in Output only what the Input format writes (B1 on #63).
+
+        XML Input offers and selects XML alone. Back on JSON or YAML, Output
+        offers both again and returns to the last one it showed.
+        """
+        source = format_named(self._input_pane.format_name())
+        labels = tuple(fmt.label for fmt in targets_for(source.name))
+        current = self._last_value_output if source.loads_to_value else source.label
+        self._output_pane.set_format_choices(labels, current)
+        self._sync_format_button()
+
+    def _remember_output_format(self, label: str) -> None:
+        fmt = format_named(label)
+        if fmt.loads_to_value:
+            self._last_value_output = fmt.label
+        keys = "" if fmt.loads_to_value else fmt.label
+        self._output_pane.find_bar.set_keys_only_unavailable(keys)
+
     def _sync_direction(self) -> None:
         left = self._input_pane.format_name()
         right = self._output_pane.format_name()
@@ -1967,15 +2034,21 @@ def _utf8_size(text: str) -> int:
 
 
 def _busy_progress_bytes(source: str, text: str) -> tuple[int, int]:
-    if format_named(source) is YAML:
+    fmt = format_named(source)
+    if fmt is YAML:
         if _has_tab(text):
             return YAML_TAB_BUSY_BYTES, YAML_TAB_PROGRESS_BYTES
         return YAML_BUSY_BYTES, YAML_PROGRESS_BYTES
+    if fmt is XML:
+        return XML_BUSY_BYTES, XML_PROGRESS_BYTES
     return JSON_BUSY_BYTES, JSON_PROGRESS_BYTES
 
 
 def _warning_bytes(source: str) -> int:
-    if format_named(source) is YAML:
+    fmt = format_named(source)
+    if fmt is XML:
+        return XML_WARNING_BYTES
+    if fmt is YAML:
         return YAML_WARNING_BYTES
     return JSON_WARNING_BYTES
 

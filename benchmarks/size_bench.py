@@ -1,4 +1,4 @@
-"""Benchmark galley.core against synthetic JSON, YAML, and XML files.
+"""Benchmark galley.core against synthetic JSON, YAML, XML, and HTML files.
 
 Generates nested documents in a temporary directory, times the format,
 validate, and convert callables that exist on this checkout, and writes a
@@ -107,6 +107,11 @@ one ``<item>`` element per record, with attributes, nested elements, and
 text-only leaves. Its 0.5 s and 2 s points are where the XML busy and
 progress bands in ``galley.app.limits`` come from. It uses the JSON ladder.
 
+``format_html`` (#63) times HTML Format on the plain catalog written as an
+HTML page: one ``<article>`` per record, with a heading, an inline run, a
+list whose end tags are left out, and a comment. ``html.parser`` is pure
+Python, so it has its own ladder, which reaches past the 2 s point.
+
 ``copy_as_masked_json``, ``copy_as_fake_json``, ``copy_as_masked_yaml`` and
 ``copy_as_fake_yaml`` time Copy As › Masked and › Random fake (#66) as
 shipped, ``mask.copy_as_text``, on the plain corpus with the JSON and YAML
@@ -153,6 +158,7 @@ from ruamel.yaml.main import CEmitter, CParser
 import galley.core
 from galley.core import format as core_format
 from galley.core.convert_python import ConvertError, convert_python
+from galley.core.html_format import format_html
 from galley.core.mask import CopyAsMode, copy_as_text
 from galley.core.xml_format import format_xml, validate_xml
 
@@ -178,6 +184,10 @@ DEFAULT_PYTHON_SIZES_MB = (0.1, 0.25, 0.5, 1, 2, 5)
 # XML Format is expat in C plus slicing, close to JSON, so it shares that
 # ladder. 1 MB is Isaac's 0.5 s budget point.
 DEFAULT_XML_SIZES_MB = DEFAULT_JSON_SIZES_MB
+# HTML Format tokenizes in pure Python, about 0.25 s per MB on macOS arm64,
+# so 1 MB is the 0.7 s macOS budget point (1.0 s on Windows) and 20 MB is
+# past the 2 s band.
+DEFAULT_HTML_SIZES_MB = (0.25, 0.5, 1, 2, 5, 10, 20)
 # Pinned so later safe+C runs stay comparable. Same version as the project.
 RUAMEL_CLIB_SPEC = "ruamel.yaml.clib==0.2.15"
 # Realistic documents replay this seed. Item ``i`` uses ``REALISTIC_SEED + i``.
@@ -255,6 +265,14 @@ XML_HEADER = (
 XML_SEPARATOR = ""
 XML_FOOTER_PREFIX = "  <padding>"
 XML_FOOTER_SUFFIX = "</padding>\n</catalog>\n"
+
+HTML_HEADER = (
+    '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+    "<title>galley-size-bench</title>\n</head>\n<body>\n<main>\n"
+)
+HTML_SEPARATOR = ""
+HTML_FOOTER_PREFIX = '<p class="padding">'
+HTML_FOOTER_SUFFIX = "</p>\n</main>\n</body>\n</html>\n"
 
 PYTHON_HEADER = "{'catalog': 'galley-size-bench', 'version': 1, 'items': [\n"
 PYTHON_SEPARATOR = ",\n"
@@ -530,6 +548,17 @@ def discover_operations() -> tuple[list[Operation], list[dict[str, str]]]:
             source_format="xml",
             fn=format_xml,
             phases=_xml_phases,
+        )
+    )
+    # HTML Format (#63) also runs in the worker. Format is one pass, so the
+    # row is timed whole.
+    scheduled.append(
+        Operation(
+            operation_id="format_html",
+            group="format",
+            source_format="html",
+            fn=format_html,
+            phases=_whole_phases(format_html),
         )
     )
     scheduled.extend(
@@ -1048,6 +1077,38 @@ def render_xml_catalog(target_bytes: int) -> str:
         return path.read_text(encoding="ascii")
 
 
+def _html_item(index: int) -> str:
+    record = _record(index)
+    location = record["location"]
+    tags = "".join(f"<li>{tag}" for tag in record["tags"])
+    return (
+        f'<article id="item-{record["id"]}" data-sku="{record["sku"]}">\n'
+        f"  <h2>{record['name']}</h2>\n"
+        f"  <p>Price <b>{record['price']:.2f}</b> USD, "
+        f"<i>{record['quantity']}</i> in stock.</p>\n"
+        f"  <ul>{tags}</ul>\n"
+        f"  <!-- {location['warehouse']} aisle {location['aisle']} -->\n"
+        f"  <p>{record['notes']}</p>\n"
+        "</article>\n"
+    )
+
+
+def render_html_catalog(target_bytes: int) -> str:
+    """Return one plain-catalog HTML page of exactly ``target_bytes`` bytes."""
+    with tempfile.TemporaryDirectory(prefix="galley-html-catalog-") as temporary:
+        path = Path(temporary) / "catalog.html"
+        _write_document(
+            path,
+            target_bytes,
+            header=HTML_HEADER,
+            separator=HTML_SEPARATOR,
+            footer_prefix=HTML_FOOTER_PREFIX,
+            footer_suffix=HTML_FOOTER_SUFFIX,
+            render_item=_html_item,
+        )
+        return path.read_text(encoding="ascii")
+
+
 def _python_item(index: int) -> str:
     return f"    {_record(index)!r}"
 
@@ -1465,6 +1526,8 @@ def _default_sizes(operation: Operation) -> tuple[float, ...]:
         return DEFAULT_PYTHON_SIZES_MB
     if operation.source_format == "xml":
         return DEFAULT_XML_SIZES_MB
+    if operation.source_format == "html":
+        return DEFAULT_HTML_SIZES_MB
     if operation.source_format == "json":
         return DEFAULT_JSON_SIZES_MB
     if operation.yaml_typ == "safe-c":
@@ -1546,6 +1609,13 @@ def generate_files(
         footer_prefix = XML_FOOTER_PREFIX
         footer_suffix = XML_FOOTER_SUFFIX
         render_item = _xml_item
+    elif source_format == "html":
+        suffix = ".html"
+        header = HTML_HEADER
+        separator = HTML_SEPARATOR
+        footer_prefix = HTML_FOOTER_PREFIX
+        footer_suffix = HTML_FOOTER_SUFFIX
+        render_item = _html_item
     elif source_format == "python":
         suffix = ".py"
         header = PYTHON_HEADER
@@ -1640,6 +1710,11 @@ def _validate_sample(
         validate_xml(text)
         if "<item " not in text:
             raise RuntimeError("Synthetic xml document did not parse.")
+        return
+    if source_format == "html":
+        format_html(text)
+        if "<article " not in text:
+            raise RuntimeError("Synthetic html document did not parse.")
         return
     if source_format == "json":
         parsed = json.loads(text)
@@ -1782,6 +1857,7 @@ def _warmup(operation: Operation) -> None:
         "json": '{"warmup":1}\n',
         "python": "{'warmup': 1}\n",
         "xml": "<warmup/>\n",
+        "html": "<p>warmup</p>\n",
     }
     operation.phases(samples.get(operation.source_format, "warmup: 1\n"))
 

@@ -10,6 +10,7 @@ from galley.core.formats import (
     FORMAT_LABELS,
     FORMATS,
     JSON,
+    XML,
     YAML,
     DocumentFormat,
     format_for_extension,
@@ -20,11 +21,11 @@ from galley.core.formats import (
 from galley.core.load import detect_format
 
 
-def test_the_table_lists_json_then_yaml() -> None:
-    assert FORMATS == (JSON, YAML)
-    assert FORMAT_LABELS == ("JSON", "YAML")
-    assert [fmt.name for fmt in FORMATS] == ["json", "yaml"]
-    assert all(fmt.loads_to_value for fmt in FORMATS)
+def test_the_table_lists_json_yaml_then_xml() -> None:
+    assert FORMATS == (JSON, YAML, XML)
+    assert FORMAT_LABELS == ("JSON", "YAML", "XML")
+    assert [fmt.name for fmt in FORMATS] == ["json", "yaml", "xml"]
+    assert [fmt.loads_to_value for fmt in FORMATS] == [True, True, False]
 
 
 def test_names_labels_and_extensions_are_consistent() -> None:
@@ -39,7 +40,14 @@ def test_names_labels_and_extensions_are_consistent() -> None:
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("json", JSON), ("JSON", JSON), (" Yaml\n", YAML), ("YAML", YAML)],
+    [
+        ("json", JSON),
+        ("JSON", JSON),
+        (" Yaml\n", YAML),
+        ("YAML", YAML),
+        ("xml", XML),
+        ("XML", XML),
+    ],
 )
 def test_format_named_ignores_case_and_outer_spaces(
     name: str, expected: DocumentFormat
@@ -48,7 +56,7 @@ def test_format_named_ignores_case_and_outer_spaces(
     assert _normalize_format(name) == expected.name
 
 
-@pytest.mark.parametrize("name", ["", "yml", "Python", "xml", "html", "js on"])
+@pytest.mark.parametrize("name", ["", "yml", "Python", "html", "js on"])
 def test_other_names_are_unsupported(name: str) -> None:
     with pytest.raises(ValueError, match=f"Unsupported format: {name}"):
         format_named(name)
@@ -67,7 +75,9 @@ def test_other_names_are_unsupported(name: str) -> None:
         (".jsonc", None),
         (".json5", None),
         (".txt", None),
-        (".xml", None),
+        (".xml", XML),
+        (".SVG", XML),
+        (".xhtml", XML),
         (".html", None),
         ("", None),
     ],
@@ -85,7 +95,11 @@ def test_format_for_extension(suffix: str, expected: DocumentFormat | None) -> N
         ("key:", YAML),
         ("key:value", None),
         (":", None),
-        ("<a/>", None),
+        ("<a/>", XML),
+        ("  <?xml version='1.0'?>", XML),
+        ("<!DOCTYPE html>\n<p>a", None),
+        ("<HTML lang='en'>", None),
+        ("<!doctype svg>", XML),
         ("# only a comment", None),
         ("", None),
     ],

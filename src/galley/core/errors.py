@@ -7,7 +7,8 @@ needs (a byte offset, a depth, or an escape). Banner sentences live in
 
 ``JSONDuplicateKeyError`` is a syntax-level problem, not an ``InputError``:
 it can list several places at once, so it reaches the Problems pane as one
-row per repeated key.
+row per repeated key. ``HTMLStructureError`` lists every tag that does not
+nest, for the same reason.
 """
 
 from dataclasses import dataclass
@@ -98,29 +99,69 @@ class XMLSyntaxError(ValueError):
     ``code`` is one of the ``xml_*`` names in ``problems.ProblemCode``.
     ``lineno`` and ``colno`` are 1-based, with the column in code points.
     ``token`` is the element, attribute, entity, or prefix the problem
-    names, or "" when it names none. The sentence is chosen in the app.
+    names, or "" when it names none. ``found`` is the end tag's name for
+    ``xml_mismatched_tag``, and "" otherwise. The sentence is chosen in the
+    app.
     """
 
-    def __init__(self, code: str, *, lineno: int, colno: int, token: str = "") -> None:
+    def __init__(
+        self, code: str, *, lineno: int, colno: int, token: str = "", found: str = ""
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.lineno = lineno
         self.colno = colno
         self.token = token
+        self.found = found
 
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         """Pickle the keyword fields too, as ``InputError`` does."""
         return (
             _restore_xml_syntax_error,
-            (self.code, self.lineno, self.colno, self.token),
+            (self.code, self.lineno, self.colno, self.token, self.found),
         )
 
 
 def _restore_xml_syntax_error(
-    code: str, lineno: int, colno: int, token: str
+    code: str, lineno: int, colno: int, token: str, found: str
 ) -> XMLSyntaxError:
     """Rebuild an ``XMLSyntaxError`` after it crosses a process boundary."""
-    return XMLSyntaxError(code, lineno=lineno, colno=colno, token=token)
+    return XMLSyntaxError(code, lineno=lineno, colno=colno, token=token, found=found)
+
+
+@dataclass(frozen=True)
+class TagProblem:
+    """One HTML tag that does not nest. 1-based, with the column in code points.
+
+    ``code`` is ``html_unexpected_close`` or ``html_unclosed`` from
+    ``problems.ProblemCode``. ``token`` is the tag name as written.
+    """
+
+    code: str
+    lineno: int
+    colno: int
+    token: str
+
+
+class HTMLStructureError(ValueError):
+    """HTML whose tags do not nest.
+
+    ``problems`` lists every one in text order. ``lineno`` and ``colno`` are
+    the first, as in ``JSONDuplicateKeyError``. The sentences are chosen in
+    the app.
+    """
+
+    def __init__(self, problems: tuple[TagProblem, ...]) -> None:
+        if not problems:
+            raise ValueError("HTMLStructureError needs at least one problem.")
+        super().__init__(problems[0].code)
+        self.problems = problems
+        self.lineno = problems[0].lineno
+        self.colno = problems[0].colno
+
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        """Pickle the problems, not the ``args`` text, for a spawn child."""
+        return (HTMLStructureError, (self.problems,))
 
 
 class NotJSONValueError(ValueError):
