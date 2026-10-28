@@ -1,6 +1,8 @@
 """File › Open Recent lists opened files and reopens them through Open (#85)."""
 
 import os
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -369,6 +371,27 @@ def test_stuck_checks_do_not_delay_opening_a_healthy_file(
         pool.setMaxThreadCount(cores)
 
 
+def test_quitting_does_not_wait_on_a_stuck_check(tmp_path) -> None:
+    stuck = _write(tmp_path / "share" / "lost.json")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    try:
+        finished = subprocess.run(
+            [sys.executable, "-c", _QUIT_WITH_A_STUCK_CHECK, str(tmp_path), str(stuck)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_QUIT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"Galley was still exiting {_QUIT_TIMEOUT_S} s after quit; "
+            f"it printed {exc.stdout!r}"
+        )
+    assert finished.returncode == 0, finished.stderr
+    assert finished.stdout.splitlines() == ["check started", "event loop done"]
+
+
 @pytest.mark.perf
 def test_building_the_menu_with_a_slow_disk_is_within_budget(
     qtbot, tmp_path, slow_stat, perf_budget
@@ -546,6 +569,59 @@ def test_recent_entries_reach_four_and_a_half_to_one(
 # Worst CI median 1.0 ms (Windows) x 1.25, rounded up to the next 0.01 s:
 # budgets under 0.1 s round up that way (Isaac).
 _SLOW_DISK_BUILD_S = 0.01
+
+
+# The child's stat hangs far longer than this, so only an exit that skips
+# the stuck check finishes in time.
+_QUIT_TIMEOUT_S = 30
+_QUIT_WITH_A_STUCK_CHECK = """
+import os, sys, threading, time
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtWidgets import QApplication
+
+settings_dir, stuck = sys.argv[1], sys.argv[2]
+app = QApplication([])
+QSettings.setPath(
+    QSettings.Format.IniFormat, QSettings.Scope.UserScope, settings_dir
+)
+started = threading.Event()
+real_stat = Path.stat
+
+
+def slow_stat(self, *args, **kwargs):
+    if os.fspath(self) == stuck and threading.current_thread() is not (
+        threading.main_thread()
+    ):
+        started.set()
+        time.sleep(600)
+    return real_stat(self, *args, **kwargs)
+
+
+Path.stat = slow_stat
+
+from galley.app.main import create_main_window
+from galley.app.recent_files import remember_recent_file
+
+remember_recent_file(Path(stuck))
+window = create_main_window()
+window.show()
+
+
+def quit_once_stuck():
+    if not started.is_set():
+        QTimer.singleShot(10, quit_once_stuck)
+        return
+    print("check started", flush=True)
+    window.close()
+    app.quit()
+
+
+QTimer.singleShot(0, quit_once_stuck)
+app.exec()
+print("event loop done", flush=True)
+"""
 
 
 class _SlowStat:
