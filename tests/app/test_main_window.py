@@ -111,9 +111,11 @@ def _menu(window, title: str) -> QMenu:
 
 
 def _labels(menu: QMenu) -> list[str]:
+    """The items ``menu`` shows; hidden ones, like an unpicked font, are left out."""
     labels: list[str] = []
     for action in menu.actions():
-        labels.append("|" if action.isSeparator() else action.text())
+        if action.isVisible():
+            labels.append("|" if action.isSeparator() else action.text())
     return labels
 
 
@@ -195,9 +197,6 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     view = _menu(window, "View")
     assert _labels(view) == [
         "Font",
-        "Bigger",
-        "Smaller",
-        "Actual Size",
         "|",
         "Word Wrap",
         "Show Whitespace",
@@ -221,7 +220,14 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Enter Full Screen",
     ]
-    assert _submenu(view, "Font").actions() == []
+    assert _labels(_submenu(view, "Font")) == [
+        "Default Font",
+        "Choose Font…",
+        "|",
+        "Bigger",
+        "Smaller",
+        "Actual Size",
+    ]
     assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
     assert _labels(_menu(window, "Help")) == ["About Galley"]
     assert _labels(window.findChild(QMenu, "tabMenu")) == [
@@ -329,10 +335,37 @@ def test_view_menu_has_no_empty_submenu_or_dangling_separator(qtbot) -> None:
     submenus = view.findChildren(QMenu, options=Qt.FindDirectChildrenOnly)
     titles = [menu.title() for menu in submenus if menu.menuAction() in view.actions()]
     assert titles == ["Font", "Appearance"]
-    # Font was already empty before this change; it isn't Indent Guides' slot.
     for menu in submenus:
-        if menu.title() != "Font":
-            assert menu.actions(), menu.title()
+        assert menu.actions(), menu.title()
+
+
+def test_menu_bar_has_no_empty_submenu(qtbot) -> None:
+    """Every submenu in the menu bar shows at least one item.
+
+    The release check reads the action lists, so it can't see an empty
+    submenu. This names any it finds, such as "View ▸ Font".
+    """
+    window = _show(qtbot)
+    empty: list[str] = []
+
+    def walk(menu: QMenu, path: str) -> None:
+        children = menu.findChildren(QMenu, options=Qt.FindDirectChildrenOnly)
+        for child in children:
+            if child.menuAction() not in menu.actions():
+                continue
+            named = f"{path} ▸ {child.title()}"
+            shown = [
+                action
+                for action in child.actions()
+                if action.isVisible() and not action.isSeparator()
+            ]
+            if not shown:
+                empty.append(named)
+            walk(child, named)
+
+    for title in [action.text() for action in window.menuBar().actions()]:
+        walk(_menu(window, title), title)
+    assert empty == []
 
 
 def test_pop_out_is_removed(qtbot) -> None:
