@@ -481,11 +481,11 @@ def test_large_and_deeply_nested_html_format_within_budget(
 
 
 # The largest XML and HTML Format takes: the shared 2 MB limit (Eric, #63
-# slice 5). First budgets, for Isaac to reset by his #108 rule (the worst CI
-# median plus 25%): twice the 1 MB budgets, 0.5 s for XML and #136's 0.7 s
-# (macOS) and 1.0 s (Windows) for HTML.
-_TWO_MB_XML_BUDGET_S = 1.0
-_TWO_MB_HTML_BUDGET_S = 2.0 if sys.platform == "win32" else 1.4
+# slice 5). Isaac's #108 rule: the worst CI median × 1.25, rounded up to the
+# next 0.1 s. Medians at 81d295a: XML 371.1 ms (Windows); HTML 637.4 ms
+# (macOS) and 865.5 ms (Windows).
+_TWO_MB_XML_BUDGET_S = 0.5
+_TWO_MB_HTML_BUDGET_S = 1.1 if sys.platform == "win32" else 0.8
 
 
 @pytest.mark.perf
