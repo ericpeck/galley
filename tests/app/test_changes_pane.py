@@ -13,9 +13,10 @@ from unittest import mock
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFontMetrics, QPalette
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
+from galley.app import changes_pane as changes_pane_module
 from galley.app.changes_pane import (
     ADD_SECOND_DOCUMENT,
     CHANGES_NOUNS,
@@ -41,9 +42,10 @@ from galley.core.compare_report import (
     CompareReport,
     GroupRow,
     InfoRow,
+    SideMarks,
     build_report,
 )
-from galley.core.diff import diff_with_pairs, load_document
+from galley.core.diff import Span, Summary, diff_with_pairs, load_document
 
 # Rows: Changed name, the users info row, groups users[1–2] and users[4–6],
 # then Changed zip. The groups hold 2 and 3 changes, so 7 in all.
@@ -181,6 +183,51 @@ def test_groups_start_collapsed_and_children_are_indented(qtbot) -> None:
         "changed:users[1]",
         "changed:users[2]",
     ]
+
+
+def _drawn(pane: ChangesPane) -> list[tuple[str, int, int]]:
+    """Each text the delegate draws: the text, its box width, and the width
+    the text needs in the font it is drawn with. Font metrics, not ink."""
+    calls: list[tuple[str, int, int]] = []
+    original = changes_pane_module._draw
+
+    def _record(painter, x, rect, width, text, **kwargs) -> None:
+        needed = QFontMetrics(painter.font()).horizontalAdvance(text)
+        calls.append((text, width, needed))
+        original(painter, x, rect, width, text, **kwargs)
+
+    with mock.patch.object(changes_pane_module, "_draw", _record):
+        pane.list_view().viewport().grab()
+    return calls
+
+
+def _far_report(line: int) -> CompareReport:
+    """One Changed row on ``line`` of both sides, as a large file has."""
+    span = Span(line, 3, line, 9)
+    row = ChangeRow(
+        kind="changed",
+        glyph="~",
+        label="Changed",
+        path_text="z",
+        old=Summary("number", "1"),
+        new=Summary("number", "2"),
+        moved_to_text=None,
+        left_span=span,
+        right_span=span,
+        accessible_name="Changed, z, 1 to 2",
+    )
+    return CompareReport((row,), 1, SideMarks(), SideMarks())
+
+
+@pytest.mark.parametrize("line", [9, 99_999, 120_004, 1_234_567])
+def test_the_line_column_fits_the_largest_line_number(qtbot, line: int) -> None:
+    pane = _pane(qtbot, _far_report(line))
+    drawn = _drawn(pane)
+    assert drawn, "nothing was drawn"
+    shown = [entry for entry in drawn if str(line) in entry[0]]
+    assert len(shown) == 1
+    for text, box, needed in drawn:
+        assert needed <= box, f"{text!r} needs {needed} px in a {box} px box"
 
 
 # --- Keys -------------------------------------------------------------
