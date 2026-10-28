@@ -1,10 +1,10 @@
-"""Format picker and Pop out contrast in light and dark palettes."""
+"""Format picker contrast in light and dark palettes."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel
 
-from galley.app.format_picker import closed_field_colors, pop_out_colors
+from galley.app.format_picker import closed_field_colors
 from galley.app.main import create_main_window
 
 # Light-mode reference values from the readability spec. The widgets do not
@@ -49,16 +49,6 @@ def _pickers(window) -> list[QComboBox]:
         assert isinstance(picker, QComboBox)
         found.append(picker)
     return found
-
-
-def _pop_outs(window) -> list[QPushButton]:
-    buttons = [
-        button
-        for button in window.findChildren(QPushButton)
-        if button.text() == "Pop out"
-    ]
-    assert len(buttons) == 2
-    return buttons
 
 
 def _install(widget, *, dark: bool) -> None:
@@ -221,38 +211,6 @@ def test_popup_list_contrast_in_light_and_dark(qtbot) -> None:
         assert text.name() != field.name()
         assert _contrast(text, field) >= _MIN_CONTRAST
         assert _contrast(highlighted, highlight) >= _MIN_CONTRAST
-    finally:
-        _restore_scheme(previous)
-
-
-def test_pop_out_contrast_in_light_and_dark(qtbot) -> None:
-    window = _show(qtbot)
-    buttons = _pop_outs(window)
-    hints = QGuiApplication.styleHints()
-    previous = hints.colorScheme()
-    for button in buttons:
-        assert button.styleSheet() == ""
-
-    try:
-        _apply_mode(buttons, dark=False)
-        light_pairs = {}
-        for button in buttons:
-            ink, surface = pop_out_colors(button)
-            light_pairs[id(button)] = (ink.name(), surface.name())
-            assert ink.name() != surface.name()
-            assert _contrast(ink, surface) >= _MIN_CONTRAST
-            assert _luminance(ink) <= _luminance(_LIGHT_MUTED) + 1e-9
-            assert _sampled_contrast(button, width_fraction=1.0) >= _MIN_CONTRAST
-
-        _apply_mode(buttons, dark=True)
-        for button in buttons:
-            ink, surface = pop_out_colors(button)
-            dark_pair = (ink.name(), surface.name())
-            assert dark_pair != light_pairs[id(button)]
-            assert ink.name() != surface.name()
-            assert _contrast(ink, surface) >= _MIN_CONTRAST
-            assert _luminance(ink) > _luminance(_LIGHT_MUTED)
-            assert _sampled_contrast(button, width_fraction=1.0) >= _MIN_CONTRAST
     finally:
         _restore_scheme(previous)
 

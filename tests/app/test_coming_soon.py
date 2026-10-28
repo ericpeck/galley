@@ -343,11 +343,8 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         for button in window.findChildren(QPushButton)
         if button.toolTip() == COMING_SOON
     ]
-    assert len(pushed) == 6
-    assert {button.objectName() for button in pushed if button.objectName()} == {
-        "inputPopOut",
-        "outputPopOut",
-    }
+    assert len(pushed) == 4
+    assert not any(button.objectName().endswith("PopOut") for button in pushed)
     open_button = window.findChild(QPushButton, "emptyOpenButton")
     assert isinstance(open_button, QPushButton)
     assert open_button.isEnabled()
@@ -359,8 +356,6 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
         "Close",
         "New tab",
         "New tab",
-        "Pop out into window",
-        "Pop out into window",
     ]
     buttons.extend(pushed)
 
@@ -536,56 +531,6 @@ def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
     assert submenu.menuAction().isEnabled()
 
 
-def test_pop_out_is_coming_soon_without_a_status_message(qtbot) -> None:
-    """#91 D8: Pop out and its Window menu items are disabled and Coming soon."""
-    window = _show(qtbot)
-    actions = window._actions
-    assert "Pop out" in UNBUILT_ACTIONS
-    for action in (actions.pop_out, actions.show_window, actions.bring_back):
-        assert is_unbuilt(action)
-        assert action.property("unbuiltName") == "Pop out"
-        assert action.isVisible()
-        assert not action.isEnabled()
-        assert action.toolTip() == COMING_SOON
-        assert action not in actions._not_yet_actions()
-        assert action not in actions.stubs()
-    tab_menu = window.findChild(QMenu, "tabMenu")
-    assert isinstance(tab_menu, QMenu)
-    assert actions.pop_out in tab_menu.actions()
-
-    status = window.statusBar().currentMessage()
-    for name in ("input", "output"):
-        button = window.findChild(QPushButton, f"{name}PopOut")
-        assert isinstance(button, QPushButton)
-        assert button.isVisible()
-        assert not button.isEnabled()
-        assert button.text() == "Pop out"
-        assert button.accessibleName() == "Pop out into window"
-        assert button.accessibleDescription() == COMING_SOON
-        assert button.toolTip() == COMING_SOON
-        assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
-        QToolTip.hideText()
-        qtbot.mouseMove(window, QPoint(4, 4))
-        qtbot.mouseMove(button, QPoint(button.width() // 2, button.height() // 2))
-        qtbot.waitUntil(lambda: QToolTip.text() == COMING_SOON, timeout=2000)
-        qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
-    actions.pop_out.trigger()
-    actions.show_window.trigger()
-    actions.bring_back.trigger()
-    assert window.statusBar().currentMessage() == status
-    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
-
-
-def test_release_check_lists_pop_out_under_coming_soon_only() -> None:
-    coming = release_failure()
-    not_yet = not_yet_failure()
-    assert coming is not None
-    assert not_yet is not None
-    assert "Pop out" in coming.splitlines()[0]
-    for name in ("Pop out", "Show window", "Bring back"):
-        assert name not in not_yet
-
-
 def test_release_check_lists_output_options_last_under_not_yet() -> None:
     coming = release_failure()
     not_yet = not_yet_failure()
@@ -616,3 +561,16 @@ def test_release_check_no_longer_lists_guides() -> None:
     assert not_yet is not None
     assert "Guides" not in coming
     assert "Guides" not in not_yet
+
+
+def test_release_check_no_longer_lists_pop_out() -> None:
+    """Release-check PR 2c removed Pop out instead of building it."""
+    assert "Pop out" not in UNBUILT_ACTIONS
+    assert "Pop out" not in _ACTION_ATTRS
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    for name in ("Pop out", "Show window", "Bring back"):
+        assert name not in coming
+        assert name not in not_yet

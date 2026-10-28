@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QWidget,
 )
 
 from galley.app.editor import CodeEditor
@@ -156,7 +157,7 @@ def test_main_window_opens(qtbot) -> None:
 def test_menu_bar_matches_spec(qtbot) -> None:
     window = _show(qtbot)
     titles = [action.text() for action in window.menuBar().actions()]
-    assert titles == ["Galley", "File", "Edit", "View", "Window", "Help"]
+    assert titles == ["Galley", "File", "Edit", "View", "Help"]
 
     assert _labels(_menu(window, "Galley")) == ["Quit"]
     assert _labels(_menu(window, "File")) == ["Open file…", "Open Recent"]
@@ -213,16 +214,10 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     ]
     assert _submenu(view, "Font").actions() == []
     assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
-    assert _labels(_menu(window, "Window")) == [
-        "Pop out into window",
-        "Show window",
-        "Bring back",
-    ]
     assert _labels(_menu(window, "Help")) == ["About Galley"]
     assert _labels(window.findChild(QMenu, "tabMenu")) == [
         "Rename",
         "Duplicate",
-        "Pop out into window",
         "|",
         "Close",
         "Close others",
@@ -331,6 +326,46 @@ def test_view_menu_has_no_empty_submenu_or_dangling_separator(qtbot) -> None:
             assert menu.actions(), menu.title()
 
 
+def test_pop_out_is_removed(qtbot) -> None:
+    """Pop out isn't built for v1: no actions, Window menu, or strip button."""
+    window = _show(qtbot)
+    for attr in ("pop_out", "show_window", "bring_back"):
+        assert not hasattr(window._actions, attr), attr
+    titles = [action.text() for action in window.menuBar().actions()]
+    assert titles == ["Galley", "File", "Edit", "View", "Help"]
+    assert window.findChild(QMenu, "menuWindow") is None
+    for menu in window.findChildren(QMenu):
+        assert menu.title() != "Window", menu.objectName()
+    removed = ("Pop out into window", "Show window", "Bring back")
+    for action in window.findChildren(QAction):
+        assert "pop out" not in action.text().lower(), action.text()
+        assert action.text() not in removed, action.text()
+    for name in ("input", "output"):
+        assert window.findChild(QWidget, f"{name}PopOut") is None, name
+    for widget in window.findChildren(QWidget):
+        assert not widget.objectName().endswith("PopOut"), widget.objectName()
+        assert "pop out" not in widget.accessibleName().lower(), widget.objectName()
+
+
+def test_tab_menu_has_no_dangling_separator(qtbot) -> None:
+    window = _show(qtbot)
+    tab_menu = window.findChild(QMenu, "tabMenu")
+    assert isinstance(tab_menu, QMenu)
+    labels = _labels(tab_menu)
+    assert labels == [
+        "Rename",
+        "Duplicate",
+        "|",
+        "Close",
+        "Close others",
+        "Close tabs to the right",
+    ]
+    assert labels[0] != "|"
+    assert labels[-1] != "|"
+    pairs = zip(labels, labels[1:], strict=False)
+    assert not any(a == b == "|" for a, b in pairs)
+
+
 def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
     window = _show(qtbot)
     moved = {
@@ -351,8 +386,6 @@ def test_view_defaults_match_spec(qtbot) -> None:
     assert _action(window, "Word Wrap").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()
     assert not _action(window, "Stack Panes").isChecked()
-    assert not _action(window, "Show window").isEnabled()
-    assert not _action(window, "Bring back").isEnabled()
 
 
 def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:

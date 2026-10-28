@@ -27,7 +27,7 @@ from galley.app.appearance import (
     load_appearance_mode,
 )
 from galley.app.editor import CodeEditor
-from galley.app.format_picker import closed_field_colors, pop_out_colors
+from galley.app.format_picker import closed_field_colors
 from galley.app.main import create_main_window
 from galley.app.problems_settings import problems_settings
 from galley.app.theme import (
@@ -381,15 +381,6 @@ def _assert_contrast(window) -> None:
         ink, field = closed_field_colors(picker)
         assert _ratio(ink, field) >= TEXT_MIN_CONTRAST, picker.objectName()
         assert _sampled_contrast(picker, width_fraction=0.55) >= TEXT_MIN_CONTRAST
-    pop_outs = [
-        button
-        for button in window.findChildren(QPushButton)
-        if button.text() == "Pop out"
-    ]
-    assert len(pop_outs) == 2
-    for button in pop_outs:
-        ink, surface = pop_out_colors(button)
-        assert _ratio(ink, surface) >= TEXT_MIN_CONTRAST
 
 
 def test_contrast_passes_in_light_and_dark(qtbot) -> None:

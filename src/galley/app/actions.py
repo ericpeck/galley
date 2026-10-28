@@ -46,7 +46,6 @@ NOT_AVAILABLE = "Not available for {label}"
 # Menu order: menu bar, then the toolbar, then the tab menu.
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
-    "Pop out",
     "Indent",
     "Minify",
     "Validate",
@@ -58,8 +57,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
 _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Open": ("open_file",),
     "Find": ("find",),
-    # The Window menu and the tab strip's Pop out ship together (#91 D8).
-    "Pop out": ("pop_out", "show_window", "bring_back"),
     "Indent": ("indent",),
     "Sort keys": ("sort_keys",),
     "Minify": ("minify",),
@@ -357,10 +354,6 @@ class ShellActions:
         self.appearance_dark = _action(parent, "Dark", checkable=True)
         self.appearance = self._exclusive_appearance(parent)
 
-        self.pop_out = _action(parent, "Pop out into window")
-        self.show_window = _action(parent, "Show window", enabled=False)
-        self.bring_back = _action(parent, "Bring back", enabled=False)
-
         self.rename = _action(parent, "Rename")
         self.duplicate = _action(parent, "Duplicate")
         self.close_tab = _action(
@@ -438,9 +431,6 @@ class ShellActions:
     def _stub_actions(self) -> list[QAction]:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
-            self.pop_out,
-            self.show_window,
-            self.bring_back,
             self.rename,
             self.duplicate,
             self.close_tab,

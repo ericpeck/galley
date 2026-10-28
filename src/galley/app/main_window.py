@@ -490,11 +490,6 @@ class MainWindow(QMainWindow):
             view.addSeparator()
             view.addAction(actions.full_screen)
 
-        window_menu = _add_menu(bar, "Window")
-        window_menu.addAction(actions.pop_out)
-        window_menu.addAction(actions.show_window)
-        window_menu.addAction(actions.bring_back)
-
         # Last on Help. AboutRole moves it into the application menu
         # where Qt relocates that role, and leaves it on Help otherwise.
         help_menu = _add_menu(bar, "Help")
@@ -504,7 +499,6 @@ class MainWindow(QMainWindow):
         self._tab_menu.setObjectName("tabMenu")
         self._tab_menu.addAction(actions.rename)
         self._tab_menu.addAction(actions.duplicate)
-        self._tab_menu.addAction(actions.pop_out)
         self._tab_menu.addSeparator()
         self._tab_menu.addAction(actions.close_tab)
         self._tab_menu.addAction(actions.close_others)
@@ -754,8 +748,6 @@ class MainWindow(QMainWindow):
         for pane in (self._input_pane, self._output_pane):
             coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
             coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
-            coming_soon_wrapper(pane.pop_out_button, actions.pop_out)
-            pane.pop_out_button.sync_tool_tip()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format or large Copy As from any editor."""
@@ -777,7 +769,6 @@ class MainWindow(QMainWindow):
         pane.tab_strip.customContextMenuRequested.connect(self._show_tab_menu)
         pane.new_tab_button.clicked.connect(self._actions.new_tab.trigger)
         pane.close_tab_button.clicked.connect(self._actions.close_tab.trigger)
-        pane.pop_out_button.clicked.connect(self._actions.pop_out.trigger)
         viewport = pane.editor.viewport()
         viewport.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         viewport.customContextMenuRequested.connect(self._show_editor_menu)

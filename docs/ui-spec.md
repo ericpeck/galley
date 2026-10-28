@@ -17,7 +17,7 @@ Main window, top to bottom (ref: 6c):
 1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
 2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input 1</b>` (names the pane that has focus / is the Format target).
 3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes.
-4. Each pane: **tab strip** (tabs + `+` new tab) with a format picker (`Input as` / `Output as`) and a pop-out button on the right; the **editor** (gutter + text); a **pane footer** row.
+4. Each pane: **tab strip** (tabs + `+` new tab) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
 5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
 
 Default split is 50/50 (Input / Output). The rail readout shows `50` over `50`. The mocks printed `40` over `60` while the panes looked near equal; the default ratio is 50/50.
@@ -137,9 +137,9 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 - Tab = title + close `×`. New tab `+` after the last tab.
 - File-backed tabs show the file name (`orders-2026-10.json`, `deploy.yaml`).
 - Unsaved/edited output tab: dot `●` replaces the close button.
-- Right-click menu: `Rename`, `Duplicate`, `Pop out into window` | `Close` (⌘W), `Close others` (⌘K ⇧⌘W), `Close tabs to the right`.
+- Right-click menu: `Rename`, `Duplicate` | `Close` (⌘W), `Close others` (⌘K ⇧⌘W), `Close tabs to the right`.
 - Rename is inline: the tab becomes a text field with accent focus ring.
-- Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`), then pop-out button (window-with-arrow icon).
+- Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`).
 
 ### 5.4 Editor (QPlainTextEdit subclass)
 - Background `editor.bg`; current line `line.current`.
@@ -156,7 +156,6 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 ### 5.6 Pane footer
 - Input: `Paste`, `Clear` (accent links with icons; `Clear` disabled when empty) … right: count (`Empty`, `1 line · 318 characters`, `34 lines · 612 characters`, `6 lines · 3 problems`, `1 line · 4.8 MB`).
 - Output: `Options` (opens popover 6h) … right: status (`34 lines`, `22 lines · 1 note`, `Edited`, `Last good result`, `1,284 lines so far`) then `Copy` (disabled when empty).
-- Popped-out pane slot in main window: footer shows `Detached` with icon.
 
 ### 5.7 Status bar
 Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; `✓ Valid JSON · formatted in 3 ms · 34 lines`; `Converted · 1 note`; `Cancelled. Showing the previous result.`; error link `! Expected a comma after "price": 4.5 (line 3, column 38)` + `‹ 1 of 3 ›` + `Repair…` button + `2 of 3 fixable`; Python hint: error link + `</> Convert from Python…` button; working: spinner + `Formatting… 4.8 MB` (+ `· writing output`, progress bar and `62%` only during write) + `✕ Cancel`.
@@ -166,7 +165,7 @@ Right: direction `JSON → JSON` etc.
 `QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
 
 ### 5.9 Pane pop-out
-See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
+Removed. Galley v1 has no pop-out windows; both panes stay in the main window.
 
 ### 5.10 Search (find bar)
 - **Output find** (4a): field with search icon, `2 of 3`, prev/next arrows, scope segmented toggle `Keys` / `Values` / `Path`, close `×`. Search only, no Replace. Path scope uses dotted form with zero-based indexes (`order.items[2].price`), jumps to the match, and opens folded parents. Current match: `selection` fill with accent outline.
@@ -181,7 +180,7 @@ See §8. Each popped-out pane is its own `QMainWindow`. Not `QDockWidget`.
 Anchored to the `Options` footer button. Header `Output options`, right `Output 1 · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
 
 ### 5.13 Menus
-App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
+App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`. There is no Window menu. Menu-bar placement is in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌘K ⌘E.
 - Copy As ▸ (#66): `Original`, `Masked`, `Random fake`, with no shortcuts. `Masked` and `Random fake` show the masking help text as their tooltip and status tip. Each copies Output, or its selection, to the clipboard and leaves Output unchanged. Original copies the unmasked text, even when Output shows masked values. Masked replaces values under matched keys, and values that are an email or phone number, with `•••`. Random fake replaces the same values with new ones of the same type on every copy. The status bar names what was copied (`Copied original (unmasked)`, `Copied masked (N values hidden)`, `Copied random fake (N values replaced)`), or, on any failure, `Nothing copied. Galley couldn't start the copy. Try again.` (never the error itself). Disabled while Output is empty or a job is running. Masked and Random fake run on the worker unless the text is tiny, and show the status-bar spinner and then Cancel on Format's timings. Cancel or Esc stops the copy and shows `Copy canceled. Nothing copied.`
 - View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8 | Enter Full Screen ^⌘F.
@@ -243,13 +242,8 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Invalid regex: show inline error under the field with icon + text (proposal).
 - Keyboard: ⌥⌘F opens with replace row; Tab moves find → replace → buttons.
 
-### 5a — Output in its own window (ref: 5a)
-- Main window unchanged: Output slot keeps its tabs and format picker; editor area shows placeholder card: window icon, `Output 1 is in a separate window`, `Format still sends results there.`, buttons `Show window` (primary) and `Bring back`. Footer `Detached`.
-- Second window (example on a second display): title `Output 1 — Galley`, full title bar and window controls, the same toolbar as the main window, and its own Format button (`Editing Output 1`). Shows breadcrumb, find bar, footer, status bar. The mocks showed `Output 1 — Formatter`.
-- See §8.
-
-### 5b — Both panes popped out (ref: 5b)
-- Main window keeps layout; both slots show placeholder cards side by side: `Input 1 is in a separate window` / `Format still reads from it.` and `Output 1 is in a separate window` / `Format still sends results there.` Each with `Show window` and `Bring back`. Both footers `Detached`. Toolbar and Format still work from the main window. Status `✓ Valid JSON · 34 lines`.
+### 5a, 5b — Pop-out windows (ref: 5a, 5b)
+- Removed. Galley v1 has no pop-out windows, so these screens are not built.
 
 ### 6a — Invalid input: JSON and YAML (ref: 6a)
 - Format runs a strict parse. On failure the input stays exactly as pasted.
@@ -353,18 +347,12 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ---
 
-## 8. Pop-out and splitter behavior
+## 8. Splitter behavior
 
 Architecture:
 - `MainWindow(QMainWindow)` central widget contains toolbar row, `QSplitter` with two **pane slots**, status bar.
-- Each pane is a `PaneWidget` (tab strip + editors + footer). Slot holds either the live `PaneWidget` or a `DetachedPlaceholder` card.
-- Pop out: create `PaneWindow(QMainWindow)`, reparent the live `PaneWidget` into it as central widget; place `DetachedPlaceholder` in the slot. No `QDockWidget` anywhere.
-- `PaneWindow`: full title bar `<Pane name> — Galley` (mocks: `Output 1 — Formatter`), standard window controls, the same toolbar as main (shared `QAction`s), its own Format button whose caption names its pane, its own status bar.
-- Main window layout is unchanged when a pane pops out: slot keeps tab strip and format picker visible; footer shows `Detached`.
-- `Show window` raises and focuses the PaneWindow. `Bring back` reparents the PaneWidget into the slot and closes the PaneWindow. Closing the PaneWindow via its close control = Bring back (proposal; confirm).
-- Format from any window reads the Input pane and writes the Output pane wherever they live.
-- Splitter ratio is preserved across pop-out/bring back. Persist window geometry and splitter ratio per session (QSettings).
-- Triggers: pane pop-out button (tab strip right), tab context menu `Pop out into window`, Window menu `Pop out into window` (§12).
+- Each pane is a `PaneWidget` (tab strip + editors + footer). No `QDockWidget` anywhere.
+- Persist window geometry and splitter ratio per session (QSettings).
 - Splitter: min pane width ~240 px (proposal); readout updates live, rounded to whole percent. Reset returns the split to 50/50 and is disabled while the readout already says 50/50.
 
 ---
@@ -387,7 +375,7 @@ Architecture:
 
 ## 11. Accessibility baseline
 
-- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, pop-out, reset, close tab, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
+- Every icon-only control has an accessible name and tooltip (Outdent, Indent, Expand all, Collapse all, reset, close tab, find toggles `.*` `Aa` `ab`). Outdent, Indent, Expand all, and Collapse all use the action text as the accessible name, including while they are unbuilt; the Coming soon tooltip stays. Reset's accessible name is `Reset split`.
 - Visible 2 px accent focus ring on panes, fields, and buttons; default button in dialogs has a ring.
 - Full keyboard operation for every screen (§6, §7). Dialogs trap focus; Esc cancels (except 6l Close).
 - Color never the only cue (§2).
@@ -401,7 +389,7 @@ Architecture:
 ## 12. Platform-swappable layer
 
 Isolate behind a `platform` module for macOS and Windows:
-- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. The Window menu is `Pop out into window`, `Show window`, `Bring back`. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
+- **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. There is no Window menu. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
 - **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
@@ -421,7 +409,7 @@ Isolate behind a `platform` module for macOS and Windows:
 - No re-indentation or custom JSON writer for Convert from Python; no code execution.
 - No guessing missing data in Repair (cut-off input, missing comma stay in Needs you).
 - No hard file-size limit; don't invent numeric performance bands.
-- Don't add File or Help menu items, extra Window commands, settings screens, onboarding, or themes (dark mode) beyond this spec. The Window menu is only `Pop out into window`, `Show window`, and `Bring back`.
+- Don't add File or Help menu items, a Window menu or window commands, settings screens, onboarding, or themes (dark mode) beyond this spec.
 - Don't rely on the older written summary (it is wrong about 6k, 6m, and docks).
 
 ---
@@ -437,7 +425,7 @@ Isolate behind a `platform` module for macOS and Windows:
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.
 8. **Swap**: Resolved. The rail has no swap button. Reset (`↔`) calls `apply_even_split()` and is named `Reset split`. The readout's accessible name stays `50 / 50`.
 9. **⌥⌘W conflict**: Resolved by #95. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. Close Others is ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows.
-10. File and Help menu contents. Window is resolved: `Pop out into window`, `Show window`, `Bring back` (§12).
+10. File and Help menu contents. Window is resolved: there is no Window menu in v1 (§12).
 11. Show in input from a dialog: keep dialog open and scroll the input, or close?
 12. Closing a dirty tab / quitting with edits — copy and flow not in mocks.
 13. Performance bands and thresholds (wrap-off line length, colors-off size, when to show 6m) — TBD by benchmarks.
