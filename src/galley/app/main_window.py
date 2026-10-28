@@ -742,7 +742,7 @@ class MainWindow(QMainWindow):
         options = self._output_pane.options_button
         copy_output = self._output_pane.copy_button
         if options is not None:
-            options.clicked.connect(self._not_yet)
+            options.clicked.connect(actions.output_options.trigger)
         if copy_output is not None:
             copy_output.clicked.connect(self._copy_output)
 
