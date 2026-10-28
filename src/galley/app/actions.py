@@ -320,13 +320,43 @@ class ShellActions:
             parent, "Unescape String", shortcut=UNESCAPE_STRING
         )
 
+        # View › Font. NoRole keeps every item out of the macOS app menu.
+        self.default_font = _action(
+            parent,
+            "Default Font",
+            checkable=True,
+            checked=True,
+            role=QAction.MenuRole.NoRole,
+        )
+        # The family Choose Font… picked; hidden until there is one.
+        self.picked_font = _action(
+            parent, "", checkable=True, role=QAction.MenuRole.NoRole
+        )
+        self.picked_font.setObjectName("pickedFont")
+        self.picked_font.setVisible(False)
+        self.font_family = QActionGroup(parent)
+        self.font_family.setExclusive(True)
+        self.font_family.addAction(self.default_font)
+        self.font_family.addAction(self.picked_font)
+        self.choose_font = _action(parent, "Choose Font…", role=QAction.MenuRole.NoRole)
         self.bigger = _action(
-            parent, "Bigger", standard=QKeySequence.StandardKey.ZoomIn
+            parent,
+            "Bigger",
+            standard=QKeySequence.StandardKey.ZoomIn,
+            role=QAction.MenuRole.NoRole,
         )
         self.smaller = _action(
-            parent, "Smaller", standard=QKeySequence.StandardKey.ZoomOut
+            parent,
+            "Smaller",
+            standard=QKeySequence.StandardKey.ZoomOut,
+            role=QAction.MenuRole.NoRole,
         )
-        self.actual_size = _action(parent, "Actual Size", shortcut=ACTUAL_SIZE)
+        self.actual_size = _action(
+            parent,
+            "Actual Size",
+            shortcut=ACTUAL_SIZE,
+            role=QAction.MenuRole.NoRole,
+        )
         self.word_wrap = _action(
             parent,
             "Word Wrap",

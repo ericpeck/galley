@@ -21,6 +21,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFontDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -59,6 +60,17 @@ from galley.app.copy_as import (
     copy_as_inline_limit,
 )
 from galley.app.editor import CodeEditor, fold_status_text
+from galley.app.editor_font import (
+    CHOOSE_FONT_NATIVE,
+    CHOOSE_FONT_SETS_SIZE,
+    CHOOSE_FONT_TITLE,
+    DEFAULT_SIZE,
+    MAX_SIZE,
+    MIN_SIZE,
+    clamp_size,
+    install_editor_font,
+    is_monospace_family,
+)
 from galley.app.escape_string import (
     StringResult,
     convert_python_too_large_message,
@@ -69,7 +81,7 @@ from galley.app.escape_string import (
     unescape_too_large_message,
 )
 from galley.app.file_drop import dropped_files
-from galley.app.fonts import CODE_POINT_SIZE, ui_font
+from galley.app.fonts import ui_font
 from galley.app.icons import toolbar_icon
 
 # The size thresholds live in limits.py so the editor can read them too.
@@ -294,6 +306,10 @@ class MainWindow(QMainWindow):
         self.setAutoFillBackground(True)
         self.setAcceptDrops(True)
         self._actions = ShellActions(self)
+        application = QApplication.instance()
+        assert isinstance(application, QApplication)
+        # Read before the first show, so the editors never paint the default.
+        self._editor_font = install_editor_font(application)
         self._build_menus()
         self._input_pane = PaneWidget(PaneRole.INPUT)
         self._output_pane = PaneWidget(PaneRole.OUTPUT)
@@ -324,6 +340,8 @@ class MainWindow(QMainWindow):
         self._restore_stacked_panes()
         self._restore_sort_keys()
         self._follow_editor_palette()
+        self._apply_editor_font()
+        self._editor_font.changed.connect(self._apply_editor_font)
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -469,9 +487,14 @@ class MainWindow(QMainWindow):
         view = _add_menu(bar, "View")
         font_menu = view.addMenu("Font")
         font_menu.setObjectName("menuFont")
-        view.addAction(actions.bigger)
-        view.addAction(actions.smaller)
-        view.addAction(actions.actual_size)
+        font_menu.addAction(actions.default_font)
+        font_menu.addAction(actions.picked_font)
+        font_menu.addAction(actions.choose_font)
+        font_menu.addSeparator()
+        font_menu.addAction(actions.bigger)
+        font_menu.addAction(actions.smaller)
+        font_menu.addAction(actions.actual_size)
+        # Font keeps a section of its own (UI review: drop to join Word Wrap).
         view.addSeparator()
         view.addAction(actions.word_wrap)
         view.addAction(actions.show_whitespace)
@@ -668,9 +691,18 @@ class MainWindow(QMainWindow):
         actions.find_previous.triggered.connect(self._find_previous)
         actions.word_wrap.toggled.connect(self._set_word_wrap)
         actions.show_whitespace.toggled.connect(self._set_show_whitespace)
-        actions.bigger.triggered.connect(self._zoom_in)
-        actions.smaller.triggered.connect(self._zoom_out)
-        actions.actual_size.triggered.connect(self._actual_size)
+        actions.default_font.triggered.connect(
+            lambda _checked=False: self._editor_font.set_family("")
+        )
+        actions.picked_font.triggered.connect(
+            lambda _checked=False: self._editor_font.set_family(
+                self._editor_font.picked_family()
+            )
+        )
+        actions.choose_font.triggered.connect(self._choose_font)
+        actions.bigger.triggered.connect(lambda: self._editor_font.step(1))
+        actions.smaller.triggered.connect(lambda: self._editor_font.step(-1))
+        actions.actual_size.triggered.connect(self._editor_font.reset_size)
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
         actions.convert_python.triggered.connect(self._convert_python)
@@ -1781,28 +1813,48 @@ class MainWindow(QMainWindow):
         for editor in self._editors():
             editor.set_syntax_colors_wanted(checked)
 
-    def _zoom_in(self) -> None:
-        self._zoom(1)
+    def _choose_font(self) -> None:
+        """Choose Font…: the font dialog, monospace families only.
 
-    def _zoom_out(self) -> None:
-        self._zoom(-1)
+        A proportional pick, which the native macOS panel would allow,
+        leaves the font as it is.
+        """
+        options = QFontDialog.FontDialogOption.MonospacedFonts
+        if not CHOOSE_FONT_NATIVE:
+            options |= QFontDialog.FontDialogOption.DontUseNativeDialog
+        ok, font = QFontDialog.getFont(
+            self._editor_font.font(), self, CHOOSE_FONT_TITLE, options
+        )
+        family = font.family()
+        if not ok or not is_monospace_family(family):
+            return
+        self._editor_font.set_family(family)
+        if CHOOSE_FONT_SETS_SIZE and font.pointSize() > 0:
+            self._editor_font.set_size(clamp_size(font.pointSize()))
 
-    def _zoom(self, delta: int) -> None:
+    def _apply_editor_font(self) -> None:
+        """Give both editors and their gutters the View › Font choice.
+
+        The find fields and the Changes pane keep their own fonts. Only
+        layout reruns; syntax colors are kept.
+        """
+        fonts = self._editor_font
+        font = fonts.font()
         for editor in self._editors():
-            font = editor.font()
-            size = font.pointSize()
-            if size < 0:
-                size = CODE_POINT_SIZE
-            font.setPointSize(max(8, min(48, size + delta)))
             editor.setFont(font)
             editor.refresh_gutter()
-
-    def _actual_size(self) -> None:
-        for editor in self._editors():
-            font = editor.font()
-            font.setPointSize(CODE_POINT_SIZE)
-            editor.setFont(font)
-            editor.refresh_gutter()
+        actions = self._actions
+        picked = fonts.picked_family()
+        actions.picked_font.setText(picked.replace("&", "&&"))
+        actions.picked_font.setVisible(bool(picked))
+        if fonts.family():
+            actions.picked_font.setChecked(True)
+        else:
+            actions.default_font.setChecked(True)
+        size = fonts.size()
+        actions.bigger.setEnabled(size < MAX_SIZE)
+        actions.smaller.setEnabled(size > MIN_SIZE)
+        actions.actual_size.setEnabled(size != DEFAULT_SIZE)
 
     def _set_full_screen(self, checked: bool) -> None:
         if checked == self.isFullScreen():
