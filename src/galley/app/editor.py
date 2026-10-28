@@ -80,6 +80,14 @@ _FOLD_ARROW_BOX = 10
 # Quiet time after an edit in a folding editor before its ranges are found
 # again. Folds open on the edit itself.
 _FOLD_RESCAN_MS = 300
+# Cold blocks colored per pass once a document is set, colors turn on, or an
+# edit adds more lines than this (#117). A pass over 1000 JSON or YAML lines
+# takes 15 ms on an Apple M4 Pro and up to 35 ms on a slower Mac, so the
+# event loop paints and reads input between passes. The 1.44 MB JSON result
+# at the Convert limit takes 67 passes, 0.9 to 1.8 s of UI-thread time in
+# all. The lines on screen are colored first, before each paint; the rest
+# follow on a zero-delay timer, in order from the top.
+HIGHLIGHT_CHUNK_BLOCKS = 1000
 
 PROBLEM_MARKERS = "problem"
 CHANGE_MARKERS = "change"
@@ -447,6 +455,13 @@ class CodeEditor(QPlainTextEdit):
         self._longest_chars = 0
         self._longest_block = 0
         self._block_count = 1
+        # Where the next chunk of cold blocks starts, as a block number, or
+        # None while every block is colored. See _color_cold_chunk.
+        self._cold_number: int | None = None
+        self._cold_timer = QTimer(self)
+        self._cold_timer.setSingleShot(True)
+        self._cold_timer.setInterval(0)
+        self._cold_timer.timeout.connect(self._color_cold_chunk)
         # Connected before the highlighter so a mode change from detection
         # lands before the highlighter reformats the same edit, and so a
         # long line detaches the highlighter before it colors that edit.
@@ -801,9 +816,13 @@ class CodeEditor(QPlainTextEdit):
             flag = QTextOption.Flag.ShowTabsAndSpaces
             option.setFlags(flags | flag if show_whitespace else flags & ~flag)
             document.setDefaultTextOption(option)
-        self._highlighter.set_enabled(
-            self._colors_wanted and not self._colors_limited()
-        )
+        enable = self._colors_wanted and not self._colors_limited()
+        if enable != self._highlighter.is_enabled():
+            self._highlighter.set_enabled(enable)
+            # Qt recolors the whole document on the next pass of the event
+            # loop when the highlighter attaches; the budget keeps that pass
+            # to one chunk and the timer colors the rest.
+            self._begin_cold_pass()
 
     def reveal_line(self, lineno: int, colno: int = 0) -> None:
         """Move the cursor to ``lineno``, scroll it into view, and focus.
@@ -1055,6 +1074,9 @@ class CodeEditor(QPlainTextEdit):
         self._line_numbers.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
+        # Coloring here changes the layouts of the lines on screen, which
+        # queues one more repaint of them after this one.
+        self._color_visible_cold_blocks()
         self._fold_summaries = []
         if not self._folded:
             super().paintEvent(event)
@@ -1511,13 +1533,40 @@ class CodeEditor(QPlainTextEdit):
         """
         document = self.document()
         count = document.characterCount()
-        if position == 0 and added >= count - 1:
+        whole = position == 0 and added >= count - 1
+        # This slot runs before the highlighter's. Qt colors the blocks the
+        # edit touched and goes on while a block's state changes, so this
+        # keeps a whole-document replace, or an edit above cold blocks, to
+        # one chunk; the timer colors the rest.
+        self._highlighter.allow_cold_blocks(HIGHLIGHT_CHUNK_BLOCKS)
+        if whole:
             self._rescan_longest_line()
         else:
             self._track_changed_blocks(position, added)
         # A cheap compare: each option moves only when its effective state
         # differs from what the document shows.
         self._apply_display_options()
+        if whole:
+            self._begin_cold_pass()
+            return
+        first = document.findBlock(position).blockNumber()
+        last_block = document.findBlock(position + added)
+        past = last_block.next()
+        if self._cold_number is not None:
+            # Blocks above the edit are unchanged. Start the walk no lower
+            # than the edit, whose blocks may have moved.
+            self._cold_number = min(self._cold_number, first)
+            self._cold_timer.start()
+        elif self._highlighter.is_enabled() and (
+            last_block.blockNumber() - first >= HIGHLIGHT_CHUNK_BLOCKS
+            or (past.isValid() and self._highlighter.is_cold(past))
+        ):
+            # A paste, an undo or a redo that adds more lines than one chunk
+            # into a document with nothing pending: Qt's pass colors the
+            # first chunk of the new lines and leaves the rest cold, so the
+            # walk has to start again from the edit.
+            self._cold_number = first
+            self._cold_timer.start()
 
     def _track_changed_blocks(self, position: int, added: int) -> None:
         document = self.document()
@@ -1551,6 +1600,84 @@ class CodeEditor(QPlainTextEdit):
             self._rescan_longest_line()
             return
         self._longest_block = changed_block
+
+    def _begin_cold_pass(self) -> None:
+        """Color the document a chunk at a time, the lines on screen first.
+
+        Nothing to do while colors are off: Qt's pass on reattach colors a
+        chunk, and this starts then.
+        """
+        self._highlighter.allow_cold_blocks(HIGHLIGHT_CHUNK_BLOCKS)
+        if (
+            not self._highlighter.is_enabled()
+            or self.document().blockCount() <= HIGHLIGHT_CHUNK_BLOCKS
+        ):
+            # Qt's own pass, which runs after this, colors all of it.
+            self._cold_timer.stop()
+            self._cold_number = None
+            return
+        self._cold_number = 0
+        self._cold_timer.start()
+
+    def coloring_pending(self) -> bool:
+        """True while some blocks are still waiting for their colors."""
+        return self._cold_number is not None
+
+    def _color_cold_chunk(self) -> None:
+        """One timer pass: the lines on screen, then the next chunk in order."""
+        if self._cold_number is None:
+            return
+        if not self._highlighter.is_enabled():
+            self._cold_number = None
+            return
+        self._color_visible_cold_blocks()
+        block = self.document().findBlockByNumber(self._cold_number)
+        while block.isValid() and not self._highlighter.is_cold(block):
+            block = block.next()
+        if not block.isValid():
+            self._cold_number = None
+            return
+        try:
+            self._recolor(block, HIGHLIGHT_CHUNK_BLOCKS)
+        finally:
+            # Past this line whether or not its coloring raised: a line that
+            # stays cold must not be retried on every timer pass.
+            self._cold_number = block.blockNumber() + 1
+            self._cold_timer.start()
+
+    def _color_visible_cold_blocks(self) -> None:
+        """Color the cold lines on screen now, so a paint never shows plain text."""
+        if self._cold_number is None or not self._highlighter.is_enabled():
+            return
+        document = self.document()
+        shown = [
+            lineno - 1
+            for lineno, _top in self._visible_line_tops(self.viewport().rect())
+        ]
+        for index, number in enumerate(shown):
+            block = document.findBlockByNumber(number)
+            if block.isValid() and self._highlighter.is_cold(block):
+                # One pass per run of cold lines: Qt goes on through the
+                # cold lines after this one, up to the count still on screen.
+                self._recolor(block, len(shown) - index)
+
+    def _recolor(self, block: QTextBlock, budget: int) -> None:
+        """Color up to ``budget`` cold blocks from ``block`` on.
+
+        Qt goes on from ``block`` through the cold blocks after it and stops
+        at the first one the budget leaves cold. The pass changes formats
+        only, so the document's signals stay quiet: no ``textChanged`` for
+        the window to re-read the text on, and no ``contentsChange`` for the
+        fold and long-line trackers to take for an edit.
+        """
+        document = self.document()
+        self._highlighter.allow_cold_blocks(budget)
+        document.blockSignals(True)
+        try:
+            self._highlighter.rehighlightBlock(block)
+        finally:
+            document.blockSignals(False)
+        self._highlighter.allow_cold_blocks(HIGHLIGHT_CHUNK_BLOCKS)
 
     def _rescan_longest_line(self) -> None:
         """Walk every block. Only for a full replace or a gate crossing."""

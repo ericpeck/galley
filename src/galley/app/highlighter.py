@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QSyntaxHighlighter,
+    QTextBlock,
     QTextCharFormat,
     QTextDocument,
 )
@@ -61,6 +62,11 @@ _DARK_LIGHTNESS: Final = 128
 # Block states. A YAML block scalar stores its parent column + 2, so a
 # top-level scalar (parent column -1) is still positive.
 _PLAIN_STATE: Final = 0
+# Qt's state for a block that was never highlighted. Every mode leaves a
+# block it colored at a state of 0 or more, so a block still at this state
+# is "cold": it has no colors yet. A large document is colored a chunk of
+# cold blocks at a time (#117), and ``allow_cold_blocks`` sets the chunk.
+COLD_STATE: Final = -1
 
 _JSON_TOKEN: Final = re.compile(
     r"""
@@ -190,6 +196,7 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self._mode: SyntaxMode = mode
         self._enabled = True
         self._offsets: list[int] | None = None
+        self._cold_budget: int | None = None
         self._colors = LIGHT_SYNTAX
         self._use_colors(LIGHT_SYNTAX)
 
@@ -237,6 +244,24 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self._enabled = enabled
         self.setDocument(self._target if enabled else None)
 
+    def allow_cold_blocks(self, count: int | None) -> None:
+        """Color at most ``count`` cold blocks in the passes that follow.
+
+        Qt colors every block an edit touched, then keeps going while a
+        block's state changes. A block going from cold to colored is such a
+        change, so one pass over a freshly set document would color all of
+        it. Past ``count``, a cold block is left as it is, which also stops
+        Qt's pass there; the editor colors the rest later, a chunk a time.
+        Blocks that already have colors are always recolored. ``None`` lifts
+        the limit.
+        """
+        self._cold_budget = count
+
+    @staticmethod
+    def is_cold(block: QTextBlock) -> bool:
+        """True while ``block`` has never been colored."""
+        return block.userState() == COLD_STATE
+
     def _use_colors(self, colors: SyntaxColors) -> None:
         self._colors = colors
         self.key_format = _color_format(colors.key)
@@ -245,6 +270,10 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self.punctuation_format = _color_format(colors.punctuation)
 
     def highlightBlock(self, text: str) -> None:
+        if self.currentBlockState() == COLD_STATE and self._cold_budget is not None:
+            if self._cold_budget <= 0:
+                return
+            self._cold_budget -= 1
         self._offsets = _utf16_offsets(text)
         if self._mode == "JSON":
             self._highlight_json(text)
@@ -252,6 +281,9 @@ class SyntaxHighlighter(QSyntaxHighlighter):
             self._highlight_xml(text)
         else:
             self._highlight_yaml(text)
+        if self.currentBlockState() == COLD_STATE:
+            # JSON keeps no state between lines. Mark the block colored.
+            self.setCurrentBlockState(_PLAIN_STATE)
 
     def _paint(self, start: int, end: int, fmt: QTextCharFormat) -> None:
         if end <= start:
