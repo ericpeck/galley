@@ -7,6 +7,8 @@ of what ``load_document``, ``diff_with_pairs``, ``build_report``, and
 event with and without ``reformat``. It was written from ``main`` before
 any #129 change: first at ``c13cd80``, then again at ``d31bad7``, because
 #130 changed the report wording (only the report and job digests moved).
+#146 regenerated it once more for Moved's spoken "now at"; only the report
+and job digests of the pairs with a move changed.
 
 The corpus is generated here from fixed seeds: random nested documents with
 array inserts, deletes, replacements, and moves; repetitive arrays that fall
