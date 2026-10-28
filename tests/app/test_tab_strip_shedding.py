@@ -6,12 +6,17 @@ from collections.abc import Iterator
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QPalette
-from PySide6.QtWidgets import QComboBox, QLabel, QSplitter, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QPushButton,
+    QSplitter,
+    QToolTip,
+    QWidget,
+)
 from pytestqt.exceptions import TimeoutError as WaitTimeout
 
 from galley.app import fonts
-from galley.app.actions import COMING_SOON
-from galley.app.format_picker import PopOutButton
 from galley.app.main import create_main_window
 from galley.app.pane import PaneRole, PaneSpec, PaneWidget, StripShed
 from galley.app.problem_text import display_problem
@@ -31,7 +36,8 @@ _ROLES = (PaneRole.INPUT, PaneRole.OUTPUT)
 # scales the fonts until these labels are as wide as they are there (what
 # 20 pt draws on macOS), so macOS runs the Windows case too. Where the
 # platform fonts are already that wide, the variant would only repeat the
-# platform one, so it is skipped.
+# platform one, so it is skipped. The UI sample is the text measured on
+# that runner when the strip still had Pop out. It only sets the font scale.
 _WIDE_UI_SAMPLE = ("Output 1 Pop out", 185)
 _WIDE_APP_SAMPLE = ("Output as", 109)
 
@@ -126,7 +132,7 @@ def _assert_strip_fits(pane: PaneWidget) -> None:
     """Every shown strip part has its full width, inside the strip, apart."""
     strip = pane.tab_strip
     parts = _strip_parts(pane)
-    assert len(parts) >= 5
+    assert len(parts) >= 4
     right = 0
     for widget in sorted(parts, key=lambda item: item.x()):
         geometry = widget.geometry()
@@ -156,18 +162,10 @@ def _caption(pane: PaneWidget) -> QLabel:
     return caption
 
 
-def _pop_out(pane: PaneWidget) -> PopOutButton:
-    button = pane.findChild(PopOutButton, f"{pane.spec.name}PopOut")
-    assert isinstance(button, PopOutButton)
-    return button
-
-
 def _assert_names_kept(pane: PaneWidget) -> None:
     spec = pane.spec
     assert _title(pane).accessibleName() == spec.title
     assert pane.format_combo.accessibleName() == spec.format_label
-    assert _pop_out(pane).accessibleName() == "Pop out into window"
-    assert _pop_out(pane).text() == "Pop out"
 
 
 def _assert_shed_state(pane: PaneWidget, shed: StripShed) -> None:
@@ -175,14 +173,12 @@ def _assert_shed_state(pane: PaneWidget, shed: StripShed) -> None:
     spec = pane.spec
     caption = _caption(pane)
     title = _title(pane)
-    pop_out = _pop_out(pane)
     assert pane.strip_shed() is shed
     assert caption.isVisibleTo(pane) is (shed < StripShed.CAPTION)
     if shed < StripShed.CAPTION:
         assert pane.format_combo.toolTip() == ""
     else:
         assert pane.format_combo.toolTip() == spec.format_label
-    assert pop_out.is_icon_only() is (shed >= StripShed.POP_OUT_TEXT)
     if shed < StripShed.TITLE:
         assert title.text() == spec.title
         assert title.toolTip() == ""
@@ -222,16 +218,26 @@ def test_strip_sheds_in_order_as_the_pane_narrows(qtbot, spec: PaneSpec) -> None
             seen.append(shed)
         _assert_shed_state(pane, shed)
         _assert_strip_fits(pane)
-    assert seen == [
-        StripShed.NONE,
-        StripShed.CAPTION,
-        StripShed.POP_OUT_TEXT,
-        StripShed.TITLE,
-    ]
+    assert seen == [StripShed.NONE, StripShed.CAPTION, StripShed.TITLE]
     pane.resize(pane.full_strip_width(), 400)
     qtbot.waitUntil(lambda: pane.strip_shed() is StripShed.NONE)
     _assert_shed_state(pane, StripShed.NONE)
     _assert_strip_fits(pane)
+
+
+def test_strip_sheds_only_the_caption_then_the_title() -> None:
+    """Release-check PR 2c removed Pop out, and its shed step with it."""
+    assert [step.name for step in StripShed] == ["NONE", "CAPTION", "TITLE"]
+    assert not hasattr(StripShed, "POP_OUT_TEXT")
+
+
+@pytest.mark.parametrize("spec", _ROLES, ids=lambda spec: spec.name)
+def test_strip_has_no_pop_out_button(qtbot, spec: PaneSpec) -> None:
+    pane = _alone(qtbot, spec)
+    assert pane.findChild(QPushButton, f"{spec.name}PopOut") is None
+    assert not hasattr(pane, "pop_out_button")
+    names = [part.objectName() for part in _strip_parts(pane)]
+    assert not any(name.endswith("PopOut") for name in names), names
 
 
 def test_full_strip_width_is_where_shedding_starts(qtbot) -> None:
@@ -259,20 +265,15 @@ def test_shed_parts_keep_their_tooltips_on_hover(qtbot) -> None:
     for pane in _panes(window):
         pane.fit_tab_strip(200)
         _assert_shed_state(pane, StripShed.TITLE)
-        pop_out = _pop_out(pane)
-        assert pop_out.toolTip() == "Pop out into window — coming soon"
-        assert pop_out.accessibleDescription() == COMING_SOON
         for widget, tip in (
             (_title(pane), pane.spec.title),
             (pane.format_combo, pane.spec.format_label),
-            (pop_out, "Pop out into window — coming soon"),
         ):
             QToolTip.hideText()
             qtbot.mouseMove(window, QPoint(4, 4))
             qtbot.mouseMove(widget, QPoint(widget.width() // 2, widget.height() // 2))
             qtbot.waitUntil(lambda tip=tip: QToolTip.text() == tip, timeout=2000)
         assert pane.fit_tab_strip(10_000) is StripShed.NONE
-        assert pop_out.toolTip() == COMING_SOON
         pane.fit_tab_strip()
 
 

@@ -272,11 +272,6 @@ def test_icon_only_toolbar_buttons_have_tooltips(qtbot) -> None:
 def test_format_pickers_keep_their_items(qtbot) -> None:
     window = _show(qtbot)
     picker = window.findChild(QComboBox, "inputFormat")
-    pop = next(
-        button
-        for button in window.findChildren(QPushButton)
-        if button.text() == "Pop out"
-    )
     assert isinstance(picker, QComboBox)
     assert [picker.itemText(index) for index in range(picker.count())] == [
         "JSON",
@@ -284,4 +279,3 @@ def test_format_pickers_keep_their_items(qtbot) -> None:
         "XML",
         "HTML",
     ]
-    assert pop.accessibleName() == "Pop out into window"
