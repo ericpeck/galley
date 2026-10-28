@@ -98,6 +98,8 @@ _GLYPH_WIDTH = 16
 _ARROW_BOX = 10
 _GAP = 8
 _ROW_PADDING = 12
+# The least room a change's detail keeps when its path is long.
+_DETAIL_MIN_CHARS = 16
 _MIN_ROW_HEIGHT = 28
 
 
@@ -413,9 +415,11 @@ class ChangesDelegate(QStyledItemDelegate):
         line_left = rect.right() - line_width
         room = max(0, line_left - _GAP - x)
         detail = change_detail(row)
-        # The path keeps at least half the room when there is a detail.
-        path_room = room // 2 if detail else room
-        path = metrics.elidedText(row.path_text, Qt.TextElideMode.ElideRight, path_room)
+        path_room = path_width_for(metrics, room, detail)
+        # Cut in the middle, so the last key, the one that changed, stays.
+        path = metrics.elidedText(
+            row.path_text, Qt.TextElideMode.ElideMiddle, path_room
+        )
         path_width = min(metrics.horizontalAdvance(path), path_room)
         _draw(painter, x, rect, path_width, path)
         x += path_width + _GAP
@@ -474,6 +478,20 @@ class ChangesDelegate(QStyledItemDelegate):
 def row_height(metrics: QFontMetrics) -> int:
     """Every row is one line of text, so the list can use uniform sizes."""
     return max(metrics.height() + _ROW_PADDING, _MIN_ROW_HEIGHT)
+
+
+def path_width_for(metrics: QFontMetrics, room: int, detail: str) -> int:
+    """The path's share of ``room``: whatever the detail doesn't need.
+
+    The detail keeps its measured width, or at least ``_DETAIL_MIN_CHARS``
+    average characters when that is less, so a long path never pushes a
+    value out of sight.
+    """
+    if not detail:
+        return room
+    needed = metrics.horizontalAdvance(detail)
+    floor = metrics.averageCharWidth() * _DETAIL_MIN_CHARS
+    return max(0, room - min(needed, floor) - _GAP)
 
 
 def change_detail(row: ChangeRow) -> str:

@@ -155,14 +155,9 @@ def test_display_and_accessible_text_are_the_spoken_name(qtbot) -> None:
 
 
 def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
-    path = "shipping.regions.north_america.estimated_delivery_window_days"
-    long_path = _report(
-        {"shipping": {"regions": {"north_america": {path.rsplit(".")[-1]: 7}}}},
-        {"shipping": {"regions": {"north_america": {path.rsplit(".")[-1]: 10}}}},
-    )
-    pane = _pane(qtbot, long_path)
+    pane = _pane(qtbot, _long_path_report())
     tip = pane.model().index(0).data(Qt.ItemDataRole.ToolTipRole)
-    assert tip == f"Changed · {path} · \u20687\u2069 → \u206810\u2069"
+    assert tip == f"Changed · {_LONG_PATH} · \u20687\u2069 → \u206810\u2069"
     pane.set_report(_grouped())
     model = pane.model()
     assert [
@@ -175,6 +170,56 @@ def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
         "users[4–6]: 3 items differ",
         "Changed · zip · \u20681\u2069 → \u20682\u2069",
     ]
+
+
+_LONG_KEY = "estimated_delivery_window_days"
+_LONG_PATH = f"shipping.regions.north_america.{_LONG_KEY}"
+
+
+def _long_path_report() -> CompareReport:
+    def nested(value: int) -> dict[str, object]:
+        return {"shipping": {"regions": {"north_america": {_LONG_KEY: value}}}}
+
+    return _report(nested(7), nested(10))
+
+
+def _drawn_path(pane: ChangesPane) -> str:
+    return next(text for text, _box, _needed in _drawn(pane) if "shipping" in text)
+
+
+def test_a_long_path_is_cut_in_the_middle_and_keeps_its_last_key(qtbot) -> None:
+    pane = _pane(qtbot, _long_path_report())
+    pane.resize(330, 200)
+    path = _drawn_path(pane)
+    assert path != _LONG_PATH
+    assert path.startswith("shipping.") and path.endswith(_LONG_KEY[-6:])
+    assert "…" in path
+    # The value is short, so it still shows in full.
+    assert any("10" in text and "…" not in text for text, *_ in _drawn(pane))
+
+
+def test_a_path_takes_the_room_a_short_value_does_not_need(qtbot) -> None:
+    # Wide enough for the path and the value, but not for the path in half.
+    pane = _pane(qtbot, _long_path_report())
+    metrics = QFontMetrics(pane.list_view().font())
+    path_width = metrics.horizontalAdvance(_LONG_PATH)
+    pane.resize(path_width + 320, 200)
+    assert _drawn_path(pane) == _LONG_PATH
+
+
+def test_a_long_value_keeps_a_minimum_beside_a_long_path() -> None:
+    metrics = QFontMetrics(QFont())
+    floor = metrics.averageCharWidth() * 16
+    long_value = "x" * 400
+    assert changes_pane_module.path_width_for(metrics, 1000, long_value) == (
+        1000 - floor - 8
+    )
+    short_value = "7 → 10"
+    needed = metrics.horizontalAdvance(short_value)
+    assert changes_pane_module.path_width_for(metrics, 1000, short_value) == (
+        1000 - needed - 8
+    )
+    assert changes_pane_module.path_width_for(metrics, 1000, "") == 1000
 
 
 def test_info_rows_are_muted_notes_that_are_not_counted(qtbot) -> None:
