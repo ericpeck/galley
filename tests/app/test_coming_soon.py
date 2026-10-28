@@ -630,3 +630,15 @@ def test_release_check_lists_output_options_last_under_not_yet() -> None:
     assert coming is not None
     assert not_yet == _not_yet_text(", ".join(_NOT_YET_MENU_NAMES))
     assert "Output Options" not in coming
+
+
+def test_release_check_no_longer_lists_preferences() -> None:
+    """Release-check PR 2a removed Preferences instead of building it."""
+    assert "Preferences" not in UNBUILT_ACTIONS
+    assert "Preferences" not in _ACTION_ATTRS
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    assert "Preferences" not in coming
+    assert "Preferences" not in not_yet
