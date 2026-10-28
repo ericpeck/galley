@@ -146,6 +146,7 @@ class ChangesModel(QAbstractListModel):
         self._entries: list[_Entry] = []
         self._expanded: set[int] = set()
         self._stops: list[int] | None = None
+        self._widest_line = ""
 
     def set_report(self, report: CompareReport | None) -> None:
         """Show ``report``'s rows with every group collapsed."""
@@ -158,7 +159,13 @@ class ChangesModel(QAbstractListModel):
             for index, row in enumerate(rows)
         ]
         self._stops = None
+        self._widest_line = _widest_line_text(rows)
         self.endResetModel()
+
+    def widest_line_text(self) -> str:
+        """The longest line-column text among every row, grouped ones too,
+        so the column fits the report's largest line number."""
+        return self._widest_line
 
     def report(self) -> CompareReport | None:
         return self._report
@@ -277,6 +284,17 @@ class ChangesModel(QAbstractListModel):
         return self._stops
 
 
+def _widest_line_text(rows: tuple[ReportRow, ...]) -> str:
+    widest = ""
+    for row in rows:
+        children = row.children if isinstance(row, GroupRow) else ()
+        for shown in (row, *children):
+            text = line_text(shown)
+            if len(text) > len(widest):
+                widest = text
+    return widest
+
+
 @dataclass(frozen=True)
 class RowColors:
     """The colors one row paints with, on ``background``."""
@@ -377,9 +395,7 @@ class ChangesDelegate(QStyledItemDelegate):
         bold.setBold(True)
         bold_metrics = QFontMetrics(bold)
         metrics = QFontMetrics(font)
-        line = _line_of(row)
-        line_text = "" if line is None else str(line)
-        line_width = metrics.horizontalAdvance("99999")
+        line_width = self._line_width(metrics)
         x = rect.left()
         painter.setFont(bold)
         painter.setPen(colors.glyph)
@@ -407,7 +423,11 @@ class ChangesDelegate(QStyledItemDelegate):
             shown = metrics.elidedText(detail, Qt.TextElideMode.ElideRight, width)
             _draw(painter, x, rect, width, shown)
         painter.setPen(colors.muted)
-        _draw(painter, line_left, rect, line_width, line_text, right=True)
+        _draw(painter, line_left, rect, line_width, line_text(row), right=True)
+
+    def _line_width(self, metrics: QFontMetrics) -> int:
+        """The line column, as wide as the report's widest line text."""
+        return metrics.horizontalAdvance(self._view.model().widest_line_text())
 
     def _paint_group(
         self,
@@ -421,8 +441,7 @@ class ChangesDelegate(QStyledItemDelegate):
         metrics = QFontMetrics(font)
         _paint_arrow(painter, rect, colors.text, expanded=expanded)
         x = rect.left() + _GLYPH_WIDTH + _GAP
-        line = row.left_line if row.left_line is not None else row.right_line
-        line_width = metrics.horizontalAdvance("99999")
+        line_width = self._line_width(metrics)
         line_left = rect.right() - line_width
         width = max(0, line_left - _GAP - x)
         painter.setFont(font)
@@ -430,8 +449,7 @@ class ChangesDelegate(QStyledItemDelegate):
         text = metrics.elidedText(row.text, Qt.TextElideMode.ElideRight, width)
         _draw(painter, x, rect, width, text)
         painter.setPen(colors.muted)
-        line_text = "" if line is None else str(line)
-        _draw(painter, line_left, rect, line_width, line_text, right=True)
+        _draw(painter, line_left, rect, line_width, line_text(row), right=True)
 
     def _paint_info(
         self,
@@ -467,11 +485,16 @@ def change_detail(row: ChangeRow) -> str:
     return "" if summary is None else summary.text
 
 
-def _line_of(row: ChangeRow) -> int | None:
-    """The line on the side the path names: right for Added, else left."""
-    if row.kind == "added":
-        return row.right_line
-    return row.left_line if row.left_line is not None else row.right_line
+def line_text(row: ChangeRow | GroupRow | InfoRow) -> str:
+    """The line column's text: the line on the side the path names, which
+    is Right for Added and Left otherwise. A group shows its first line."""
+    if isinstance(row, InfoRow):
+        return ""
+    if isinstance(row, ChangeRow) and row.kind == "added":
+        line = row.right_line
+    else:
+        line = row.left_line if row.left_line is not None else row.right_line
+    return "" if line is None else str(line)
 
 
 def _draw(
