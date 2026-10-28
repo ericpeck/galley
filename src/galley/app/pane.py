@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from galley.app.editor import CodeEditor
 from galley.app.find_bar import FindBar
 from galley.app.fonts import ui_font
-from galley.app.format_picker import FormatComboBox, PopOutButton
+from galley.app.format_picker import FormatComboBox
 from galley.app.open_file import InputDocument
 from galley.app.style import (
     link_button_style,
@@ -60,14 +60,13 @@ class StripShed(IntEnum):
     """How much a narrow tab strip has given up, in the order it gives way.
 
     Each step keeps the earlier ones: the format caption hides first, then
-    Pop out drops its text, then the tab title is shortened with "…".
-    Tooltips and accessible names keep the full words at every step.
+    the tab title is shortened with "…". Tooltips and accessible names
+    keep the full words at every step.
     """
 
     NONE = 0
     CAPTION = 1
-    POP_OUT_TEXT = 2
-    TITLE = 3
+    TITLE = 2
 
 
 class PaneRole:
@@ -208,9 +207,6 @@ class PaneWidget(QWidget):
             _hint_width(self.close_tab_button),
             _hint_width(self.new_tab_button),
             _hint_width(self.format_combo),
-            self.pop_out_button.icon_width()
-            if shed >= StripShed.POP_OUT_TEXT
-            else self.pop_out_button.text_width(),
         ]
         if shed < StripShed.CAPTION:
             parts.append(_hint_width(self._format_caption))
@@ -224,7 +220,6 @@ class PaneWidget(QWidget):
         caption_shown = shed < StripShed.CAPTION
         self._format_caption.setVisible(caption_shown)
         self.format_combo.setToolTip("" if caption_shown else self.spec.format_label)
-        self.pop_out_button.set_icon_only(shed >= StripShed.POP_OUT_TEXT)
         title = self.spec.title
         if shed >= StripShed.TITLE:
             spare = available - self._strip_width(shed)
@@ -311,9 +306,6 @@ class PaneWidget(QWidget):
         self.format_combo = self._format_combo(self.spec.format_label)
         format_caption.setBuddy(self.format_combo)
 
-        self.pop_out_button = PopOutButton()
-        self.pop_out_button.setObjectName(f"{self.spec.name}PopOut")
-
         row = QHBoxLayout(self.tab_strip)
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(4)
@@ -323,7 +315,6 @@ class PaneWidget(QWidget):
         row.addStretch(1)
         row.addWidget(format_caption)
         row.addWidget(self.format_combo)
-        row.addWidget(self.pop_out_button)
         self._strip_shed = StripShed.NONE
         self.tab_strip.installEventFilter(self)
 

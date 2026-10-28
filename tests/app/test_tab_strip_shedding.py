@@ -31,13 +31,14 @@ from galley.core.problems import Problem
 
 _ROLES = (PaneRole.INPUT, PaneRole.OUTPUT)
 # The Windows runner's platform fonts are drawn at the same pixel sizes as
-# macOS's offscreen ones, but its fallback family is much wider: its strips
-# shed at 1280 px and the titles shorten at 900 px. The "wide font" variant
-# scales the fonts until these labels are as wide as they are there (what
-# 20 pt draws on macOS), so macOS runs the Windows case too. Where the
-# platform fonts are already that wide, the variant would only repeat the
-# platform one, so it is skipped. The UI sample is the text measured on
-# that runner when the strip still had Pop out. It only sets the font scale.
+# macOS's offscreen ones, but its fallback family is much wider: with Pop
+# out still in the strip, its strips shed at 1280 px and the titles
+# shortened at 900 px. The "wide font" variant scales the fonts until these
+# labels are as wide as they are there (what 20 pt draws on macOS), so
+# macOS runs the Windows case too. Where the platform fonts are already
+# that wide, the variant would only repeat the platform one, so it is
+# skipped. The UI sample is the text measured on that runner when the strip
+# still had Pop out. It only sets the font scale.
 _WIDE_UI_SAMPLE = ("Output 1 Pop out", 185)
 _WIDE_APP_SAMPLE = ("Output as", 109)
 
@@ -342,11 +343,14 @@ def test_900_px_with_problems_open_clips_nothing(
     assert (surface.lightness() < 128) is (scheme == "dark")
     problems = _open_problems(qtbot, window)
     qtbot.waitUntil(lambda: window.width() == 900)
-    # Two unshed strips never fit beside Problems at 900 px.
-    _wait_problems(qtbot, window, problems, MIN_WIDTH)
+    # Without Pop out, the platform fonts can fit both unshed strips beside
+    # Problems at 900 px. Wide fonts still push Problems to 200 px and shed.
+    expected = _expected_problems_width(window, DEFAULT_WIDTH)
+    _wait_problems(qtbot, window, problems, expected)
     assert _saved_width() == DEFAULT_WIDTH
     for pane in _panes(window):
-        assert pane.strip_shed() > StripShed.NONE, _measured(window, problems)
+        if expected == MIN_WIDTH:
+            assert pane.strip_shed() > StripShed.NONE, _measured(window, problems)
         picker = pane.format_combo
         assert isinstance(picker, QComboBox)
         assert picker.width() >= picker.sizeHint().width()
@@ -375,7 +379,8 @@ def test_1280_px_with_problems_open(qtbot, strip_font: str) -> None:
 def test_stack_panes_at_900_px_fits_both_strips(qtbot, strip_font: str) -> None:
     window = _show(qtbot, 900)
     problems = _open_problems(qtbot, window)
-    _wait_problems(qtbot, window, problems, MIN_WIDTH)
+    side_by_side = _expected_problems_width(window, DEFAULT_WIDTH)
+    _wait_problems(qtbot, window, problems, side_by_side)
     stack = _action(window, "Stack Panes")
     stack.trigger()
     assert stack.isChecked()
@@ -388,7 +393,7 @@ def test_stack_panes_at_900_px_fits_both_strips(qtbot, strip_font: str) -> None:
     _assert_problems_give_way_first(window, problems)
     stack.trigger()
     assert not stack.isChecked()
-    _wait_problems(qtbot, window, problems, MIN_WIDTH)
+    _wait_problems(qtbot, window, problems, side_by_side)
     _assert_problems_give_way_first(window, problems)
     assert _saved_width() == DEFAULT_WIDTH
 
@@ -419,7 +424,8 @@ def test_problems_shrinks_first_and_keeps_its_saved_width(
     assert _saved_width() == 340
 
     window.resize(900, 800)
-    _wait_problems(qtbot, window, problems, MIN_WIDTH)
+    qtbot.waitUntil(lambda: window.width() == 900)
+    _wait_problems(qtbot, window, problems, _expected_problems_width(window, 340))
     _assert_problems_give_way_first(window, problems)
     assert _saved_width() == 340
 
