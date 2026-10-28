@@ -54,7 +54,6 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 | `error.icon.ring` | `#EEC3D4` | soft ring behind the gutter error icon | low |
 | `amber.tint` | `#F1E3BE` | 6k "source text kept as a string" highlight and `to string` margin tag | measured |
 | `amber.ink` | `#6E4604` | text on `amber.tint` (6.5:1) | measured |
-| `guide.depth.*` | `#62C5EE` (blue), `#FF90B1` (pink), others unclear | "Colored by depth" indent guides, thin 1 px lines | low |
 | window controls | `#FF5F57`, `#FEBC2E`, `#28C840` | macOS traffic lights only; come from the platform chrome layer, not the palette | n/a |
 
 **Amber**: per the confirmed decision, amber is mixed from the palette's yellow. The mocks only show the mixed results (`#F1E3BE` fill, `#6E4604` ink). The base yellow itself does not appear as a flat swatch in any of the 18 mocks, so its hex is an open question. Do not use amber for errors; magenta means error everywhere else (6k).
@@ -111,7 +110,7 @@ Measured at 1x, approximate:
 - Toolbar: ~56 px tall; buttons are icon + label, ~28 px tall, 8 px icon–label gap, ~24 px between groups. Undo/Redo sit in a shared rounded tray (slightly darker fill).
 - Tab strip: ~30 px; tabs ~28 px tall, ~70–100 px wide, 1 px `pane.edge` outline, active tab joins the pane (no bottom border).
 - Gutter: ~50 px wide; numbers right-aligned with fold arrows (`▾`/`▸`) immediately right of the number.
-- Editor: ~10 px left text inset; indent guides 1 px.
+- Editor: ~10 px left text inset.
 - Pane footer: ~24 px; status bar: ~24 px.
 - Dialogs: ~16 px padding; rows inside dialogs ~8 px padding on `card.bg`, 6–8 px gap between rows; buttons bottom-right, ~32 px tall.
 - Splitter rail: 32 px wide, centered controls. The reset button is 24 px. Layout is View › Stack Panes.
@@ -145,7 +144,6 @@ Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
 ### 5.4 Editor (QPlainTextEdit subclass)
 - Background `editor.bg`; current line `line.current`.
 - Syntax colors as in §3. Fold arrows in gutter; folded object shows `{ … }` then italic muted `3 keys`; arrays `3 items`.
-- Indent guides: View → Indent Guides → `Off` / `Lines` / `Colored by depth` (default shown checked: Colored by depth).
 - Breadcrumb bar on Output (when parsed): path icon, `root › order › customer › address › zip` (last segment bold), `Copy path` link at right. Shows `root` when cursor is at the top.
 - Word wrap toggle (⌥Z on macOS, Alt+Z on Windows), Show Whitespace (⇧⌘8). Close Others is the chord ⌘K ⇧⌘W on macOS and Ctrl+K, Ctrl+Shift+W on Windows. Both bindings are swappable per platform (§6, §12).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` right after `Copy`, and the fold commands at the end (#66).
@@ -186,7 +184,7 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Window`, `Help`. Menu-bar placement and the Window menu are in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌘K ⌘E.
 - Copy As ▸ (#66): `Original`, `Masked`, `Random fake`, with no shortcuts. `Masked` and `Random fake` show the masking help text as their tooltip and status tip. Each copies Output, or its selection, to the clipboard and leaves Output unchanged. Original copies the unmasked text, even when Output shows masked values. Masked replaces values under matched keys, and values that are an email or phone number, with `•••`. Random fake replaces the same values with new ones of the same type on every copy. The status bar names what was copied (`Copied original (unmasked)`, `Copied masked (N values hidden)`, `Copied random fake (N values replaced)`), or, on any failure, `Nothing copied. Galley couldn't start the copy. Try again.` (never the error itself). Disabled while Output is empty or a job is running. Masked and Random fake run on the worker unless the text is tiny, and show the status-bar spinner and then Cancel on Format's timings. Cancel or Esc stops the copy and shows `Copy canceled. Nothing copied.`
-- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8, Indent Guides ▸ (Off / Lines / Colored by depth) | Enter Full Screen ^⌘F.
+- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8 | Enter Full Screen ^⌘F.
 - `File` includes `Open file…` (6c) and `Open Recent ▸` (#85: up to 10 files, newest first, file name only, with the parent folder when names match; a missing file stays listed, disabled, as `name.json (not found)` (after the folder when one shows) with the tooltip "File not found"; `Clear Menu` at the bottom). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
 
 ---
@@ -226,13 +224,13 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ### 3a — Toolbar trim, Edit menu open (ref: 3a)
 - Empty app (as 6c) with Edit menu open, `Find and Replace…` highlighted (`accent.strong` row, white text).
-- Purpose: documents the trimmed toolbar order (§5.1) and that Undo, Redo, Find also live in Edit, alongside Cut, Find and Replace, Escape/Unescape. Font, size, wrap, whitespace, guides live in View (4a).
+- Purpose: documents the trimmed toolbar order (§5.1) and that Undo, Redo, Find also live in Edit, alongside Cut, Find and Replace, Escape/Unescape. Font, size, wrap, whitespace live in View (4a).
 - Keyboard: menu navigable with arrows; shortcuts listed right-aligned in muted text.
 
 ### 4a — Output find (default), View menu open (ref: 4a)
 - Input holds minified one-line JSON; Output holds formatted JSON with breadcrumb `… › items › [1] › price`, `Copy path`.
 - Find bar open on Output: query `price`, `2 of 3`, scope `Keys` selected. Current match at line 23 highlighted. Line 8 folded (`{ … } 3 keys`); line 14 annotated `3 items`.
-- View menu open with Indent Guides submenu (Off / Lines / ✓ Colored by depth).
+- View menu open.
 - Path-scope variant: query `order.items[2].price`, `1 match`, `Path` selected; jumps and unfolds parents.
 - Status bar: `✓ Valid JSON · formatted in 3 ms · 34 lines`. Output footer `34 lines`, Copy.
 - Empty query: count hidden. No matches: show `No matches` in muted text (proposal, not in mocks) and keep field focused; do not color the field red.
@@ -284,7 +282,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ### 6d — Large file: writing the output (ref: 6d)
 - 4.8 MB minified file `orders-2026-10.json`, one line. Word wrap off; horizontal scrollbar. Input banner: `One 4.8 MB line. Word wrap is off for it so the editor stays fast.` + `{·} Pretty-print to edit`.
-- Output banner: `Large file: syntax colors and indent guides are off to keep things fast.` + link `Turn on anyway`.
+- Output banner: `Large file: syntax colors are off to keep things fast.` + link `Turn on anyway`.
 - While output fills in: breadcrumb shows `Path  Available when formatting finishes` greyed; `Copy path` greyed; find works as plain text (`Kei Tanaka`, `1 so far`), `Path` scope greyed. Output footer `1,284 lines so far`, Copy greyed.
 - Status: spinner `Formatting… 4.8 MB · writing output`, progress bar (accent fill on `gutter.bg` track) + `62%`, `✕ Cancel`. **Progress bar appears only while writing.**
 - Format button in Working state.
@@ -292,7 +290,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Esc in the main window while working = Cancel (proposal; confirm).
 
 ### 6e — JSON to YAML (ref: 6e)
-- Input JSON, Output as YAML. YAML uses JSON colors, dash lists, folding by indentation, indent guides.
+- Input JSON, Output as YAML. YAML uses JSON colors, dash lists, folding by indentation.
 - Line 10 `zip: "04101"` keeps quotes; gutter info icon; inline note `ⓘ Kept "04101" in quotes so YAML doesn't read it as the number 4101.` Non-1:1 conversions are info notes, never errors.
 - Output focused (accent focus border). Breadcrumb `root › order › customer › address › zip`.
 - Footers: `34 lines · 612 characters`; `22 lines · 1 note`. Status `✓ Converted · 1 note`. Direction `JSON → YAML`. Caption `Editing Output 1`.
@@ -381,7 +379,7 @@ Architecture:
 ## 10. Performance
 
 - No hard file-size cap.
-- Large-file adaptations seen: wrap off for very long lines, syntax colors and indent guides off with `Turn on anyway`, streamed output with `so far` counts, path features disabled until done.
+- Large-file adaptations seen: wrap off for very long lines, syntax colors off with `Turn on anyway`, streamed output with `so far` counts, path features disabled until done.
 - Thresholds (performance bands) are TBD by benchmarks. Open.
 - Formatting runs off the UI thread (QThread / worker); UI stays responsive; Cancel always available.
 
@@ -433,7 +431,7 @@ Isolate behind a `platform` module for macOS and Windows:
 1. **Product name in chrome**: Resolved. Menus and window titles use `Galley`. The mocks showed `Formatter`.
 2. **Fonts**: Resolved. The UI font is the platform system font (`QFontDatabase.systemFont(GeneralFont)`), set on `QApplication`. The editor stays monospace. Families are not named or bundled.
 3. **Base yellow hex** that amber is mixed from; only the mixed tint `#F1E3BE` and ink `#6E4604` are visible.
-4. **Indent guide depth colors**: only blue `#62C5EE` and pink `#FF90B1` sampled confidently; full depth sequence unknown.
+4. **Indent guide depth colors**: Resolved. Galley v1 has no indent guides.
 5. **White on accent**: Resolved. Button-face `accent` is `#0080A6` (same hue as measured `#0088B0`). White on `#0080A6` is 4.53:1 against `#FFFFFF` (was 4.08:1).
 6. **Line numbers**: Resolved. The line-number color (`text.muted`) is `#5E5B5B` (same hue as measured `#605D5D`). Contrast on gutter `#EAE7E7` is 5.47:1.
 7. **Default split**: Resolved. The default splitter ratio is 50/50. The mocks' readout said 40/60.

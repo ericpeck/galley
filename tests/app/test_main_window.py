@@ -196,7 +196,6 @@ def test_menu_bar_matches_spec(qtbot) -> None:
         "|",
         "Word Wrap",
         "Show Whitespace",
-        "Indent Guides",
         "Show Problems",
         "Next Problem",
         "Previous Problem",
@@ -214,11 +213,6 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     ]
     assert _submenu(view, "Font").actions() == []
     assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
-    assert _labels(_submenu(view, "Indent Guides")) == [
-        "Off",
-        "Lines",
-        "Colored by depth",
-    ]
     assert _labels(_menu(window, "Window")) == [
         "Pop out into window",
         "Show window",
@@ -307,6 +301,36 @@ def test_galley_menu_has_no_dangling_separator(qtbot) -> None:
         assert not any(a == b == "|" for a, b in pairs), title
 
 
+def test_indent_guides_are_removed(qtbot) -> None:
+    """Indent Guides aren't built for v1: no submenu, actions, or group."""
+    window = _show(qtbot)
+    for attr in ("guides_off", "guides_lines", "guides_depth", "indent_guides"):
+        assert not hasattr(window._actions, attr), attr
+    assert window.findChild(QMenu, "menuIndentGuides") is None
+    for menu in window.findChildren(QMenu):
+        assert "guide" not in menu.title().lower(), menu.title()
+    for action in window.findChildren(QAction):
+        assert "guide" not in action.text().lower(), action.text()
+        assert action.text() not in ("Off", "Lines", "Colored by depth"), action.text()
+
+
+def test_view_menu_has_no_empty_submenu_or_dangling_separator(qtbot) -> None:
+    window = _show(qtbot)
+    view = _menu(window, "View")
+    labels = _labels(view)
+    assert labels[0] != "|"
+    assert labels[-1] != "|"
+    pairs = zip(labels, labels[1:], strict=False)
+    assert not any(a == b == "|" for a, b in pairs)
+    submenus = view.findChildren(QMenu, options=Qt.FindDirectChildrenOnly)
+    titles = [menu.title() for menu in submenus if menu.menuAction() in view.actions()]
+    assert titles == ["Font", "Appearance"]
+    # Font was already empty before this change; it isn't Indent Guides' slot.
+    for menu in submenus:
+        if menu.title() != "Font":
+            assert menu.actions(), menu.title()
+
+
 def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
     window = _show(qtbot)
     moved = {
@@ -325,11 +349,6 @@ def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
 def test_view_defaults_match_spec(qtbot) -> None:
     window = _show(qtbot)
     assert _action(window, "Word Wrap").isChecked()
-    # Guides are Coming soon (#91), so the ✓ sits on Off, the real state,
-    # until they ship. The spec's default is Colored by depth.
-    assert _action(window, "Off").isChecked()
-    assert not _action(window, "Colored by depth").isChecked()
-    assert not _action(window, "Lines").isChecked()
     assert not _action(window, "Show Whitespace").isChecked()
     assert not _action(window, "Stack Panes").isChecked()
     assert not _action(window, "Show window").isEnabled()
