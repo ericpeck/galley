@@ -345,11 +345,23 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
     return buffer.getvalue()
 
 
-def _set_member_key(member: object) -> tuple[int, str, str]:
-    """Sort key for a ``!!set`` member: strings by code point, then the rest."""
+def _set_member_key(member: object) -> tuple[int, str, tuple[float, ...], str]:
+    """Sort key for a ``!!set`` member.
+
+    Strings come first, in code-point order. The other members follow,
+    grouped by type name and ordered by ``repr``, except numbers (#113).
+    Integers and floats are one group, in the place of the floats, ordered
+    by value: ``-.inf``, then the finite numbers, then ``.inf``, then
+    ``.nan``. So ``9`` comes before ``10``. ``true`` and ``false`` are
+    not numbers here.
+    """
     if isinstance(member, str):
-        return (0, "", member)
-    return (1, type(member).__name__, repr(member))
+        return (0, "", (), member)
+    if isinstance(member, (int, float)) and not isinstance(member, bool):
+        if member != member:  # NaN
+            return (1, "float", (1,), "")
+        return (1, "float", (0, member), "")
+    return (1, type(member).__name__, (), repr(member))
 
 
 @functools.cache
@@ -1324,7 +1336,11 @@ def sort_mapping_keys(value: object) -> object:
     ``jq -S`` use. Uppercase letters come before lowercase, and ``"é"``
     comes after ``"z"``. A YAML key that is not a string compares as its
     JSON text, so ``10`` comes before ``9``, ``false`` and ``null`` sort
-    as those words, and a date as ``2024-01-01``. A list used as a key
+    as those words, and a date as ``2024-01-01``. The YAML floats
+    ``.inf``, ``-.inf`` and ``.nan`` compare as ``Infinity``,
+    ``-Infinity`` and ``NaN``, the JSON text for them (#124): ``-.inf``
+    comes before the digits, and ``.inf`` and ``.nan`` sort with the
+    words that start with ``I`` and ``N``. A list used as a key
     compares as its Python text. Keys whose text ties, such as ``1`` and
     ``"1"`` in YAML, keep their input order. Merge keys (``<<``) were
     already expanded when the document loaded, so merged keys sort with
@@ -1373,8 +1389,9 @@ def _key_order(item: tuple[object, object]) -> str:
     if isinstance(key, bool):
         return "true" if key else "false"
     if isinstance(key, (int, float)):
-        # The text json.dumps writes for a number key.
-        return repr(key)
+        # The text json.dumps writes for a number key, including Infinity,
+        # -Infinity and NaN, which repr writes as inf, -inf and nan.
+        return json.dumps(key)
     return str(key)
 
 
@@ -1410,6 +1427,23 @@ def _not_json_value(value: object) -> object:
     raise NotJSONValueError(f"JSON can't hold a {type(value).__name__} value")
 
 
+# The text of the two errors ``json.dumps`` raises before its hook runs. Like
+# ``InputError.kind`` they are names, and ``galley.app`` chooses the words.
+NOT_JSON_KEY = "not_json_key"
+SELF_REFERENCE = "self_reference"
+# The key types ``json.dumps`` writes; it turns numbers, bools and null into
+# strings.
+_JSON_KEY_TYPES = (str, int, float, bool, type(None))
+
+
+class NotJSONKeyError(NotJSONValueError):
+    """A YAML key JSON can't hold, such as a date or binary data."""
+
+
+class SelfReferenceError(NotJSONValueError):
+    """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
+
+
 def _dump_yaml_value(value: object) -> str:
     """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
@@ -1430,13 +1464,48 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     can't hold a lone surrogate, and JSON input rejects one the same way.
     ``prepare`` goes to ``format_yaml``, so the rendered text is rewritten.
     A reload too deep for ruamel then walks the rendered text, not ``text``,
-    so a value ``prepare`` replaced can't come back.
+    so a value ``prepare`` replaced can't come back. A key JSON can't hold
+    raises ``NotJSONKeyError`` and an alias that contains itself raises
+    ``SelfReferenceError``, because ``json.dumps`` rejects both before its
+    ``default`` hook can.
     """
     rendered = format_yaml(text, prepare=prepare)
     value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
+    _check_json_shape(value)
     return value
+
+
+def _check_json_shape(value: object) -> None:
+    """Raise for a key JSON can't hold, or a mapping or list inside itself.
+
+    Each mapping and list is walked once, with an explicit stack, so an
+    alias shared many times costs no more than one copy. A list or mapping
+    still being walked when it is reached again contains itself.
+    """
+    walking: set[int] = set()
+    walked: set[int] = set()
+    stack: list[tuple[object, bool]] = [(value, False)]
+    while stack:
+        node, leaving = stack.pop()
+        if leaving:
+            walking.discard(id(node))
+            walked.add(id(node))
+            continue
+        if not isinstance(node, (dict, list)) or id(node) in walked:
+            continue
+        if id(node) in walking:
+            raise SelfReferenceError(SELF_REFERENCE)
+        walking.add(id(node))
+        stack.append((node, True))
+        if isinstance(node, dict):
+            if not all(isinstance(key, _JSON_KEY_TYPES) for key in node):
+                raise NotJSONKeyError(NOT_JSON_KEY)
+            children = node.values()
+        else:
+            children = node
+        stack.extend((child, False) for child in children)
 
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:

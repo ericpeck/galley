@@ -46,6 +46,12 @@ _YAML_TO_JSON = (
         '{\n  "10": "ten",\n  "9": "nine",\n  "false": "f"\n}\n',
     ),
     (
+        # #124: the non-finite floats sort as the JSON text written for them.
+        "b: 1\n.nan: 2\n.inf: 3\nB: 4\n9: 5\n-.inf: 6\n",
+        '{\n  "-Infinity": 6,\n  "9": 5,\n  "B": 4,\n  "Infinity": 3,\n'
+        '  "NaN": 2,\n  "b": 1\n}\n',
+    ),
+    (
         "z: &x {k: 1, j: 2}\na: *x\n",
         '{\n  "a": {\n    "j": 2,\n    "k": 1\n  },\n'
         '  "z": {\n    "j": 2,\n    "k": 1\n  }\n}\n',
@@ -60,6 +66,14 @@ _YAML_TO_YAML = (
         "b: 1\ns: !!set\n  alpha: null\n  zeta: null\n  2: null\n",
     ),
     ('note: "a\\tb"\nb: 1\n', 'b: 1\nnote: "a\\tb"\n'),
+    (
+        "b: 1\n.nan: 2\n.inf: 3\nB: 4\n9: 5\n-.inf: 6\n",
+        "-.inf: 6\n9: 5\nB: 4\n.inf: 3\n.nan: 2\nb: 1\n",
+    ),
+    (
+        "s: !!set {10, b, 9, 1.5}\n",
+        "s: !!set\n  b: null\n  1.5: null\n  9: null\n  10: null\n",
+    ),
 )
 
 
