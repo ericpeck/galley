@@ -64,7 +64,7 @@ Menu items and toolbar buttons that aren't built yet are disabled and say "Comin
 
 - Find and Replace
 - Minify, Validate, and indent size
-- Tabs, indent guides, and pop-out windows
+- Tabs and pop-out windows
 - Windows builds
 
 Specs for each feature live in their [GitHub issues](https://github.com/ericpeck/galley/issues).

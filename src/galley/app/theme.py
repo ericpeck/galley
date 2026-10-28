@@ -48,8 +48,6 @@ ACCENT_TEXT_DARK: Final = "#4DB8DB"
 ERROR_DARK: Final = "#FF7B72"
 AMBER_TINT: Final = "#F1E3BE"
 AMBER_INK: Final = "#6E4604"
-GUIDE_DEPTH_BLUE: Final = "#62C5EE"
-GUIDE_DEPTH_PINK: Final = "#FF90B1"
 
 # White label on ``accent``. The spec states this contrast pair and does
 # not list it as its own role.
@@ -89,7 +87,7 @@ _CHANGE_INKS: Final[dict[ChangeKind, tuple[str, str]]] = {
 # Share of the kind's ink over Base for a changed line's band (B1).
 CHANGE_TINT_SHARE: Final = 0.12
 
-# Role names match the spec table. Guide depth lists the two sampled hues.
+# Role names match the spec table.
 COLORS: Final[dict[str, str]] = {
     # Light-mode samples. The editor paints palette Base, the gutter
     # AlternateBase; these hexes are not applied to those surfaces.
@@ -117,8 +115,6 @@ COLORS: Final[dict[str, str]] = {
     "error.icon.ring": ERROR_ICON_RING,
     "amber.tint": AMBER_TINT,
     "amber.ink": AMBER_INK,
-    "guide.depth.blue": GUIDE_DEPTH_BLUE,
-    "guide.depth.pink": GUIDE_DEPTH_PINK,
 }
 
 

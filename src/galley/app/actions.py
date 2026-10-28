@@ -46,7 +46,6 @@ NOT_AVAILABLE = "Not available for {label}"
 # Menu order: menu bar, then the toolbar, then the tab menu.
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
-    "Guides",
     "Pop out",
     "Indent",
     "Minify",
@@ -59,8 +58,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
 _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     "Open": ("open_file",),
     "Find": ("find",),
-    # Indent Guides: the ✓ stays on Off, the real state, until guides ship.
-    "Guides": ("guides_off", "guides_lines", "guides_depth"),
     # The Window menu and the tab strip's Pop out ship together (#91 D8).
     "Pop out": ("pop_out", "show_window", "bring_back"),
     "Indent": ("indent",),
@@ -330,10 +327,6 @@ class ShellActions:
             shortcut=SHOW_WHITESPACE,
             checkable=True,
         )
-        self.guides_off = _action(parent, "Off", checkable=True, checked=True)
-        self.guides_lines = _action(parent, "Lines", checkable=True)
-        self.guides_depth = _action(parent, "Colored by depth", checkable=True)
-        self.indent_guides = self._exclusive_guides(parent)
         self.full_screen = _action(
             parent,
             "Enter Full Screen",
@@ -423,14 +416,6 @@ class ShellActions:
                 actions.append(getattr(self, attr))
         return actions
 
-    def _exclusive_guides(self, parent: QWidget) -> QActionGroup:
-        group = QActionGroup(parent)
-        group.setExclusive(True)
-        group.addAction(self.guides_off)
-        group.addAction(self.guides_lines)
-        group.addAction(self.guides_depth)
-        return group
-
     def _exclusive_appearance(self, parent: QWidget) -> QActionGroup:
         group = QActionGroup(parent)
         group.setExclusive(True)
@@ -453,9 +438,6 @@ class ShellActions:
     def _stub_actions(self) -> list[QAction]:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
-            self.guides_off,
-            self.guides_lines,
-            self.guides_depth,
             self.pop_out,
             self.show_window,
             self.bring_back,
