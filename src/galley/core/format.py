@@ -345,11 +345,23 @@ def _dump_parsed(value: object, *, pure: bool) -> str:
     return buffer.getvalue()
 
 
-def _set_member_key(member: object) -> tuple[int, str, str]:
-    """Sort key for a ``!!set`` member: strings by code point, then the rest."""
+def _set_member_key(member: object) -> tuple[int, str, tuple[float, ...], str]:
+    """Sort key for a ``!!set`` member.
+
+    Strings come first, in code-point order. The other members follow,
+    grouped by type name and ordered by ``repr``, except numbers (#113).
+    Integers and floats are one group, in the place of the floats, ordered
+    by value: ``-.inf``, then the finite numbers, then ``.inf``, then
+    ``.nan``. So ``9`` comes before ``10``. ``true`` and ``false`` are
+    not numbers here.
+    """
     if isinstance(member, str):
-        return (0, "", member)
-    return (1, type(member).__name__, repr(member))
+        return (0, "", (), member)
+    if isinstance(member, (int, float)) and not isinstance(member, bool):
+        if member != member:  # NaN
+            return (1, "float", (1,), "")
+        return (1, "float", (0, member), "")
+    return (1, type(member).__name__, (), repr(member))
 
 
 @functools.cache
@@ -1324,7 +1336,11 @@ def sort_mapping_keys(value: object) -> object:
     ``jq -S`` use. Uppercase letters come before lowercase, and ``"é"``
     comes after ``"z"``. A YAML key that is not a string compares as its
     JSON text, so ``10`` comes before ``9``, ``false`` and ``null`` sort
-    as those words, and a date as ``2024-01-01``. A list used as a key
+    as those words, and a date as ``2024-01-01``. The YAML floats
+    ``.inf``, ``-.inf`` and ``.nan`` compare as ``Infinity``,
+    ``-Infinity`` and ``NaN``, the JSON text for them (#124): ``-.inf``
+    comes before the digits, and ``.inf`` and ``.nan`` sort with the
+    words that start with ``I`` and ``N``. A list used as a key
     compares as its Python text. Keys whose text ties, such as ``1`` and
     ``"1"`` in YAML, keep their input order. Merge keys (``<<``) were
     already expanded when the document loaded, so merged keys sort with
@@ -1373,8 +1389,9 @@ def _key_order(item: tuple[object, object]) -> str:
     if isinstance(key, bool):
         return "true" if key else "false"
     if isinstance(key, (int, float)):
-        # The text json.dumps writes for a number key.
-        return repr(key)
+        # The text json.dumps writes for a number key, including Infinity,
+        # -Infinity and NaN, which repr writes as inf, -inf and nan.
+        return json.dumps(key)
     return str(key)
 
 

@@ -184,7 +184,12 @@ def test_yaml_to_json_names_a_value_json_cannot_hold(
         format_document(text, "yaml", "json")
 
 
-_SET_TEXT = "tags: !!set {gamma, alpha, Beta, 订单, café, delta, 10, 9, null}\n"
+_SET_TEXT = (
+    "tags: !!set {gamma, alpha, Beta, 订单, café, delta, 10, 9, null,"
+    " .nan, 2.5, .inf, -3, -.inf, true}\n"
+)
+# Strings by code point, then the other members by type name, with integers
+# and floats one group in value order (#113).
 _SET_OUTPUT = (
     "tags: !!set\n"
     "  Beta: null\n"
@@ -194,8 +199,14 @@ _SET_OUTPUT = (
     "  gamma: null\n"
     "  订单: null\n"
     "  null: null\n"
-    "  10: null\n"
+    "  true: null\n"
+    "  -.inf: null\n"
+    "  -3: null\n"
+    "  2.5: null\n"
     "  9: null\n"
+    "  10: null\n"
+    "  .inf: null\n"
+    "  .nan: null\n"
 )
 
 
