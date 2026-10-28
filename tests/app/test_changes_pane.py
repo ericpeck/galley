@@ -154,6 +154,29 @@ def test_display_and_accessible_text_are_the_spoken_name(qtbot) -> None:
     ]
 
 
+def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
+    path = "shipping.regions.north_america.estimated_delivery_window_days"
+    long_path = _report(
+        {"shipping": {"regions": {"north_america": {path.rsplit(".")[-1]: 7}}}},
+        {"shipping": {"regions": {"north_america": {path.rsplit(".")[-1]: 10}}}},
+    )
+    pane = _pane(qtbot, long_path)
+    tip = pane.model().index(0).data(Qt.ItemDataRole.ToolTipRole)
+    assert tip == f"Changed · {path} · \u20687\u2069 → \u206810\u2069"
+    pane.set_report(_grouped())
+    model = pane.model()
+    assert [
+        model.index(row).data(Qt.ItemDataRole.ToolTipRole)
+        for row in range(model.rowCount())
+    ] == [
+        'Changed · name · \u2068"Ada"\u2069 → \u2068"Bo"\u2069',
+        "users: items compared by position (too complex to align)",
+        "users[1–2]: 2 items differ",
+        "users[4–6]: 3 items differ",
+        "Changed · zip · \u20681\u2069 → \u20682\u2069",
+    ]
+
+
 def test_info_rows_are_muted_notes_that_are_not_counted(qtbot) -> None:
     pane = _pane(qtbot, _grouped())
     model = pane.model()

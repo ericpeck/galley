@@ -194,6 +194,8 @@ class ChangesModel(QAbstractListModel):
             Qt.ItemDataRole.AccessibleTextRole,
         ):
             return entry.row.accessible_name
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return tooltip_text(entry.row)
         if role == ROW_ROLE:
             return entry.row
         if role == DEPTH_ROLE:
@@ -492,6 +494,14 @@ def change_detail(row: ChangeRow) -> str:
 def _isolated(text: str) -> str:
     """``text`` between FIRST STRONG ISOLATE and POP DIRECTIONAL ISOLATE."""
     return f"\u2068{text}\u2069"
+
+
+def tooltip_text(row: ChangeRow | GroupRow | InfoRow) -> str:
+    """The whole row, for when it is cut to fit: a change row's label, path,
+    and detail, or a group or info row's text."""
+    if isinstance(row, ChangeRow):
+        return f"{row.label} · {row.path_text} · {change_detail(row)}"
+    return row.text
 
 
 def line_text(row: ChangeRow | GroupRow | InfoRow) -> str:
