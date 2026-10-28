@@ -23,10 +23,9 @@ document that has an alias loads with the pure-Python parser, because the
 C parser gives each alias of a scalar its own string object.
 
 XML is formatted by ``galley.core.xml_format`` and is written only as XML.
-It reaches ``format_document`` once the format table has an XML row, which
-#63 slice 3 adds with the picker item. HTML is formatted by
-``galley.core.html_format`` the same way, and is written only as HTML; its
-row comes with the picker item in slice 5.
+HTML is formatted by ``galley.core.html_format`` the same way, and is
+written only as HTML; its table row comes with the picker item in #63
+slice 5.
 """
 
 import datetime

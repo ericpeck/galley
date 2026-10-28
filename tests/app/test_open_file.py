@@ -28,6 +28,7 @@ from galley.app.pane import PaneKind, PaneWidget
 from galley.app.problems_settings import problems_settings
 from galley.app.theme import contrast_ratio
 from galley.core import load
+from galley.core.formats import FORMATS
 from galley.core.load import MAX_OPEN_BYTES, LoadedDocument
 
 _KEEP = '{"keep": true}\n'
@@ -68,7 +69,11 @@ def test_open_file_button_loads_text_without_formatting(
     assert seen["parent"] is window
     assert seen["caption"] == "Open"
     assert seen["filter"] == OPEN_FILE_FILTER
-    assert OPEN_FILE_FILTER == "JSON and YAML (*.json *.yaml *.yml);;All Files (*)"
+    assert OPEN_FILE_FILTER == (
+        "JSON, YAML, and XML "
+        "(*.json *.geojson *.yaml *.yml *.xml *.xsd *.xsl *.xslt *.svg *.xhtml)"
+        ";;All Files (*)"
+    )
     assert Path(str(seen["directory"])) == Path(_default_folder())
     qtbot.waitUntil(lambda: editor.hasFocus())
 
@@ -459,7 +464,7 @@ def test_empty_input_heading_names_the_open_shortcut(qtbot) -> None:
         QKeySequence.SequenceFormat.NativeText
     )
     assert heading.text() == (
-        f"Paste JSON or YAML, or drop a file here. {shortcut} to open."
+        f"Paste JSON, YAML, XML, or HTML, or drop a file here. {shortcut} to open."
     )
 
 
@@ -715,3 +720,13 @@ def _choose_sequence(monkeypatch, paths: list[Path | None]) -> list[str]:
 
     monkeypatch.setattr("galley.app.main_window.QFileDialog.getOpenFileName", _fake)
     return directories
+
+
+def test_the_open_filter_lists_every_extension_open_maps() -> None:
+    # The first filter names each extension the format table maps, in
+    # table order, so a file Open can read is never hidden behind All Files.
+    first, _all_files = OPEN_FILE_FILTER.split(";;")
+    listed = first[first.index("(") + 1 : first.index(")")].split()
+    mapped = [f"*{suffix}" for fmt in FORMATS for suffix in fmt.extensions]
+    assert listed == mapped
+    assert first.startswith("JSON, YAML, and XML (")

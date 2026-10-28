@@ -3,7 +3,9 @@
 Secondary buttons give up their labels before any of them leave the row.
 A label that does not fit becomes icon-only: the accessible name and the
 tooltip stay the action text. An unbuilt icon-only button keeps its name
-in both, as "Name — coming soon". If the row is still too narrow, trailing
+in both, as "Name — coming soon". A button whose action doesn't apply to
+the Input format shows that reason, such as "Not available for XML", as
+its tooltip and accessible description. If the row is still too narrow, trailing
 controls move into the » menu and keep the same actions. The indent size
 picker becomes an Indent size submenu there. Format stays at the right
 edge, outside that menu.
@@ -41,6 +43,7 @@ from galley.app.actions import (
     ShellActions,
     coming_soon_wrapper,
     is_unbuilt,
+    not_available_reason,
 )
 from galley.app.icons import toolbar_icon
 from galley.app.style import menu_style
@@ -365,6 +368,15 @@ class MainToolbar(QWidget):
         for button, action in control.buttons:
             _present(button, action, icon_only=icon_only or not control.textual)
 
+    def sync_not_available(self) -> None:
+        """Show each button's not-available reason, or its usual tooltip again."""
+        for control in self._controls:
+            for button, action in control.buttons:
+                icon_only = (
+                    button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+                )
+                _present(button, action, icon_only=icon_only)
+
 
 def _control(widget: QWidget, *, group: int, textual: bool | None = None) -> _Control:
     buttons = _buttons(widget)
@@ -401,6 +413,19 @@ def _coming_soon_host(button: QToolButton) -> QWidget | None:
 
 
 def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
+    _present_style(button, action, icon_only=icon_only)
+    reason = not_available_reason(action)
+    if reason:
+        button.setToolTip(reason)
+        button.setAccessibleDescription(reason)
+        button.setProperty("notAvailableShown", True)
+    elif button.property("notAvailableShown"):
+        # Only a reason set here is cleared. Coming soon keeps its own.
+        button.setAccessibleDescription("")
+        button.setProperty("notAvailableShown", False)
+
+
+def _present_style(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
     icon = toolbar_icon(action.text(), pad=not icon_only)
     if not icon.isNull():
         action.setIcon(icon)

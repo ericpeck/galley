@@ -21,6 +21,11 @@ YAML_WARNING_BYTES = 352 * _SI_KB
 JSON_BUSY_BYTES = 5 * _SI_MB
 JSON_PROGRESS_BYTES = 20 * _SI_MB
 JSON_WARNING_BYTES = 100 * _SI_MB
+# XML (#63) uses the YAML numbers until the size bench ``format_xml`` row
+# sets its own (E4 on #63). They also gate XML syntax colors.
+XML_BUSY_BYTES = YAML_BUSY_BYTES
+XML_PROGRESS_BYTES = YAML_PROGRESS_BYTES
+XML_WARNING_BYTES = YAML_WARNING_BYTES
 # Convert from Python runs on the UI thread with no busy indicator. Above
 # these UTF-8 sizes of Input, it is refused so the window stays responsive.
 # The size bench rows ``python_to_json`` and ``python_to_yaml`` time them.

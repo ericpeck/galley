@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 from galley.app.file_drop import dropped_paths
 from galley.app.fonts import code_font
 from galley.app.highlighter import SyntaxHighlighter, SyntaxMode
-from galley.app.limits import JSON_BUSY_BYTES
+from galley.app.limits import JSON_BUSY_BYTES, XML_BUSY_BYTES
 from galley.app.theme import (
     change_color,
     change_tint,
@@ -706,14 +706,14 @@ class CodeEditor(QPlainTextEdit):
         return ranked
 
     def syntax_mode(self) -> SyntaxMode:
-        """``"JSON"`` or ``"YAML"``, the colors the editor applies."""
+        """``"JSON"``, ``"YAML"``, or ``"XML"``, the colors the editor applies."""
         return self._highlighter.mode()
 
     def set_syntax_mode(self, mode: SyntaxMode) -> None:
         """Color as ``mode`` from now on and stop guessing from the text.
 
         Until this is called, the first non-blank character picks the mode:
-        ``{`` or ``[`` means JSON, anything else YAML.
+        ``{`` or ``[`` means JSON, ``<`` means XML, anything else YAML.
         """
         self._syntax_mode_set = True
         self._highlighter.set_mode(mode)
@@ -753,8 +753,8 @@ class CodeEditor(QPlainTextEdit):
         ``WHITESPACE_LIMIT`` means Show Whitespace is on but a line is longer
         than ``WHITESPACE_LONG_LINE_CHARS``. ``COLORS_LIMIT`` means colors
         are wanted but a line is longer than ``COLORS_LONG_LINE_CHARS`` or
-        the document is over ``JSON_BUSY_BYTES``. The long-line notice will
-        read this.
+        the document is over its busy size: ``XML_BUSY_BYTES`` for XML and
+        ``JSON_BUSY_BYTES`` otherwise. The long-line notice will read this.
         """
         limits: list[str] = []
         if self._whitespace_wanted and self._whitespace_limited():
@@ -782,7 +782,8 @@ class CodeEditor(QPlainTextEdit):
     def _colors_limited(self) -> bool:
         # characterCount is a lower bound on the UTF-8 size and costs nothing
         # to read; the exact byte count would mean copying the document.
-        over_bytes = self.document().characterCount() - 1 > JSON_BUSY_BYTES
+        limit = XML_BUSY_BYTES if self.syntax_mode() == "XML" else JSON_BUSY_BYTES
+        over_bytes = self.document().characterCount() - 1 > limit
         return self._longest_chars > COLORS_LONG_LINE_CHARS or over_bytes
 
     def _apply_display_options(self) -> None:
@@ -876,12 +877,16 @@ class CodeEditor(QPlainTextEdit):
         self._replace_folds(ranges)
 
     def rescan_folds(self) -> None:
-        """Find the fold ranges of the current text now."""
+        """Find the fold ranges of the current text now. XML has none yet."""
         self._fold_rescan.stop()
         if not self._folding:
             return
+        mode = self.syntax_mode()
+        if mode == "XML":
+            self._replace_folds([])
+            return
         text = self.toPlainText()
-        self.set_fold_ranges(fold_ranges(text, self.syntax_mode()), line_count(text))
+        self.set_fold_ranges(fold_ranges(text, mode), line_count(text))
 
     def fold_line(self, lineno: int, *, nested: bool = False) -> FoldRange | None:
         """Fold the block that starts on 1-based ``lineno``.
@@ -1570,11 +1575,15 @@ class CodeEditor(QPlainTextEdit):
             index += 1
         if index >= count:
             return
-        mode: SyntaxMode = "JSON" if document.characterAt(index) in "{[" else "YAML"
+        mode = _mode_for(document.characterAt(index))
         # An edit that replaced everything is reformatted by the highlighter
         # right after this slot, so a full pass here would be wasted.
         whole = position == 0 and added >= count - 1
+        changed = mode != self._highlighter.mode()
         self._highlighter.set_mode(mode, rehighlight=not whole)
+        if changed:
+            # XML has its own busy size for colors.
+            self._apply_display_options()
 
     def _update_line_number_width(self, _block_count: int) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
@@ -1889,6 +1898,15 @@ def _subtract(
         if current <= last:
             result.append((current, last))
     return result
+
+
+def _mode_for(first: str) -> SyntaxMode:
+    """The colors a document whose first non-blank character is ``first`` gets."""
+    if first in "{[":
+        return "JSON"
+    if first == "<":
+        return "XML"
+    return "YAML"
 
 
 def fold_count_text(item: FoldRange) -> str:

@@ -190,7 +190,7 @@ def test_unescape_peels_one_layer_of_a_double_escaped_string() -> None:
 
 def test_unescape_rejects_an_unknown_target() -> None:
     with pytest.raises(ValueError, match="Unsupported format"):
-        unescape_document('"{}"', "xml")
+        unescape_document('"{}"', "html")
 
 
 @pytest.mark.parametrize(
