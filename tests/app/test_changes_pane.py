@@ -142,16 +142,29 @@ def test_display_and_accessible_text_are_the_spoken_name(qtbot) -> None:
     model = pane.model()
     for row in range(model.rowCount()):
         index = model.index(row)
-        spoken = index.data(ROW_ROLE).accessible_name
-        assert index.data(Qt.ItemDataRole.AccessibleTextRole) == spoken
+        spoken = index.data(Qt.ItemDataRole.AccessibleTextRole)
         assert index.data(Qt.ItemDataRole.DisplayRole) == spoken
+        assert spoken.startswith(index.data(ROW_ROLE).accessible_name)
     assert [model.index(row).data() for row in range(model.rowCount())] == [
         'Changed, name, "Ada" to "Bo"',
         "users, items compared by position, too complex to align",
-        "users, 1 to 2, 2 items differ",
-        "users, 4 to 6, 3 items differ",
+        "users, 1 to 2, 2 items differ, collapsed",
+        "users, 4 to 6, 3 items differ, collapsed",
         "Changed, zip, 1 to 2",
     ]
+
+
+def test_a_group_says_whether_it_is_collapsed_or_expanded(qtbot) -> None:
+    pane = _pane(qtbot, _grouped())
+    model = pane.model()
+    changed: list[list[int]] = []
+    model.dataChanged.connect(lambda _top, _bottom, roles: changed.append(roles))
+    spoken = Qt.ItemDataRole.AccessibleTextRole
+    model.set_expanded(2, True)
+    assert model.index(2).data(spoken) == "users, 1 to 2, 2 items differ, expanded"
+    assert spoken in changed[-1]
+    model.set_expanded(2, False)
+    assert model.index(2).data(spoken) == "users, 1 to 2, 2 items differ, collapsed"
 
 
 def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
@@ -559,7 +572,7 @@ def test_accessible_names(qtbot) -> None:
     ] == [
         'Changed, role, "user" to "admin"',
         "Removed, old, 1",
-        "Moved, from, x, to to, x",
+        "Moved, from, x, now at to, x",
         "Added, new, true",
     ]
     pane.show_stopped()

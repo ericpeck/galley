@@ -76,7 +76,7 @@ def test_one_row_per_kind_with_label_glyph_and_spoken_name() -> None:
     assert rows == [
         ("changed", "~", "Changed", "role", 'Changed, role, "user" to "admin"'),
         ("removed", "−", "Removed", "old", "Removed, old, 1"),
-        ("moved", "⇄", "Moved", "from.x", "Moved, from, x, to to, x"),
+        ("moved", "⇄", "Moved", "from.x", "Moved, from, x, now at to, x"),
         ("added", "+", "Added", "new", "Added, new, […]"),
     ]
     assert report.count == 4

@@ -195,6 +195,9 @@ class ChangesModel(QAbstractListModel):
             Qt.ItemDataRole.DisplayRole,
             Qt.ItemDataRole.AccessibleTextRole,
         ):
+            if isinstance(entry.row, GroupRow):
+                state = "expanded" if entry.group in self._expanded else "collapsed"
+                return f"{entry.row.accessible_name}, {state}"
             return entry.row.accessible_name
         if role == Qt.ItemDataRole.ToolTipRole:
             return tooltip_text(entry.row)
@@ -256,7 +259,15 @@ class ChangesModel(QAbstractListModel):
             self.endRemoveRows()
         self._stops = None
         changed = self.index(row)
-        self.dataChanged.emit(changed, changed, [EXPANDED_ROLE])
+        self.dataChanged.emit(
+            changed,
+            changed,
+            [
+                EXPANDED_ROLE,
+                Qt.ItemDataRole.DisplayRole,
+                Qt.ItemDataRole.AccessibleTextRole,
+            ],
+        )
 
     def next_stop(self, row: int) -> int | None:
         """The next change stop after model row ``row``, or ``None`` at the end.
