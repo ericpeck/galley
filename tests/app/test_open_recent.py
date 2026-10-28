@@ -1,9 +1,11 @@
 """File › Open Recent lists opened files and reopens them through Open (#85)."""
 
+import itertools
 import os
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from galley.app.main import create_main_window
 from galley.app.problems_settings import problems_settings
 from galley.app.recent_files import (
     RECENT_FILES_KEY,
+    FileChecker,
     load_recent_files,
     remember_recent_file,
 )
@@ -336,14 +339,43 @@ def test_choosing_a_row_before_its_check_returns_opens_it(
 
     _entries(window)[0].trigger()
 
-    # Open starts at once with its own off-thread read; it does not wait
-    # for the menu's check. Both reach the stuck stat.
-    assert window._loading_path == path
+    # Open reads the file on its own thread while the menu's check hangs.
+    qtbot.waitUntil(lambda: _input(window).toPlainText() == _SAMPLE)
     assert _recent(window).checking()
     slow_stat.release()
-    qtbot.waitUntil(lambda: _input(window).toPlainText() == _SAMPLE)
     _settle(qtbot, window)
     assert slow_stat.main_thread_calls == []
+
+
+def test_the_checker_reports_files_through_its_stat_function(qtbot, tmp_path) -> None:
+    file = _write(tmp_path / "file.json")
+    folder = tmp_path / "folder.json"
+    folder.mkdir()
+    asked: list[tuple[str, bool]] = []
+
+    def fake_stat(entry: str) -> os.stat_result:
+        asked.append((entry, threading.current_thread() is threading.main_thread()))
+        if entry == "missing.json":
+            raise FileNotFoundError(entry)
+        if entry == "broken.json":
+            raise ValueError(entry)
+        return os.stat(entry)
+
+    checker = FileChecker(stat_file=fake_stat)
+    answers: dict[str, bool] = {}
+    checker.checked.connect(answers.__setitem__)
+    entries = [str(file), str(folder), "missing.json", "broken.json"]
+
+    checker.check(entries)
+    qtbot.waitUntil(lambda: not checker.busy())
+
+    assert answers == {
+        str(file): True,
+        str(folder): False,
+        "missing.json": False,
+        "broken.json": False,
+    }
+    assert sorted(asked) == sorted((entry, False) for entry in entries)
 
 
 def test_stuck_checks_do_not_delay_opening_a_healthy_file(
@@ -396,18 +428,27 @@ def test_quitting_does_not_wait_on_a_stuck_check(tmp_path) -> None:
 def test_building_the_menu_with_a_slow_disk_is_within_budget(
     qtbot, tmp_path, slow_stat, perf_budget
 ) -> None:
-    """10 ms to build the menu while every file's stat hangs."""
-    paths = [_write(tmp_path / f"file{index}.json") for index in range(10)]
-    for path in paths:
-        remember_recent_file(path)
-    slow_stat.hold(*paths)
+    """10 ms to build the menu while every file's stat hangs.
+
+    Every run lists ten new files, so each build starts ten new checks. A
+    stat back on the UI thread sleeps 0.2 s and misses the budget.
+    """
     window = _show(qtbot, settle=False)
     recent = _recent(window)
+    runs = itertools.count()
+
+    def ten_new_files() -> None:
+        run = next(runs)
+        paths = [tmp_path / f"run{run}" / f"file{index}.json" for index in range(10)]
+        slow_stat.hold(*paths)
+        for path in paths:
+            remember_recent_file(path)
 
     perf_budget.within(
         _SLOW_DISK_BUILD_S,
         recent.aboutToShow.emit,
-        fixture="10 recent files, every stat stuck",
+        setup=ten_new_files,
+        fixture="10 new recent files a build, every stat stuck",
     )
 
     assert len(_entries(window)) == 10
@@ -587,22 +628,20 @@ QSettings.setPath(
     QSettings.Format.IniFormat, QSettings.Scope.UserScope, settings_dir
 )
 started = threading.Event()
-real_stat = Path.stat
 
-
-def slow_stat(self, *args, **kwargs):
-    if os.fspath(self) == stuck and threading.current_thread() is not (
-        threading.main_thread()
-    ):
-        started.set()
-        time.sleep(600)
-    return real_stat(self, *args, **kwargs)
-
-
-Path.stat = slow_stat
-
+from galley.app import recent_files
 from galley.app.main import create_main_window
 from galley.app.recent_files import remember_recent_file
+
+
+def slow_stat(entry):
+    if entry == stuck:
+        started.set()
+        time.sleep(600)
+    return os.stat(entry)
+
+
+recent_files.recent_stat = slow_stat
 
 remember_recent_file(Path(stuck))
 window = create_main_window()
@@ -625,7 +664,7 @@ print("event loop done", flush=True)
 
 
 class _SlowStat:
-    """``Path.stat`` that blocks on held paths until released."""
+    """A ``recent_stat`` that blocks on held paths until released."""
 
     def __init__(self) -> None:
         self._held: set[str] = set()
@@ -644,8 +683,10 @@ class _SlowStat:
         if os.fspath(path) not in self._held:
             return
         if threading.current_thread() is threading.main_thread():
-            # Never block the test: record it so the test fails instead.
+            # Never hang the test: record it, and cost what a slow disk
+            # would, so the perf budget fails too.
             self.main_thread_calls.append(path)
+            time.sleep(0.2)
             return
         with self._lock:
             self.calls.append(path)
@@ -655,17 +696,20 @@ class _SlowStat:
 
 @pytest.fixture
 def slow_stat(monkeypatch) -> Iterator[_SlowStat]:
+    """Replace the checks' stat only; Open's reader still reads the disk."""
     slow = _SlowStat()
-    real_stat = Path.stat
 
-    def _stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-        slow.wait_if_held(self)
-        return real_stat(self, *args, **kwargs)
+    def _stat(entry: str) -> os.stat_result:
+        slow.wait_if_held(Path(entry))
+        return os.stat(entry)
 
-    monkeypatch.setattr(Path, "stat", _stat)
+    monkeypatch.setattr("galley.app.recent_files.recent_stat", _stat)
     yield slow
     slow.release()
-    QThreadPool.globalInstance().waitForDone(10_000)
+    # Free the shared check slots before the next test.
+    for thread in threading.enumerate():
+        if thread.name == "Open Recent check":
+            thread.join(10)
 
 
 def _settle(qtbot, window) -> None:

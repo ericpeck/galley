@@ -5,15 +5,19 @@ the labels come from :mod:`galley.core.recent`. Choosing an entry asks the
 window to open it, so recents get the same replace prompt, size cap, and
 off-thread read as every other Open.
 
-Whether each file still exists is checked in the thread pool (#114): a
-``stat`` on a sleeping drive or a lost network share can block for seconds.
-The menu shows the last answer at once and updates a row when its check
-comes back.
+Whether each file still exists is checked off the UI thread (#114): a
+``stat`` on a sleeping drive or a lost network share can block for seconds,
+or forever on a hung mount. The menu shows the last answer at once and
+updates a row when its check comes back.
 """
 
+import os
+import stat
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QWidget
 
@@ -25,6 +29,9 @@ OPEN_RECENT_MENU = "Open Recent"
 CLEAR_MENU = "Clear Menu"
 FILE_NOT_FOUND = "File not found"
 NOT_FOUND_SUFFIX = " (not found)"
+# Checks that may sit in stat at once, across every window.
+CHECK_THREADS = 2
+_check_slots = threading.Semaphore(CHECK_THREADS)
 
 
 def load_recent_files() -> list[str]:
@@ -54,21 +61,36 @@ def _save(entries: list[str]) -> None:
     settings.sync()
 
 
+def recent_stat(entry: str) -> os.stat_result:
+    """``os.stat`` for the checks. Tests replace it with a slow fake."""
+    return os.stat(entry)
+
+
 class FileChecker(QObject):
-    """Check in the thread pool whether recent files still exist.
+    """Check on daemon threads whether recent files still exist.
 
     ``checked`` carries the entry and whether it is a file. An entry has at
-    most one check running, so a path that hangs ties up one thread, not
-    one more each time the menu opens.
+    most one check running, and at most :data:`CHECK_THREADS` checks sit in
+    ``stat`` at once, so a lost share ties up two threads at most.
+
+    The threads are not Qt's: Open's reader never waits behind a stuck
+    check, and quitting never waits for one either, since Python leaves a
+    daemon thread behind at exit. ``stat_file`` defaults to
+    :func:`recent_stat`, looked up when each check runs.
     """
 
     checked = Signal(str, bool)
     _finished = Signal(str, bool)
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        stat_file: Callable[[str], os.stat_result] | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._stat_file = stat_file
         self._running: set[str] = set()
-        # Queued from the pool thread; ``checked`` then goes out on this one.
+        # Queued from a check thread; ``checked`` then goes out on this one.
         self._finished.connect(self._done)
 
     def check(self, entries: list[str]) -> None:
@@ -76,8 +98,12 @@ class FileChecker(QObject):
             if entry in self._running:
                 continue
             self._running.add(entry)
-            # The global pool, as Open uses, so quitting never waits on it.
-            QThreadPool.globalInstance().start(_CheckTask(self, entry))
+            threading.Thread(
+                target=self._run,
+                args=(entry,),
+                name="Open Recent check",
+                daemon=True,
+            ).start()
 
     def busy(self) -> bool:
         """True while any check has not come back."""
@@ -87,21 +113,16 @@ class FileChecker(QObject):
         self._running.discard(entry)
         self.checked.emit(entry, found)
 
-
-class _CheckTask(QRunnable):
-    def __init__(self, checker: FileChecker, entry: str) -> None:
-        super().__init__()
-        self._checker = checker
-        self._entry = entry
-
-    def run(self) -> None:
+    def _run(self, entry: str) -> None:
+        stat_file = self._stat_file or recent_stat
+        with _check_slots:
+            try:
+                found = stat.S_ISREG(stat_file(entry).st_mode)
+            except Exception:
+                # Any failure still ends the check; Open reports the real error.
+                found = False
         try:
-            found = Path(self._entry).is_file()
-        except Exception:
-            # Any failure still ends the check; Open reports the real error.
-            found = False
-        try:
-            self._checker._finished.emit(self._entry, found)
+            self._finished.emit(entry, found)
         except RuntimeError:
             # The menu closed with its window while the check ran.
             return
@@ -118,7 +139,9 @@ class RecentFilesMenu(QMenu):
     The menu never waits on the disk. A row shows the last check's answer,
     or is enabled before its first check, and a check runs for every row
     each time the menu is built. Opening a file that has gone since still
-    gets Open's "Couldn't find" message.
+    gets Open's "Couldn't find" message. Known limits: a check that started
+    before a file was deleted can call it found until the next build, and a
+    row whose stat never returns stays enabled.
     """
 
     open_requested = Signal(object)
