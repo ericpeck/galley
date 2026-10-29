@@ -157,6 +157,7 @@ from galley.app.problems_settings import (
     save_stacked_panes,
 )
 from galley.app.recent_files import RecentFilesMenu, remember_recent_file
+from galley.app.regex_session import RegexSession
 from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
 from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
@@ -349,6 +350,9 @@ class MainWindow(QMainWindow):
         self._copy_as_reveal_timer.setSingleShot(True)
         self._copy_as_reveal_timer.timeout.connect(self._show_copying)
         self._session = ParseSession(self)
+        # Regex and Whole word for both find bars: one worker, started the
+        # first time either toggle is turned on.
+        self._regex_session = RegexSession(self)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
@@ -365,6 +369,7 @@ class MainWindow(QMainWindow):
         self._output_pane = PaneWidget(PaneRole.OUTPUT)
         # Only Output folds in v1 (#64).
         self._output_pane.editor.set_folding_enabled(True)
+        self._share_find_toggles()
         self._active_editor = self._input_pane.editor
         # The JSON or YAML Output to go back to after XML Input (B1 on #63).
         self._last_value_output = self._output_pane.format_name()
@@ -400,13 +405,32 @@ class MainWindow(QMainWindow):
         self._session.start()
 
     def shutdown_parse_worker(self) -> None:
-        """Reap the formatter when the window is done with it."""
+        """Reap the formatter and the find worker when the window is done."""
         self._session.shutdown()
+        self._regex_session.shutdown()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.cancel_open()
         self._session.shutdown()
+        self._regex_session.shutdown()
         super().closeEvent(event)
+
+    def _share_find_toggles(self) -> None:
+        """Both find bars use one find worker and the same Regex and Whole
+        word state, for this session only.
+        """
+        bars = (self._input_pane.find_bar, self._output_pane.find_bar)
+        for bar in bars:
+            bar.set_regex_session(self._regex_session)
+        for name in ("regex_button", "whole_word_button"):
+            first, second = (getattr(bar, name) for bar in bars)
+            first.toggled.connect(second.setChecked)
+            second.toggled.connect(first.setChecked)
+            first.toggled.connect(self._start_find_worker)
+
+    def _start_find_worker(self, checked: bool) -> None:
+        if checked:
+            self._regex_session.start()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)

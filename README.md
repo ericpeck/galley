@@ -36,6 +36,7 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 | Format | ⌘↵ | Ctrl+Enter |
 | Open file | ⌘O | Ctrl+O |
 | Find and Replace | ⌥⌘F | Ctrl+H |
+| Regex / Whole word (in the find bar) | ⌥⌘R / ⌥⌘W | Alt+R / Alt+W |
 | Show Problems | ⇧⌘M | Ctrl+Shift+M |
 | Fold / Unfold | ⌥⌘[ / ⌥⌘] | Ctrl+Shift+[ / Ctrl+Shift+] |
 | Collapse all / Expand all | ⌘K ⌘0 / ⌘K ⌘J | Ctrl+K, Ctrl+0 / Ctrl+K, Ctrl+J |
@@ -52,7 +53,7 @@ No shortcut uses Ctrl+Alt on Windows, because AltGr acts as Ctrl+Alt there and w
 
 These features are being built now, and most are already in review. They aren't in the app yet.
 
-- **Find bar.** Search Input or Output, with match counts, wrap-around, and a "Keys only" option that matches object keys and skips values. Find and Replace adds a replace row to Input's bar, with Replace and Replace All ([#52](https://github.com/ericpeck/galley/issues/52), [#62](https://github.com/ericpeck/galley/issues/62)).
+- **Find bar.** Search Input or Output, with match counts, wrap-around, and a "Keys only" option that matches object keys and skips values. Find and Replace adds a replace row to Input's bar, with Replace and Replace All. Regex and Whole word work on both bars, and a regex replacement can put in `$1` to `$9` ([#52](https://github.com/ericpeck/galley/issues/52), [#62](https://github.com/ericpeck/galley/issues/62)).
 - **Sort keys.** Sort object keys alphabetically in the output. Input never changes ([#59](https://github.com/ericpeck/galley/issues/59)).
 - **Every JSON error at once.** The Problems pane lists every error in the document, not just the first, with F8 and Shift+F8 to step through them ([#78](https://github.com/ericpeck/galley/issues/78)).
 - **Open Recent.** The ten most recent files, from the File menu ([#85](https://github.com/ericpeck/galley/issues/85)).
