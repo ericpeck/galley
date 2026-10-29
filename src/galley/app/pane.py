@@ -85,6 +85,8 @@ class PaneWidget(QWidget):
     def __init__(self, spec: PaneSpec, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.spec = spec
+        # The header's title: the spec's, or "Left" or "Right" in Compare.
+        self._title = spec.title
         self.document: InputDocument | None = None
         self.source_path: Path | None = None
         self.setObjectName(f"{spec.name}Pane")
@@ -131,7 +133,41 @@ class PaneWidget(QWidget):
 
     @property
     def title(self) -> str:
-        return self.spec.title
+        return self._title
+
+    def set_title(self, title: str | None) -> None:
+        """Head the pane with ``title``, or the spec's title again for None.
+
+        Compare names the panes Left and Right (#65). The format caption,
+        the picker's and the editor's names follow, as "Left as" and "Left
+        editor", and the strip sheds by the same rules for any title.
+        """
+        self._title = self.spec.title if title is None else title
+        label = self.spec.format_label if title is None else f"{title} as"
+        self._tab_title.setAccessibleName(self._title)
+        self._format_caption.setText(label)
+        self.format_combo.setAccessibleName(label)
+        self.editor.setAccessibleName(f"{self._title} editor")
+        self._format_label = label
+        self.fit_tab_strip()
+
+    def show_editor(self, editor: CodeEditor, find_bar: FindBar) -> None:
+        """Show ``editor`` and its ``find_bar`` where this pane's own are.
+
+        They become ``editor`` and ``find_bar`` until the next call; the
+        ones they replace are hidden, not changed. Compare puts its Right
+        editor in the Output pane this way and puts Output back after.
+        """
+        layout = self.layout()
+        for old, new in ((self.find_bar, find_bar), (self.editor, editor)):
+            if old is new:
+                continue
+            layout.replaceWidget(old, new)
+            old.hide()
+        self.editor = editor
+        self.find_bar = find_bar
+        editor.show()
+        find_bar.setVisible(find_bar.is_open())
 
     def sizeHint(self) -> QSize:
         return QSize(480, 520)
@@ -208,7 +244,7 @@ class PaneWidget(QWidget):
             self._tab_title, self._tab_title.text()
         )
         parts = [
-            _text_width(self._tab_title, title or self.spec.title) + title_extra,
+            _text_width(self._tab_title, title or self._title) + title_extra,
             _hint_width(self.format_combo),
         ]
         if shed < StripShed.CAPTION:
@@ -222,14 +258,14 @@ class PaneWidget(QWidget):
         self._strip_shed = shed
         caption_shown = shed < StripShed.CAPTION
         self._format_caption.setVisible(caption_shown)
-        self.format_combo.setToolTip("" if caption_shown else self.spec.format_label)
-        title = self.spec.title
+        self.format_combo.setToolTip("" if caption_shown else self._format_label)
+        title = self._title
         if shed >= StripShed.TITLE:
             spare = available - self._strip_width(shed)
             room = _text_width(self._tab_title, title) + spare
             title = self._elided_title(room)
         self._tab_title.setText(title)
-        self._tab_title.setToolTip("" if title == self.spec.title else self.spec.title)
+        self._tab_title.setToolTip("" if title == self._title else self._title)
         # The strip's layout already placed its parts for this resize, so
         # place them again now rather than one event late.
         self.tab_strip.layout().activate()
@@ -237,7 +273,7 @@ class PaneWidget(QWidget):
     def _elided_title(self, room: int) -> str:
         """The longest "…" form of the title whose label fits ``room``."""
         metrics = self._tab_title.fontMetrics()
-        title = self.spec.title
+        title = self._title
         while room > 0:
             elided = metrics.elidedText(title, Qt.TextElideMode.ElideRight, room)
             if elided and _text_width(self._tab_title, elided) <= room:
@@ -288,6 +324,7 @@ class PaneWidget(QWidget):
         tab_font.setBold(True)
         tab.setFont(tab_font)
 
+        self._format_label = self.spec.format_label
         format_caption = QLabel(self.spec.format_label)
         format_caption.setObjectName(f"{self.spec.name}FormatCaption")
         format_caption.setStyleSheet(muted_text_style())

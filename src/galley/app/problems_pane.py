@@ -52,6 +52,7 @@ class ProblemsPane(ResultsPanel):
         super().__init__("problems", parent)
         self.setAccessibleName("Problems")
         self._problems: tuple[DisplayProblem, ...] = ()
+        self._given: tuple[DisplayProblem, ...] = ()
         self._notes: tuple[str, ...] = ()
 
         self._list = ResultsList("Problems", "problemsList")
@@ -82,6 +83,10 @@ class ProblemsPane(ResultsPanel):
     def count(self) -> int:
         """Every problem, including the ones past the row limit."""
         return len(self._problems)
+
+    def given(self) -> tuple[DisplayProblem, ...]:
+        """What the last :meth:`set_problems` got, notes included."""
+        return self._given
 
     def shown(self) -> tuple[DisplayProblem, ...]:
         """The problems that have a row, in list order."""
@@ -116,6 +121,7 @@ class ProblemsPane(ResultsPanel):
 
         A ``json_stopped`` entry is not a problem: it becomes the last note.
         """
+        self._given = tuple(problems)
         self._problems = tuple(item for item in problems if not item.is_note())
         shown = self.shown()
         notes: list[str] = []

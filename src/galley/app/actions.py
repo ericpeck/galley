@@ -10,9 +10,10 @@ there when it ships. :func:`main` fails while either list is non-empty.
 """
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from functools import partial
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 
@@ -20,14 +21,17 @@ from galley.app.copy_as import COPY_AS_LABELS
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
     COLLAPSE_ALL,
+    COMPARE,
     ESCAPE_AS_STRING,
     EXPAND_ALL,
     FIND_AND_REPLACE,
     FOLD,
     FORMAT,
     INDENT,
+    NEXT_CHANGE,
     NEXT_PROBLEM,
     OUTDENT,
+    PREVIOUS_CHANGE,
     PREVIOUS_PROBLEM,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
@@ -45,6 +49,9 @@ COMING_SOON = "Coming soon"
 # A command that doesn't apply to the Input format is greyed out with this
 # tooltip and status tip (B2 on #63), for example "Not available for XML".
 NOT_AVAILABLE = "Not available for {label}"
+# A command Compare mode turns off, as tooltip and status tip (Chief's 3d
+# brief). See ActionHold.
+NOT_AVAILABLE_WHILE_COMPARING = "Not available while comparing"
 # Minify's tooltip while Input is JSON (Bill).
 MINIFY_TOOLTIP = "Remove all spaces and line breaks from the JSON"
 # Validate's tooltip and accessible description (Chief's brief).
@@ -57,9 +64,6 @@ OUTDENT_TOOLTIP = "Outdent lines ({keys})"
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Open Right Document…",
-    "Compare",
-    "Next Change",
-    "Previous Change",
     "Link Scrolling",
 )
 
@@ -214,6 +218,142 @@ def set_not_available(action: QAction, reason: str) -> None:
         return
     action.setToolTip(action.property("readyToolTip"))
     action.setStatusTip(action.property("readyStatusTip"))
+
+
+class ActionHold:
+    """Grey out commands while Compare runs, then give each its own state back.
+
+    :meth:`set_held` is the one function that saves and restores. Holding
+    saves each action's enabled state, tooltip, status tip and
+    not-available reason, then greys it out with
+    :data:`NOT_AVAILABLE_WHILE_COMPARING`. Releasing puts the saved state
+    back. ``widgets`` are controls without an action, such as the indent
+    size picker; they keep their enabled state and tooltip the same way.
+
+    While held, the actions sit in a disabled ``QActionGroup``, so a window
+    sync that turns one on leaves it off, and the reason comes back if a
+    sync sets another tooltip. A held widget is turned off again the same
+    way, such as the Format button, which the window enables itself.
+    """
+
+    def __init__(
+        self, actions: Iterable[QAction], widgets: Iterable[QWidget] = ()
+    ) -> None:
+        self._actions = tuple(actions)
+        self._widgets = tuple(widgets)
+        self._group: QActionGroup | None = None
+        self._saved: list[tuple[bool, str, str, object]] = []
+        self._saved_widgets: list[tuple[bool, str, str]] = []
+        self._watchers: list[tuple[QAction, partial[None]]] = []
+        self._guard = _WidgetGuard()
+
+    def is_held(self) -> bool:
+        return self._group is not None
+
+    def set_held(self, held: bool) -> None:
+        """Grey everything out with the reason, or put each saved state back."""
+        if held == self.is_held():
+            return
+        if held:
+            self._hold()
+        else:
+            self._release()
+
+    def _hold(self) -> None:
+        self._saved = [
+            (
+                action.isEnabled(),
+                action.toolTip(),
+                action.statusTip(),
+                action.property("notAvailable"),
+            )
+            for action in self._actions
+        ]
+        self._saved_widgets = [
+            (widget.isEnabled(), widget.toolTip(), widget.accessibleDescription())
+            for widget in self._widgets
+        ]
+        group = QActionGroup(None)
+        group.setExclusive(False)
+        self._group = group
+        for action in self._actions:
+            group.addAction(action)
+        group.setEnabled(False)
+        for action in self._actions:
+            _show_reason(action)
+            watcher = partial(_keep_reason, action)
+            action.changed.connect(watcher)
+            self._watchers.append((action, watcher))
+        for widget in self._widgets:
+            _hold_widget(widget)
+            widget.installEventFilter(self._guard)
+
+    def _release(self) -> None:
+        for action, watcher in self._watchers:
+            action.changed.disconnect(watcher)
+        self._watchers = []
+        for widget in self._widgets:
+            widget.removeEventFilter(self._guard)
+        group = self._group
+        assert group is not None
+        group.setEnabled(True)
+        for action in self._actions:
+            group.removeAction(action)
+        self._group = None
+        group.deleteLater()
+        for action, (enabled, tip, status, reason) in zip(
+            self._actions, self._saved, strict=True
+        ):
+            action.setProperty("notAvailable", reason)
+            action.setToolTip(tip)
+            action.setStatusTip(status)
+            action.setEnabled(enabled)
+        for widget, (enabled, tip, description) in zip(
+            self._widgets, self._saved_widgets, strict=True
+        ):
+            widget.setEnabled(enabled)
+            widget.setToolTip(tip)
+            widget.setAccessibleDescription(description)
+        self._saved = []
+        self._saved_widgets = []
+
+
+class _WidgetGuard(QObject):
+    """Turns a held widget off again, with the reason, after the window changes it."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            isinstance(watched, QWidget)
+            and event.type() in (QEvent.Type.EnabledChange, QEvent.Type.ToolTipChange)
+            and (
+                watched.isEnabled()
+                or watched.toolTip() != NOT_AVAILABLE_WHILE_COMPARING
+            )
+        ):
+            _hold_widget(watched)
+        return False
+
+
+def _hold_widget(widget: QWidget) -> None:
+    widget.setEnabled(False)
+    widget.setToolTip(NOT_AVAILABLE_WHILE_COMPARING)
+    widget.setAccessibleDescription(NOT_AVAILABLE_WHILE_COMPARING)
+
+
+def _show_reason(action: QAction) -> None:
+    action.setProperty("notAvailable", NOT_AVAILABLE_WHILE_COMPARING)
+    action.setToolTip(NOT_AVAILABLE_WHILE_COMPARING)
+    action.setStatusTip(NOT_AVAILABLE_WHILE_COMPARING)
+
+
+def _keep_reason(action: QAction) -> None:
+    """Put the reason back after a window sync replaced a held action's tips."""
+    if (
+        action.toolTip() != NOT_AVAILABLE_WHILE_COMPARING
+        or action.statusTip() != NOT_AVAILABLE_WHILE_COMPARING
+        or not_available_reason(action) != NOT_AVAILABLE_WHILE_COMPARING
+    ):
+        _show_reason(action)
 
 
 def set_busy(action: QAction, tooltip: str, description: str) -> None:
@@ -433,23 +573,29 @@ class ShellActions:
         self.next_problem.setShortcuts(list(NEXT_PROBLEM))
         self.previous_problem = _action(parent, "Previous Problem")
         self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
-        # View section for Compare (#65). Shortcuts arrive with the real actions.
+        # View section for Compare (#65). Next and Previous Change wait for
+        # Compare mode.
         self.compare = _action(
             parent,
             "Compare",
+            shortcut=COMPARE,
             checkable=True,
             role=QAction.MenuRole.NoRole,
         )
         self.next_change = _action(
             parent,
             "Next Change",
+            enabled=False,
             role=QAction.MenuRole.NoRole,
         )
+        self.next_change.setShortcuts(list(NEXT_CHANGE))
         self.previous_change = _action(
             parent,
             "Previous Change",
+            enabled=False,
             role=QAction.MenuRole.NoRole,
         )
+        self.previous_change.setShortcuts(list(PREVIOUS_CHANGE))
         self.link_scrolling = _action(
             parent,
             "Link Scrolling",
@@ -538,9 +684,6 @@ class ShellActions:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
         return [
             self.open_right_document,
-            self.compare,
-            self.next_change,
-            self.previous_change,
             self.link_scrolling,
         ]
 

@@ -33,6 +33,9 @@ HTML_WARNING_BYTES = YAML_WARNING_BYTES
 # Format refuses XML and HTML larger than this, with #104's message (Eric,
 # #63): one limit and one message for both. JSON and YAML have none.
 MARKUP_FORMAT_LIMIT_BYTES = 2 * _SI_MB
+# Compare asks first when either side is over this many UTF-8 bytes (Eric,
+# #65, 2026-10-25): one guard for JSON and YAML, with no hard refusal.
+COMPARE_WARNING_BYTES = 2 * _SI_MB
 # Convert from Python runs on the UI thread with no busy indicator. Above
 # these UTF-8 sizes of Input, it is refused so the window stays responsive.
 # The size bench rows ``python_to_json`` and ``python_to_yaml`` time them.

@@ -14,6 +14,7 @@ All data is generated in memory from fixed seeds. Every test prints one
 """
 
 import json
+import math
 import random
 import statistics
 import time
@@ -23,6 +24,7 @@ import pytest
 from PySide6.QtCore import QElapsedTimer, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from tests.app.compare_inline import inline_compare as inline_compare
 
 from galley.app.changes_pane import ChangesPane, ChangesState
 from galley.app.compare_mode import COMPARE_ANYWAY
@@ -30,7 +32,6 @@ from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.core.compare_report import build_report
 from galley.core.diff import diff, diff_with_pairs, load_document
-from tests.app.compare_inline import inline_compare as inline_compare
 
 _BUDGET_S = 0.5
 _JUMP_BUDGET_S = 0.05
@@ -62,9 +63,13 @@ def _pair(target_bytes: int, seed: int = _SEED) -> tuple[str, str, int]:
 
     Returns the texts and the number of changed keys.
     """
+    sample = random.Random(seed)
+    per_record = (
+        len(json.dumps({"records": [_record(sample, i) for i in range(100)]}, indent=2))
+        / 100
+    )
+    count = max(1, math.ceil(target_bytes / per_record))
     rng = random.Random(seed)
-    per_record = len(json.dumps({"records": [_record(rng, 0)]}, indent=2))
-    count = max(1, target_bytes // per_record)
     records = [_record(rng, index) for index in range(count)]
     edited = [dict(record) for record in records]
     keys = [(i, key) for i in range(count) for key in edited[i] if key != "id"]
@@ -232,7 +237,14 @@ def test_large_compares_are_timed(qtbot, megabytes: int) -> None:
         _left(window).setPlainText(left_text)
         _action(window, "Compare").trigger()
         QApplication.clipboard().setText(right_text)
+        # Paste fills Right on the UI thread, before the size sheet.
+        started = time.perf_counter()
         _action(window, "Paste").trigger()
+        paste_s = time.perf_counter() - started
+        print(
+            f"perf: compare paste into Right {megabytes} MB [{label}] "
+            f"{paste_s * 1000:.1f} ms (one run, UI thread)"
+        )
         pane = _changes(window)
         usable: list[float] = []
         gaps = _TickGaps()

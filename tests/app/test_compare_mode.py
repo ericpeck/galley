@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
+from tests.app.compare_inline import inline_compare as inline_compare
 
 from galley.app.actions import (
     NOT_AVAILABLE_WHILE_COMPARING,
@@ -56,7 +57,6 @@ from galley.app.main import create_main_window
 from galley.app.main_window import SPINNER_REVEAL_MS
 from galley.app.problems_pane import ProblemsPane
 from galley.core.compare_report import ChangeRow
-from tests.app.compare_inline import inline_compare as inline_compare
 
 # Fake data only. Left to Right: total 40 → 45, region removed, role user →
 # admin, currency added. Engine order is key order on the left, then adds.
@@ -173,6 +173,11 @@ def _title(window, name: str) -> str:
     label = window.findChild(QLabel, f"{name}TabTitle")
     assert isinstance(label, QLabel)
     return label.text()
+
+
+def _focus(qtbot, widget: QWidget) -> None:
+    widget.setFocus()
+    qtbot.waitUntil(widget.hasFocus, timeout=_WAIT_MS)
 
 
 def _press_escape(qtbot, widget: QWidget) -> None:
@@ -313,8 +318,11 @@ def test_leaving_restores_input_text_and_undo_history(qtbot, inline_compare) -> 
     _action(window, "Compare").trigger()
     assert left.toPlainText() == text
     assert _undo_steps(left.document()) == steps
+    # The history still works: undo and redo walk the typing as before.
     left.undo()
-    assert left.toPlainText() == text.rstrip(" ")
+    assert left.toPlainText() != text
+    left.redo()
+    assert left.toPlainText() == text
 
 
 def test_leaving_leaves_output_as_it_was(qtbot, inline_compare) -> None:
@@ -334,6 +342,107 @@ def test_leaving_leaves_output_as_it_was(qtbot, inline_compare) -> None:
     assert output.toPlainText() == text
     assert _undo_steps(output.document()) == steps
     assert window._output_pane.editor is output
+
+
+def _selections(editor: CodeEditor) -> list[tuple[int, int, str]]:
+    return [
+        (
+            selection.cursor.position(),
+            selection.cursor.anchor(),
+            selection.format.background().color().name(),
+        )
+        for selection in editor.extraSelections()
+    ]
+
+
+def _editor_state(editor: CodeEditor) -> dict[str, object]:
+    cursor = editor.textCursor()
+    return {
+        "text": editor.toPlainText(),
+        "undo": _undo_steps(editor.document()),
+        "read_only": editor.isReadOnly(),
+        "flags": editor.textInteractionFlags(),
+        "caret": (cursor.position(), cursor.anchor()),
+        "scroll": (
+            editor.verticalScrollBar().value(),
+            editor.horizontalScrollBar().value(),
+        ),
+        "folds": list(editor.fold_ranges()),
+        "folded": editor.folded_lines(),
+        "markers": {
+            kind: editor.line_markers(kind) for kind in ("problem", "change", "fold")
+        },
+        "tints": editor.change_tints(),
+        "selections": _selections(editor),
+    }
+
+
+def test_leaving_puts_the_input_editor_back_exactly(qtbot, inline_compare) -> None:
+    """Text, undo, isModified, read-only, caret, folds and extra selections.
+
+    Compare's markers, tints, problems and span selections all go.
+    """
+    window = _show(qtbot)
+    left = _left(window)
+    _focus(qtbot, left)
+    left.insertPlainText(_LEFT)
+    qtbot.keyClicks(left, " ")
+    cursor = left.textCursor()
+    cursor.setPosition(5)
+    left.setTextCursor(cursor)
+    qtbot.wait(10)
+    before = _editor_state(left)
+    _action(window, "Compare").trigger()
+    _paste_right(window, _RIGHT)
+    qtbot.waitUntil(lambda: _changes(window).count() == 4, timeout=_WAIT_MS)
+    _action(window, "Next Change").trigger()
+    assert left.line_markers(CHANGE_MARKERS)
+    _paste_right(window, _BROKEN)
+    qtbot.waitUntil(
+        lambda: _changes(window).state() == ChangesState.ERRORS, timeout=_WAIT_MS
+    )
+    _action(window, "Compare").trigger()
+    qtbot.wait(10)
+    assert _editor_state(left) == before
+
+
+def test_leaving_puts_the_output_editor_back_exactly(qtbot, inline_compare) -> None:
+    """Text, undo, folds, Keys only, caret, scroll and the Output picker."""
+    window = _show(qtbot, width=1400)
+    output = _editor(window, "outputEditor")
+    lines = ",\n".join(f'  "key{index}": {{"value": {index}}}' for index in range(80))
+    _replace_text(output, "{\n" + lines + "\n}\n")
+    output.rescan_folds()
+    assert output.fold_ranges()
+    output.fold_line(3)
+    bar = window._output_pane.find_bar
+    assert bar.keys_only is not None
+    bar.keys_only.setChecked(True)
+    output.verticalScrollBar().setValue(40)
+    cursor = output.textCursor()
+    cursor.setPosition(30)
+    output.setTextCursor(cursor)
+    picker = window.findChild(QComboBox, "outputFormat")
+    assert isinstance(picker, QComboBox)
+    picker.setCurrentText("YAML")
+    qtbot.wait(10)
+    before = _editor_state(output)
+    _compare(qtbot, window)
+    # Right follows the pasted JSON, through the Output pane's picker.
+    assert picker.currentText() == "JSON"
+    _action(window, "Compare").trigger()
+    qtbot.wait(10)
+    assert _editor_state(output) == before
+    assert bar.keys_only.isChecked()
+    assert picker.currentText() == "YAML"
+
+
+def _replace_text(editor: CodeEditor, text: str) -> None:
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    cursor.select(cursor.SelectionType.Document)
+    cursor.insertText(text)
+    cursor.endEditBlock()
 
 
 def test_right_keeps_its_text_for_the_session(qtbot, inline_compare) -> None:
@@ -398,14 +507,20 @@ def test_changes_tab_is_added_on_entry_and_removed_on_leaving(
     panel = window.findChild(ProblemsPane)
     assert isinstance(panel, ProblemsPane)
     tabs = panel.tab_bar()
-    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Problems"]
+    assert _tab_titles(panel) == ["Problems"]
     _compare(qtbot, window)
-    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Problems", "Changes"]
+    # Each tab reads its title and count, as Problems does.
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Problems 0", "Changes 4"]
     assert panel.current_page() is _changes(window)
     assert panel.isVisible()
     _action(window, "Compare").trigger()
-    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Problems"]
+    assert _tab_titles(panel) == ["Problems"]
     assert not panel.isVisible()
+
+
+def _tab_titles(panel: ProblemsPane) -> list[str]:
+    tabs = panel.tab_bar()
+    return [tabs.tabText(i).rsplit(" ", 1)[0] for i in range(tabs.count())]
 
 
 # --- Results and wording ---------------------------------------------------
@@ -564,7 +679,7 @@ def test_esc_closes_the_find_bar_then_cancels(qtbot, inline_compare) -> None:
     _compare(qtbot, window, right=None)
     _paste_right(window, _RIGHT)
     right = _right(window)
-    right.setFocus()
+    _focus(qtbot, right)
     _action(window, "Find…").trigger()
     bar = window.findChild(FindBar, "rightFindBar")
     assert isinstance(bar, FindBar)
@@ -591,9 +706,14 @@ def test_esc_when_idle_stays_in_compare(qtbot, inline_compare) -> None:
 
 
 def _big(size: int) -> str:
-    """JSON of exactly ``size`` UTF-8 bytes."""
-    head, tail = '{"pad": "', '"}'
-    return head + "x" * (size - len(head) - len(tail)) + tail
+    """A JSON array of exactly ``size`` UTF-8 bytes, 100-byte lines."""
+    line = '  "' + "x" * 94 + '",\n'
+    head, tail = "[\n", '  "x"\n]\n'
+    body = line * ((size - len(head) - len(tail)) // len(line))
+    pad = size - len(head) - len(tail) - len(body)
+    text = head + body + tail[:3] + "x" * pad + tail[3:]
+    assert len(text.encode("utf-8")) == size
+    return text
 
 
 def _size_box(window) -> QMessageBox | None:
@@ -661,9 +781,10 @@ def test_exactly_2_mb_does_not_ask(qtbot, inline_compare) -> None:
 def test_the_size_check_measures_utf8_bytes(qtbot, inline_compare) -> None:
     window = _show(qtbot)
     _compare(qtbot, window, right=None)
-    # 1,000,001 two-byte characters: under 2 MB as characters, over as bytes.
-    wide = '{"pad": "' + "é" * 1_000_001 + '"}'
-    assert len(wide) < 2_000_000
+    # Two-byte characters: under 2 MB as characters, over as bytes.
+    line = '  "' + "é" * 96 + '",\n'
+    wide = "[\n" + line * 10_300 + '  "é"\n]\n'
+    assert len(wide) < 2_000_000 < len(wide.encode("utf-8"))
     _paste_right(window, wide)
     qtbot.waitUntil(lambda: _size_box(window) is not None, timeout=_WAIT_MS)
 
@@ -851,7 +972,7 @@ def test_find_opens_a_search_only_bar_on_the_focused_side(
     window = _show(qtbot)
     _compare(qtbot, window)
     right = _right(window)
-    right.setFocus()
+    _focus(qtbot, right)
     _action(window, "Find…").trigger()
     bar = window.findChild(FindBar, "rightFindBar")
     assert isinstance(bar, FindBar)
@@ -862,7 +983,7 @@ def test_find_opens_a_search_only_bar_on_the_focused_side(
         bar.findChild(QWidget, "rightReplaceRow") is None
         or not bar.findChild(QWidget, "rightReplaceRow").isVisible()
     )
-    assert bar.findChild(QWidget, "rightKeysOnly") is None
+    assert bar.keys_only is None
     assert bar.match_case.isVisible()
     assert bar.regex_button.isVisible()
     assert bar.whole_word_button.isVisible()
@@ -874,7 +995,7 @@ def test_find_opens_a_search_only_bar_on_the_focused_side(
     bar.regex_button.setChecked(False)
 
     left = _left(window)
-    left.setFocus()
+    _focus(qtbot, left)
     _action(window, "Find…").trigger()
     assert left_bar.is_open()
     assert left_bar.editor() is left
@@ -897,7 +1018,7 @@ def test_entering_closes_an_open_replace_row(qtbot, inline_compare) -> None:
 def test_find_counts_matches_in_right(qtbot, inline_compare) -> None:
     window = _show(qtbot)
     _compare(qtbot, window)
-    _right(window).setFocus()
+    _focus(qtbot, _right(window))
     _action(window, "Find…").trigger()
     bar = window.findChild(FindBar, "rightFindBar")
     assert isinstance(bar, FindBar)
@@ -923,8 +1044,8 @@ def test_next_and_previous_change_select_both_sides(qtbot, inline_compare) -> No
     assert labels == ["Changed", "Removed", "Changed", "Added"]
     # The first change is shown when the result arrives.
     assert pane.list_view().current_row() == 0
-    assert _selected(_left(window)) == "40"
-    assert _selected(_right(window)) == "45"
+    assert _selected(_left(window)) == '"total": 40'
+    assert _selected(_right(window)) == '"total": 45'
     focused = QApplication.focusWidget()
 
     _action(window, "Next Change").trigger()

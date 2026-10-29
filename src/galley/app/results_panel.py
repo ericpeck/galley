@@ -270,6 +270,7 @@ class _Tab:
     plural: str
     fill: Callable[[QPalette], QColor]
     count: int = 0
+    keep_open: bool = False
 
 
 class ResultsPanel(QWidget):
@@ -356,14 +357,20 @@ class ResultsPanel(QWidget):
         title: str,
         nouns: tuple[str, str],
         fill: Callable[[QPalette], QColor],
+        *,
+        keep_open: bool = False,
     ) -> None:
         """Add a tab of results.
 
         ``nouns`` is the singular and plural for the count's accessible
-        name, and ``fill`` gives the badge color for a palette.
+        name, and ``fill`` gives the badge color for a palette. A
+        ``keep_open`` tab has something to show at a count of 0, such as
+        Changes' "No differences.".
         """
         singular, plural = nouns
-        self._tabs.append(_Tab(page, title, singular, plural, fill))
+        self._tabs.append(
+            _Tab(page, title, singular, plural, fill, keep_open=keep_open)
+        )
         self._stack.addWidget(page)
         self._tab_bar.addTab(title)
         self._sync_tabs()
@@ -376,6 +383,10 @@ class ResultsPanel(QWidget):
         self._tab_bar.removeTab(index)
         self._stack.setCurrentIndex(self._tab_bar.currentIndex())
         self._sync_tabs()
+
+    def has_results(self) -> bool:
+        """True while a tab has a count, or a ``keep_open`` tab is added."""
+        return any(tab.count > 0 or tab.keep_open for tab in self._tabs)
 
     def tab_bar(self) -> QTabBar:
         return self._tab_bar

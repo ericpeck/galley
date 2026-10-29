@@ -20,6 +20,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QFontDialog,
     QLabel,
@@ -49,6 +50,7 @@ from galley.app.appearance import (
     MODE_SYSTEM,
     application_appearance,
 )
+from galley.app.compare_mode import CompareHost, CompareMode
 from galley.app.copy_as import (
     COPY_AS_BUSY_MESSAGE,
     COPY_AS_BUSY_NAME,
@@ -399,6 +401,90 @@ class MainWindow(QMainWindow):
         self._follow_editor_palette()
         self._apply_editor_font()
         self._editor_font.changed.connect(self._apply_editor_font)
+        self._compare = self._build_compare()
+
+    def _build_compare(self) -> CompareMode:
+        """Compare mode (#65 slice 3d): the one place the window wires it in.
+
+        Everything else lives in compare_mode.py. The held commands are the
+        3d brief's list, plus the ones that would change Input or Output
+        or act on the hidden Output editor.
+        """
+        actions = self._actions
+        held = (
+            actions.format,
+            actions.minify,
+            actions.validate,
+            actions.sort_keys,
+            actions.indent,
+            actions.outdent,
+            actions.undo,
+            actions.redo,
+            actions.collapse_all,
+            actions.expand_all,
+            actions.escape_string,
+            actions.unescape_string,
+            actions.convert_python,
+            actions.find_replace,
+            actions.output_options,
+            actions.fold,
+            actions.unfold,
+            actions.open_file,
+            self._recent_menu.menuAction(),
+            self._copy_as_menu.menuAction(),
+            *actions.copy_as_actions().values(),
+        )
+        picker = self._toolbar.findChild(QComboBox, "indentSize")
+        widgets = [
+            self._format_button,
+            picker,
+            self._output_pane.options_button,
+            self._input_pane.footer_paste_button,
+            self._input_pane.clear_button,
+        ]
+
+        def _follow_editors() -> None:
+            self._apply_editor_font()
+            self._set_word_wrap(actions.word_wrap.isChecked())
+            self._set_show_whitespace(actions.show_whitespace.isChecked())
+            self._set_syntax_colors(True)
+            self._follow_editor_palette()
+            self._sync_indent_units()
+
+        def _resync() -> None:
+            self._sync_input_state()
+            self._sync_output_state()
+            self._sync_undo_actions()
+            self._sync_fold_actions()
+            self._order_focus()
+            self._update_caption()
+            self._update_focus_ring()
+
+        return CompareMode(
+            CompareHost(
+                window=self,
+                actions=actions,
+                left=self._input_pane,
+                right=self._output_pane,
+                results=self._problems_pane,
+                status=self._status,
+                session=self._session,
+                regex_session=self._regex_session,
+                held_actions=held,
+                held_widgets=tuple(widget for widget in widgets if widget is not None),
+                busy=lambda: not self.can_open() or self._copy_as_job is not None,
+                format_reason=self._not_available_reason,
+                apply_problems=self._apply_problems,
+                clear_problems=self._clear_problems,
+                problems_state=lambda: self._problems_state,
+                set_problems_state=self._set_problems_state,
+                layout_problems=self._layout_problems,
+                follow_editors=_follow_editors,
+                bind_menu=self._bind_pane,
+                toolbar_sync=self._toolbar.sync_not_available,
+                resync=_resync,
+            )
+        )
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -1533,7 +1619,7 @@ class MainWindow(QMainWindow):
         pane = self._problems_pane
         splitter = self._problems_splitter
         handle = splitter.handle(1)
-        visible = pane.count() > 0 and self._problems_state != STATE_CLOSED
+        visible = pane.has_results() and self._problems_state != STATE_CLOSED
         minimized = visible and self._problems_state == STATE_MINIMIZED
         pane.set_minimized(minimized)
         if not visible:
@@ -2437,19 +2523,6 @@ def _format_limit_bytes(source: str) -> int | None:
     if format_named(source) in (XML, HTML):
         return MARKUP_FORMAT_LIMIT_BYTES
     return None
-
-
-def compare_needs_size_warning(
-    left_text: str, left_source: str, right_text: str, right_source: str
-) -> bool:
-    """True when Compare should ask first, using Format's warning limits.
-
-    The larger side decides when both sides share a format. With mixed
-    formats, each side is held to its own format's limit, so a YAML side
-    past ``YAML_WARNING_BYTES`` still asks beside a larger JSON side.
-    """
-    sides = ((left_text, left_source), (right_text, right_source))
-    return any(_utf8_size(text) >= _warning_bytes(source) for text, source in sides)
 
 
 def si_size(num_bytes: int) -> str:

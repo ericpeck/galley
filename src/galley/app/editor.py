@@ -2043,8 +2043,12 @@ class CodeEditor(QPlainTextEdit):
         named = self._markers.get(CHANGE_MARKERS, {})
         spans: dict[int, QColor] = {}
         glyphs: dict[int, ChangeMarker] = {}
+        # One tint per kind: a large compare has tens of thousands of spans.
+        kind_tints: dict[ChangeKind, QColor] = {}
         for first, last, kind in self._change_spans:
-            color = change_tint(kind, palette)
+            color = kind_tints.get(kind)
+            if color is None:
+                color = kind_tints[kind] = change_tint(kind, palette)
             own = named.get(first)
             glyph = ChangeMarker(
                 kind, own.name if isinstance(own, ChangeMarker) else ""

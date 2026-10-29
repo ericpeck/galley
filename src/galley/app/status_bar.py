@@ -223,11 +223,14 @@ class StatusBar(QStatusBar):
         busy: Busy,
         name: str = SPINNER_ACCESSIBLE_NAME,
         progress_name: str = PROGRESS_ACCESSIBLE_NAME,
+        *,
+        cancel: bool = False,
     ) -> None:
         """Show the spinner, the progress bar with Cancel, or neither.
 
         ``name`` is the spinner's accessible name, such as ``Opening``, and
         ``progress_name`` the progress bar's, such as ``Copying progress``.
+        ``cancel`` shows Cancel beside the spinner too, as Compare does.
         """
         self._spinner.setAccessibleName(name)
         self._progress.setAccessibleName(progress_name)
@@ -238,7 +241,7 @@ class StatusBar(QStatusBar):
         elif busy is Busy.SPINNER:
             self._spinner.show()
             self._progress.hide()
-            self._cancel.hide()
+            self._cancel.setVisible(cancel)
         else:
             self._progress.hide()
             self._spinner.hide()
