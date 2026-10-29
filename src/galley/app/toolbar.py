@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from galley.app.actions import (
     COMING_SOON,
     ShellActions,
+    busy_tips,
     coming_soon_wrapper,
     is_unbuilt,
     not_available_reason,
@@ -414,6 +415,17 @@ def _coming_soon_host(button: QToolButton) -> QWidget | None:
 
 def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
     _present_style(button, action, icon_only=icon_only)
+    busy_tip, busy_description = busy_tips(action)
+    if busy_tip:
+        button.setToolTip(busy_tip)
+        button.setAccessibleDescription(busy_description)
+        button.setCursor(Qt.CursorShape.BusyCursor)
+        button.setProperty("busyShown", True)
+        return
+    if button.property("busyShown"):
+        button.unsetCursor()
+        button.setAccessibleDescription("")
+        button.setProperty("busyShown", False)
     reason = not_available_reason(action)
     if reason:
         button.setToolTip(reason)
@@ -455,6 +467,9 @@ def _present_style(button: QToolButton, action: QAction, *, icon_only: bool) -> 
         button.setToolTip(action.text())
     elif icon_only:
         button.setToolTip(_icon_tip(action))
+    elif action.toolTip() != action.text():
+        # A labelled button shows its action's own tooltip, such as Minify's.
+        button.setToolTip(action.toolTip())
     else:
         button.setToolTip("")
 

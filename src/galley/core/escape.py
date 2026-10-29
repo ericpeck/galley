@@ -27,6 +27,7 @@ from galley.core.format import (
     NotJSONKeyError,
     SelfReferenceError,
     _value_format,
+    compact_json,
     format_document,
     load_document,
     yaml_json_value,
@@ -89,7 +90,7 @@ def escape_value(value: object) -> str:
     The literal ends with a newline, like Format's output.
     """
     try:
-        inner = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        inner = compact_json(value)
     except (TypeError, ValueError, RecursionError) as exc:
         raise EscapeError(str(exc)) from None
     return json.dumps(inner, ensure_ascii=False) + "\n"
