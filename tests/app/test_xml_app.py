@@ -200,12 +200,16 @@ def test_commands_come_back_with_their_own_tips(qtbot) -> None:
     assert button.accessibleDescription() == ""
 
 
-def test_coming_soon_and_fold_commands_keep_their_own_state(qtbot) -> None:
+def test_compare_items_and_fold_commands_keep_their_own_state(qtbot) -> None:
     window = _show(qtbot)
     _choose(_pane(window, "input"), "XML")
     actions = window._actions
-    assert actions.link_scrolling.toolTip() == COMING_SOON
-    assert not actions.link_scrolling.isEnabled()
+    # Open Right Document… follows Compare. Link Scrolling is a setting.
+    assert not actions.open_right_document.isEnabled()
+    assert actions.open_right_document.toolTip() == "Not available for XML"
+    assert actions.link_scrolling.isEnabled()
+    assert actions.link_scrolling.isChecked()
+    assert actions.link_scrolling.toolTip() != COMING_SOON
     for action in (actions.expand_all, actions.collapse_all):
         assert not action.isEnabled()
         assert action.toolTip().endswith("nothing to fold")

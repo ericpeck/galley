@@ -621,10 +621,5 @@ def test_output_options_is_off_the_not_yet_list(qtbot) -> None:
     assert not_yet_failure() is None
     printed = io.StringIO()
     with redirect_stdout(printed):
-        assert main() == 1
-    assert printed.getvalue() == (
-        'Release blocked: these actions still show "Coming soon": '
-        "Open Right Document…, Link Scrolling.\n"
-        "Build them or remove them from UNBUILT_ACTIONS in actions.py "
-        "before tagging.\n"
-    )
+        assert main() == 0
+    assert printed.getvalue() == ""

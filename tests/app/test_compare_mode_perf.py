@@ -1,4 +1,4 @@
-"""Compare mode budgets and timings (#65 slice 3d).
+"""Compare mode budgets and timings (#65 slices 3d and 3e).
 
 Budgets (Isaac, PR gate at 3x): the diff of two 1 MB documents with about
 10% of keys changed, a reordered 10k array, the aligned ~5,000-item case,
@@ -8,6 +8,9 @@ The ~5 MB and ~8 MB tests have no budget. They print medians for the diff,
 the report and the time until the panes and the Changes pane are usable,
 plus the longest gap of a 16 ms UI-thread timer during the compare. At
 8 MB, Cancel must stop the compare within about 1 s.
+
+Link Scrolling (3e) is timed with no budget yet: the median time its
+handler takes per scroll step with 1 MB on each side.
 
 All data is generated in memory from fixed seeds. Every test prints one
 ``perf:`` line per number.
@@ -25,6 +28,7 @@ from PySide6.QtCore import QElapsedTimer, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from tests.app.compare_inline import inline_compare as inline_compare
+from tests.perf import time_runs
 
 from galley.app.changes_pane import ChangesPane, ChangesState
 from galley.app.compare_mode import COMPARE_ANYWAY
@@ -40,6 +44,7 @@ _TIMING_RUNS = 3
 _TICK_MS = 16
 _CANCEL_LIMIT_S = 1.0
 _SEED = 65
+_SCROLL_STEPS = 200
 _CITIES = ("Oslo", "Lima", "Pune", "Kyiv", "Perth")
 
 
@@ -184,6 +189,49 @@ def test_an_f7_jump_on_a_1_mb_diff(qtbot, perf_budget, inline_compare) -> None:
 
 
 # --- Timings, no budget ----------------------------------------------------
+
+
+@pytest.mark.perf
+def test_linked_scrolling_is_timed(qtbot, inline_compare) -> None:
+    """The linked-scroll handler, per scroll step, 1 MB per side. No budget yet.
+
+    Each step puts Left at the next of 200 positions spread over the whole
+    document, then times the handler that scrolls Right to match.
+    """
+    del inline_compare
+    left_text, right_text, changed = _pair(1_000_000)
+    window = _window(qtbot)
+    _left(window).setPlainText(left_text)
+    _action(window, "Compare").trigger()
+    QApplication.clipboard().setText(right_text)
+    _action(window, "Paste").trigger()
+    pane = _changes(window)
+    qtbot.waitUntil(lambda: pane.count() == changed, timeout=_SPAWN_TIMEOUT_MS)
+    left = _left(window)
+    right = window.findChild(CodeEditor, "rightEditor")
+    assert isinstance(right, CodeEditor)
+    bar = left.verticalScrollBar()
+    steps = [round(bar.maximum() * i / _SCROLL_STEPS) for i in range(_SCROLL_STEPS)]
+    upcoming = iter(steps * 2)
+
+    def _next_step() -> None:
+        bar.blockSignals(True)
+        bar.setValue(next(upcoming))
+        bar.blockSignals(False)
+
+    timing = time_runs(
+        lambda: window._compare.link_scroll(left),
+        setup=_next_step,
+        runs=_SCROLL_STEPS - 1,
+    )
+    assert right.verticalScrollBar().value() > 0
+    label = (
+        f"{_mb(left_text):.1f} MB per side, {changed:,} changes, {_SCROLL_STEPS} steps"
+    )
+    print(
+        f"perf: compare linked scroll step [{label}] median "
+        f"{timing.median * 1000:.3f} ms (timing only, no budget)"
+    )
 
 
 def _median_s(operation: Callable[[], object], runs: int = _TIMING_RUNS) -> float:
