@@ -61,6 +61,7 @@ _INVALID_BY_FORMAT = {
     "XML": "<r>\n  <a>\n  </b>\n</r>",
 }
 _WAIT_MS = 15_000
+_WIDE_PX = 1600
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +112,21 @@ def _button(window) -> QToolButton:
         if button.defaultAction() is _validate(window):
             return button
     raise AssertionError("no toolbar button for Validate")
+
+
+def _labelled_button(qtbot, window) -> QToolButton:
+    """Validate's button with its label showing, whatever the runner's font.
+
+    The Windows runner's wider fallback font sheds the label at the default
+    window size. The icon-only tooltip has its own test.
+    """
+    window.resize(_WIDE_PX, window.height())
+    button = _button(window)
+    qtbot.waitUntil(
+        lambda: button.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly,
+        timeout=5000,
+    )
+    return button
 
 
 def _input_format(window) -> QComboBox:
@@ -176,8 +192,7 @@ def test_label_tooltip_description_and_no_shortcut_or_menu_item(qtbot) -> None:
     assert action.shortcuts() == []
     assert VALIDATE_TOOLTIP == "Check Input for errors without changing Output."
     assert action.toolTip() == VALIDATE_TOOLTIP
-    button = _button(window)
-    assert button.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
+    button = _labelled_button(qtbot, window)
     assert button.toolTip() == VALIDATE_TOOLTIP
     assert button.accessibleDescription() == VALIDATE_TOOLTIP
     assert action.isEnabled()
@@ -222,7 +237,7 @@ def test_validate_is_greyed_out_while_input_is_empty_like_format(qtbot) -> None:
     window = _show(qtbot)
     source, _output = _editors(window)
     action = _validate(window)
-    button = _button(window)
+    button = _labelled_button(qtbot, window)
     assert not action.isEnabled()
     assert not window._actions.format.isEnabled()
     assert action.toolTip() == VALIDATE_EMPTY
@@ -245,7 +260,7 @@ def test_validate_is_greyed_out_for_html(qtbot) -> None:
     source.setPlainText("<p>a</p>\n")
     _input_format(window).setCurrentText("HTML")
     action = _validate(window)
-    button = _button(window)
+    button = _labelled_button(qtbot, window)
     assert not action.isEnabled()
     assert not button.isEnabled()
     assert action.toolTip() == VALIDATE_NOT_AVAILABLE
@@ -550,7 +565,7 @@ def test_a_busy_validate_shows_on_validate_not_format(qtbot, monkeypatch) -> Non
     assert format_button.text() == idle_text
     assert not format_button.isEnabled()
     assert format_button.cursor().shape() != Qt.CursorShape.BusyCursor
-    button = _button(window)
+    button = _labelled_button(qtbot, window)
     assert button.text() == "Validate"
     assert button.cursor().shape() == Qt.CursorShape.BusyCursor
     assert button.toolTip() == VALIDATE_BUSY_TOOLTIP
