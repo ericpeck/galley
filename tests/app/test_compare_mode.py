@@ -583,6 +583,33 @@ def test_a_parse_error_in_right_goes_to_problems_on_right(
     assert problems.count() == 0
 
 
+def test_a_new_compare_clears_the_last_problems(qtbot, inline_compare) -> None:
+    window = _show(qtbot)
+    _compare(qtbot, window, right=_BROKEN)
+    assert _right(window).problem_lines()
+    inline_compare.hold = True
+    _paste_right(window, _RIGHT)
+    problems = window.findChild(ProblemsPane)
+    assert isinstance(problems, ProblemsPane)
+    assert problems.count() == 0
+    assert not _right(window).problem_lines()
+
+
+def test_the_caption_follows_the_headers(qtbot, inline_compare) -> None:
+    window = _show(qtbot)
+    caption = window.findChild(QLabel, "editingCaption")
+    assert isinstance(caption, QLabel)
+    _type_input(qtbot, window, _LEFT)
+    window.findChild(ProblemsPane).list_widget().setFocus()
+    _action(window, "Compare").trigger()
+    assert "Left" in caption.text()
+    _paste_right(window, _RIGHT)
+    _focus(qtbot, _right(window))
+    assert "Right" in caption.text()
+    _action(window, "Compare").trigger()
+    assert "Input" in caption.text()
+
+
 def test_a_parse_error_in_left_marks_left(qtbot, inline_compare) -> None:
     window = _show(qtbot)
     _compare(qtbot, window, left=_BROKEN, right=_RIGHT)

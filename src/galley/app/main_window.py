@@ -450,6 +450,7 @@ class MainWindow(QMainWindow):
             self._set_syntax_colors(True)
             self._follow_editor_palette()
             self._sync_indent_units()
+            self._update_caption()
 
         def _resync() -> None:
             self._sync_input_state()

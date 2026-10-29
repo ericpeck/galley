@@ -239,9 +239,9 @@ class CompareMode(QObject):
         if not self._menu_bound:
             self._menu_bound = True
             host.bind_menu(host.right)
-        host.follow_editors()
         host.left.set_title(LEFT_TITLE)
         host.right.set_title(RIGHT_TITLE)
+        host.follow_editors()
         self._choose_right_format(self._right_format or self._saved.output_format)
         self._sync_right_footer()
         host.results.add_tab(
@@ -348,6 +348,8 @@ class CompareMode(QObject):
             self._show_stopped()
             return
         self._job_id = job_id
+        # The last result's problems go with it.
+        self._clear_problems()
         self._changes.show_busy()
         self._set_count(0)
         host.status.set_counts("")
@@ -417,8 +419,7 @@ class CompareMode(QObject):
             return
         self._end_job()
         host = self._host
-        host.clear_problems()
-        self._right.set_problem_lines(set())
+        self._clear_problems()
         report = event.report
         self._changes.set_report(report)
         self._set_count(report.count)
@@ -443,8 +444,7 @@ class CompareMode(QObject):
         self._changes.show_errors()
         self._set_count(0)
         host.status.set_counts("")
-        host.clear_problems()
-        self._right.set_problem_lines(set())
+        self._clear_problems()
         if not failure.problems:
             host.status.set_state(failure.message)
             return
@@ -453,6 +453,11 @@ class CompareMode(QObject):
         else:
             host.apply_problems(failure.problems)
         host.results.tab_bar().setCurrentIndex(0)
+
+    def _clear_problems(self) -> None:
+        """Clear the Problems rows and both sides' problem marks."""
+        self._host.clear_problems()
+        self._right.set_problem_lines(set())
 
     def _show_right_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
         """List Right's problems and mark Right's gutter, as Input's are."""
