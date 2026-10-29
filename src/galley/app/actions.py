@@ -479,7 +479,8 @@ class ShellActions:
         self.validate = _action(parent, "Validate")
         self.validate.setToolTip(VALIDATE_TOOLTIP)
         set_ready_description(self.validate, VALIDATE_TOOLTIP)
-        # Triggered by the Output pane's Options link; not in a menu or toolbar.
+        # Opens the Output Options popover from the Output pane's Options
+        # link. Not in a menu or toolbar.
         self.output_options = _action(parent, "Output Options")
         self.format = _action(
             parent,
@@ -546,13 +547,12 @@ class ShellActions:
     def _not_yet_actions(self) -> list[QAction]:
         """Unfinished commands that are not on the Coming soon roadmap.
 
-        Menu order: menu bar, then the toolbar, then the Output pane footer.
-        Delete a command here when it ships. The release check prints each
-        menu label and fails while this list is non-empty.
+        Menu order: menu bar, then the toolbar. Delete a command here when
+        it ships. The release check prints each menu label and fails while
+        this list is non-empty.
         """
         return [
             self.find_replace,
-            self.output_options,
         ]
 
 

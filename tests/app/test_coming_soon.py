@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QMenu,
     QPushButton,
@@ -33,10 +34,7 @@ _RELEASE_FIX = (
 _NOT_YET_FIX = (
     "Build them or remove them from _not_yet_actions() in actions.py before tagging."
 )
-_NOT_YET_MENU_NAMES = (
-    "Find and Replace…",
-    "Output Options",
-)
+_NOT_YET_MENU_NAMES = ("Find and Replace…",)
 _RELEASE_WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
 )
@@ -129,6 +127,10 @@ def _visit_output_footer(window, note: Callable[[QAction], None]) -> None:
     button.click()
     for action, slot in slots:
         action.triggered.disconnect(slot)
+    # The link opens the Output Options popover. Close it again.
+    popup = QApplication.activePopupWidget()
+    if popup is not None:
+        popup.close()
     for action in fired:
         note(action)
 
@@ -186,12 +188,12 @@ def test_release_check_message_is_exact_and_keeps_menu_order() -> None:
 
 
 def test_not_yet_release_check_message_is_exact_and_keeps_order() -> None:
-    message = not_yet_failure(("Escape as String", "Output Options"))
-    assert message == _not_yet_text("Escape as String, Output Options")
+    message = not_yet_failure(("Escape as String", "Find and Replace…"))
+    assert message == _not_yet_text("Escape as String, Find and Replace…")
     assert message is not None
     assert message.splitlines() == [
         'Release blocked: these actions still show "Not yet": '
-        "Escape as String, Output Options.",
+        "Escape as String, Find and Replace….",
         _NOT_YET_FIX,
     ]
     assert not_yet_failure(()) is None
@@ -257,22 +259,26 @@ def test_release_check_fails_when_both_lists_remain(qtbot, capsys) -> None:
     assert captured.out == f"{coming_message}\n{not_yet_message}\n"
 
 
-def test_output_options_link_triggers_its_not_yet_action(qtbot) -> None:
+def test_the_output_options_link_opens_its_popover_not_not_yet(qtbot) -> None:
     window = _show(qtbot)
     button = window.findChild(QPushButton, "outputOptionsButton")
     assert isinstance(button, QPushButton)
     assert button.text() == "Options"
     options = window._actions.output_options
     assert options.text() == "Output Options"
-    assert options in window._actions._not_yet_actions()
-    assert options in window._actions.stubs()
+    assert options not in window._actions._not_yet_actions()
+    assert options not in window._actions.stubs()
     output = window.findChild(CodeEditor, "outputEditor")
     assert isinstance(output, CodeEditor)
     fired: list[bool] = []
     options.triggered.connect(lambda _checked=False: fired.append(True))
     qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
     assert fired == [True]
-    assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
+    assert window.statusBar().currentMessage() != NOT_YET_MESSAGE
+    popover = window.findChild(QWidget, "outputOptions")
+    assert isinstance(popover, QWidget)
+    assert popover.isVisible()
+    popover.close()
     assert output.toPlainText() == ""
 
 
@@ -545,12 +551,13 @@ def test_indent_size_picker_is_enabled_once_indent_ships(qtbot) -> None:
     assert submenu.menuAction().toolTip() != COMING_SOON
 
 
-def test_release_check_lists_output_options_last_under_not_yet() -> None:
+def test_release_check_lists_only_find_and_replace_under_not_yet() -> None:
     coming = release_failure()
     not_yet = not_yet_failure()
     assert coming is not None
-    assert not_yet == _not_yet_text(", ".join(_NOT_YET_MENU_NAMES))
+    assert not_yet == _not_yet_text("Find and Replace…")
     assert "Output Options" not in coming
+    assert "Output Options" not in not_yet
 
 
 def test_release_check_no_longer_lists_preferences() -> None:

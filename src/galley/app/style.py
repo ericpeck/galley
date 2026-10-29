@@ -9,7 +9,7 @@ from collections.abc import Callable
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
-from galley.app.theme import ACCENT, pane_edge_colors
+from galley.app.theme import ACCENT, pane_edge_colors, segment_colors
 
 
 def primary_button_style() -> str:
@@ -55,6 +55,57 @@ def link_button_style() -> str:
         QPushButton:disabled {
             color: palette(light);
         }
+        """
+
+
+def options_link_style() -> str:
+    """The Output footer's Options link. It shows pressed while its popover
+    is open: an alternate-base fill inside a mid edge, so the fill is not
+    the only cue.
+    """
+    return (
+        link_button_style()
+        + """
+        QPushButton:checked {
+            background: palette(alternate-base);
+            border: 1px solid palette(mid);
+            border-radius: 4px;
+        }
+        """
+    )
+
+
+def segment_style() -> str:
+    """Segmented choices, such as the Output Options Indent row.
+
+    Colors come from :func:`segment_colors`. A greyed-out choice that is
+    still chosen keeps the bold label and gains a 2 px edge.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    colors = segment_colors(palette)
+    return f"""
+        QToolButton {{
+            background: {colors.fill.name()};
+            color: {colors.ink.name()};
+            border: 1px solid {colors.edge.name()};
+            padding: 3px 12px;
+        }}
+        QToolButton:checked {{
+            background: {colors.chosen_fill.name()};
+            color: {colors.chosen_ink.name()};
+            font-weight: 700;
+        }}
+        QToolButton:disabled {{
+            color: {colors.unavailable_ink.name()};
+        }}
+        QToolButton:checked:disabled {{
+            background: {colors.fill.name()};
+            border: 2px solid {colors.edge.name()};
+        }}
+        QToolButton:focus {{
+            border: 2px solid {colors.focus.name()};
+        }}
         """
 
 
@@ -176,7 +227,7 @@ def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
     any stylesheet one of these produced, because re-parsing the old text
     would keep the old colors.
     """
-    return (_menu_style_for, _pane_style_for)
+    return (_menu_style_for, _pane_style_for, _segment_style_for)
 
 
 def _menu_style_for(_widget: QWidget) -> str:
@@ -185,3 +236,7 @@ def _menu_style_for(_widget: QWidget) -> str:
 
 def _pane_style_for(widget: QWidget) -> str:
     return pane_style(widget.objectName())
+
+
+def _segment_style_for(_widget: QWidget) -> str:
+    return segment_style()
