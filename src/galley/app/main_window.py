@@ -207,9 +207,6 @@ MINIFY_BUSY_DESCRIPTION = "Minify is running. Press Cancel to stop."
 # Format's size question in Minify's words.
 MINIFY_SIZE_QUESTION = "Minify this {size} document?"
 MINIFY_ANYWAY = "Minify anyway"
-# True: "Minify anyway" is the default button, as "Format anyway" is for
-# Format. False makes Cancel Minify's default.
-MINIFY_ANYWAY_IS_DEFAULT = True
 MINIFY_SIZE_DETAIL = (
     "Large documents can take a while to minify. You can cancel while it runs."
 )
@@ -895,9 +892,8 @@ class MainWindow(QMainWindow):
             anyway_text = "Format anyway"
         anyway = box.addButton(anyway_text, QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(
-            anyway if not minify or MINIFY_ANYWAY_IS_DEFAULT else cancel
-        )
+        # One default for both sheets, so Minify's can't drift from Format's.
+        box.setDefaultButton(anyway)
         box.setEscapeButton(cancel)
         self._size_warning = box
 

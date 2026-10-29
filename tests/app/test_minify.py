@@ -411,6 +411,22 @@ def test_minify_asks_formats_size_question_in_minify_words(qtbot, monkeypatch) -
     assert _status(window) == MINIFIED_MESSAGE
 
 
+def test_minify_size_question_defaults_to_formats_default(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(main_window_module, "_warning_bytes", lambda source: 10)
+    window = _show(qtbot)
+    source, _ = _editors(window)
+    source.setPlainText(_PRETTY)
+    window._actions.format.trigger()
+    format_box = _size_box(window)
+    format_default = format_box.buttonRole(format_box.defaultButton())
+    _button_named(format_box, "Cancel").click()
+    qtbot.waitUntil(lambda: window.findChild(QMessageBox, "sizeWarning") is None)
+
+    _minify(window).trigger()
+    minify_box = _size_box(window)
+    assert minify_box.buttonRole(minify_box.defaultButton()) == format_default
+
+
 def test_cancel_on_the_size_question_leaves_both_panes(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(main_window_module, "_warning_bytes", lambda source: 10)
     window = _show(qtbot)
