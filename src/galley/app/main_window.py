@@ -40,6 +40,7 @@ from galley.app.actions import (
     coming_soon_wrapper,
     is_unbuilt,
     not_available_text,
+    set_busy,
     set_not_available,
 )
 from galley.app.appearance import (
@@ -193,6 +194,25 @@ SIZE_WARNING_DETAIL = (
     "Large documents can take a while to format. You can cancel while it runs."
 )
 _NOT_YET_MS = 4000
+# Minify (Bill). Each status shows for 4 s, like an opened file's.
+MINIFIED_MESSAGE = "Minified JSON."
+MINIFY_FAILED_MESSAGE = "Can't minify: the JSON has errors. See Problems."
+MINIFY_NOT_AVAILABLE = "Minify works on JSON."
+MINIFY_STATUS_MS = OPENED_STATUS_MS
+# A Minify job's busy words. The busy state is on Minify, not Format.
+MINIFYING_MESSAGE = "Minifying…"
+MINIFY_CANCELLED_MESSAGE = "Minifying canceled."
+MINIFY_BUSY_TOOLTIP = "Minifying… press Cancel to stop"
+MINIFY_BUSY_DESCRIPTION = "Minify is running. Press Cancel to stop."
+# Format's size question in Minify's words.
+MINIFY_SIZE_QUESTION = "Minify this {size} document?"
+MINIFY_ANYWAY = "Minify anyway"
+# True: "Minify anyway" is the default button, as "Format anyway" is for
+# Format. False makes Cancel Minify's default.
+MINIFY_ANYWAY_IS_DEFAULT = True
+MINIFY_SIZE_DETAIL = (
+    "Large documents can take a while to minify. You can cancel while it runs."
+)
 
 # Final timings. The busy indicator waits 500 ms, the progress bar and
 # Cancel wait 2 s, and the status text counts up from 10 s.
@@ -286,10 +306,15 @@ class MainWindow(QMainWindow):
         self._cancel_status_timer = QTimer(self)
         self._cancel_status_timer.setSingleShot(True)
         self._cancel_status_timer.timeout.connect(self._clear_canceled_status)
+        self._minify_status_timer = QTimer(self)
+        self._minify_status_timer.setSingleShot(True)
+        self._minify_status_timer.timeout.connect(self._clear_minify_status)
+        self._minify_status = ""
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_sorted = False
+        self._format_minify = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
         # The Copy As job on the worker, and what the status text needs.
@@ -699,6 +724,7 @@ class MainWindow(QMainWindow):
         actions.actual_size.triggered.connect(self._editor_font.reset_size)
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
+        actions.minify.triggered.connect(self._minify)
         actions.convert_python.triggered.connect(self._convert_python)
         actions.escape_string.triggered.connect(self._escape_string)
         actions.unescape_string.triggered.connect(self._unescape_string)
@@ -814,6 +840,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)
 
     def _format(self) -> None:
+        self._format_input()
+
+    def _minify(self) -> None:
+        """Write Input's JSON to Output as compact JSON. Input is unchanged.
+
+        It is a Format job with Format's checks, limits and worker.
+        """
+        if self._minify_reason():
+            return
+        self._format_input(minify=True)
+
+    def _format_input(self, *, minify: bool = False) -> None:
         if self._formatting or self._size_warning is not None:
             return
         if self._copy_as_job is not None:
@@ -833,22 +871,33 @@ class MainWindow(QMainWindow):
             )
             return
         if size >= _warning_bytes(source) and not self._size_warning_accepted:
-            self._open_size_warning(text, size)
+            self._open_size_warning(text, size, minify=minify)
             return
-        self._start_format(text)
+        self._start_format(text, minify=minify)
 
-    def _open_size_warning(self, text: str, size: int) -> None:
-        """Ask once, with a window-modal sheet, before a large format."""
+    def _open_size_warning(self, text: str, size: int, *, minify: bool = False) -> None:
+        """Ask once, with a window-modal sheet, before a large format.
+
+        Minify asks the same question in its own words. One answer covers both.
+        """
         box = QMessageBox(self)
         box.setObjectName("sizeWarning")
         box.setWindowTitle("Galley")
         box.setIcon(QMessageBox.Icon.NoIcon)
         box.setWindowModality(Qt.WindowModality.WindowModal)
-        box.setText(f"Format this {si_size(size)} document?")
-        box.setInformativeText(SIZE_WARNING_DETAIL)
-        anyway = box.addButton("Format anyway", QMessageBox.ButtonRole.AcceptRole)
+        if minify:
+            box.setText(MINIFY_SIZE_QUESTION.format(size=si_size(size)))
+            box.setInformativeText(MINIFY_SIZE_DETAIL)
+            anyway_text = MINIFY_ANYWAY
+        else:
+            box.setText(f"Format this {si_size(size)} document?")
+            box.setInformativeText(SIZE_WARNING_DETAIL)
+            anyway_text = "Format anyway"
+        anyway = box.addButton(anyway_text, QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(anyway)
+        box.setDefaultButton(
+            anyway if not minify or MINIFY_ANYWAY_IS_DEFAULT else cancel
+        )
         box.setEscapeButton(cancel)
         self._size_warning = box
 
@@ -861,20 +910,25 @@ class MainWindow(QMainWindow):
             self._size_warning_accepted = True
             if _is_blank(self._input_pane.editor.toPlainText()):
                 return
-            self._start_format(text)
+            if minify and self._minify_reason():
+                return
+            self._start_format(text, minify=minify)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_format(self, text: str) -> None:
+    def _start_format(self, text: str, *, minify: bool = False) -> None:
         self._cancel_status_timer.stop()
+        self._minify_status_timer.stop()
+        self._format_minify = minify
         self._formatting = True
         self._format_started_s = _monotonic()
         self._reveal_timer.stop()
         self._status_before_format = self._status.state_text()
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
-        self._format_target = self._output_pane.format_name()
+        # Minify writes JSON whatever Output shows; success switches it.
+        self._format_target = "JSON" if minify else self._output_pane.format_name()
         busy, progress = _busy_progress_bytes(self._format_source, text)
         size = _utf8_size(text)
         self._size_forces_busy = size >= busy
@@ -886,8 +940,10 @@ class MainWindow(QMainWindow):
         self._accepted_job_id = None
         self._session.start()
         # Sort keys is greyed out for XML but keeps its check for JSON and YAML.
+        # Minify keeps Input's key order: Sort keys is for Format (Bill).
         self._format_sorted = (
-            self._actions.sort_keys.isChecked()
+            not minify
+            and self._actions.sort_keys.isChecked()
             and format_named(self._format_source).loads_to_value
         )
         self._session.submit(
@@ -895,6 +951,7 @@ class MainWindow(QMainWindow):
             self._format_source,
             self._format_target,
             sort_keys=self._format_sorted,
+            minify=minify,
         )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
@@ -994,7 +1051,7 @@ class MainWindow(QMainWindow):
         if not self._formatting:
             return
         self._restore_output()
-        self._status.set_state(CANCELLED_MESSAGE)
+        self._status.set_state(self._cancelled_message())
         self._cancel_status_timer.start(CANCELED_STATUS_MS)
         self._status.set_busy(Busy.IDLE)
         self._formatting = False
@@ -1006,7 +1063,7 @@ class MainWindow(QMainWindow):
         self._session.cancel()
 
     def _clear_canceled_status(self) -> None:
-        if self._formatting or self._status.state_text() != CANCELLED_MESSAGE:
+        if self._formatting or self._status.state_text() != self._cancelled_message():
             return
         restored = self._status_before_format
         count = self._problems_pane.count()
@@ -1033,11 +1090,17 @@ class MainWindow(QMainWindow):
         )
         if progress_due:
             self._status.set_busy(Busy.PROGRESS)
-            self._status.set_state(_formatting_status(elapsed))
+            self._status.set_state(_formatting_status(elapsed, self._busy_message()))
         elif busy_due:
             self._status.set_busy(Busy.SPINNER)
-            self._status.set_state(FORMATTING_MESSAGE)
+            self._status.set_state(self._busy_message())
         self._arm_reveal_timer()
+
+    def _busy_message(self) -> str:
+        return MINIFYING_MESSAGE if self._format_minify else FORMATTING_MESSAGE
+
+    def _cancelled_message(self) -> str:
+        return MINIFY_CANCELLED_MESSAGE if self._format_minify else CANCELLED_MESSAGE
 
     def _arm_reveal_timer(self) -> None:
         if not self._formatting or self._reveal_timer.isActive():
@@ -1069,12 +1132,35 @@ class MainWindow(QMainWindow):
         if self._session.finished_job_id != self._accepted_job_id:
             return
         self._set_editors_locked(False)
+        if self._format_minify:
+            self._show_minified_as_json()
         output = self._output_pane.editor
         _replace_as_one_undo(output, text)
         # The worker found the fold ranges with the text (Erik's #64 plan).
         output.set_fold_ranges(*unpack_ranges(self._session.finished_folds))
         self._clear_problems()
         self._finish_format(self._success_status())
+        if self._format_minify:
+            self._show_minify_status(MINIFIED_MESSAGE)
+
+    def _show_minified_as_json(self) -> None:
+        """Output shows JSON for minified text (Bill)."""
+        _set_format(self._output_pane, "JSON")
+
+    def _show_minify_status(self, text: str) -> None:
+        """Show a Minify status for 4 s, then what the window shows without it."""
+        self._minify_status = text
+        self._status.set_state(text)
+        self._minify_status_timer.start(MINIFY_STATUS_MS)
+
+    def _clear_minify_status(self) -> None:
+        if self._formatting or self._status.state_text() != self._minify_status:
+            return
+        count = self._problems_pane.count()
+        if count:
+            self._status.set_problem_count(count)
+            return
+        self._status.set_state("Ready")
 
     def _on_format_failed(self, message: str) -> None:
         if not self._formatting:
@@ -1101,6 +1187,10 @@ class MainWindow(QMainWindow):
         count = sum(1 for row in rows if not row.is_note())
         self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
+        if self._format_minify:
+            # Bill's error points at Problems, so it opens even when closed.
+            self._set_problems_state(STATE_OPEN)
+            self._show_minify_status(MINIFY_FAILED_MESSAGE)
 
     def _finish_format(self, status: str) -> None:
         self._cancel_status_timer.stop()
@@ -1850,10 +1940,12 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
 
     def _sync_format_button(self, text: str | None = None) -> None:
-        """Block Format, Convert, Escape, and Unescape for the whole job.
+        """Block Format, Minify, Convert, Escape, and Unescape for the whole job.
 
         The button keeps its full accent face while working and reads
-        ``Formatting…`` (spec §5.2). The disabled action blocks re-entry.
+        ``Formatting…`` (spec §5.2). A Minify job leaves it idle and greyed
+        out; the Minify button shows the busy state instead. The disabled
+        actions block re-entry.
         ``text`` is the input when the caller already has it; copying a
         long document out of the editor is not free.
         """
@@ -1869,8 +1961,11 @@ class MainWindow(QMainWindow):
         if action.isEnabled() != available:
             action.setEnabled(available)
         button = self._format_button
-        button.setEnabled((has_input and not copying) or self._formatting)
-        if self._formatting:
+        # A Minify job is busy on Minify; Format stays idle and greyed out.
+        minifying = self._formatting and self._format_minify
+        formatting = self._formatting and not minifying
+        button.setEnabled(((has_input and not copying) or formatting) and not minifying)
+        if formatting:
             button.setText(FORMATTING_MESSAGE)
             button.setAccessibleName(FORMATTING_MESSAGE)
             button.setAccessibleDescription(FORMAT_BUSY_DESCRIPTION)
@@ -1893,6 +1988,13 @@ class MainWindow(QMainWindow):
             set_not_available(item, reason)
         actions.sort_keys.setEnabled(not reason)
         set_not_available(actions.sort_keys, self._sort_keys_reason())
+        minify_reason = self._minify_reason()
+        actions.minify.setEnabled(available and not minify_reason)
+        set_not_available(actions.minify, minify_reason)
+        if minifying:
+            set_busy(actions.minify, MINIFY_BUSY_TOOLTIP, MINIFY_BUSY_DESCRIPTION)
+        else:
+            set_busy(actions.minify, "", "")
         self._toolbar.sync_not_available()
         self._sync_open_actions()
         self._sync_fold_actions()
@@ -1987,6 +2089,11 @@ class MainWindow(QMainWindow):
             return ""
         return SORT_KEYS_NOT_APPLICABLE.format(label=fmt.label)
 
+    def _minify_reason(self) -> str:
+        """Why Minify is greyed out, or "". It reads JSON only (Bill)."""
+        fmt = format_named(self._input_pane.format_name())
+        return "" if fmt.name == "json" else MINIFY_NOT_AVAILABLE
+
     def _follow_input_format(self) -> None:
         """Offer in Output only what the Input format writes (B1 on #63).
 
@@ -2060,12 +2167,12 @@ def _reveal_due(delay_ms: int, started_s: float) -> bool:
     return _elapsed_ms(started_s) >= delay_ms
 
 
-def _formatting_status(elapsed_ms: float) -> str:
+def _formatting_status(elapsed_ms: float, busy: str = FORMATTING_MESSAGE) -> str:
     if elapsed_ms < ELAPSED_STATUS_MS:
-        return FORMATTING_MESSAGE
+        return busy
     total_seconds = int(elapsed_ms // 1000)
     minutes, seconds = divmod(total_seconds, 60)
-    return f"{FORMATTING_MESSAGE} {minutes}:{seconds:02d}"
+    return f"{busy} {minutes}:{seconds:02d}"
 
 
 def _utf8_size(text: str) -> int:

@@ -17,6 +17,9 @@ order does not follow ``PYTHONHASHSEED``.
 ``sort_keys=True`` reorders the output only; the input text is never
 changed. See :func:`sort_mapping_keys` for the ordering rule.
 
+``minify=True`` writes JSON from JSON with :func:`compact_json` instead of
+indenting it. It runs the same checks and raises the same errors.
+
 ``prepare`` rewrites the loaded value before it is written; masking uses
 it. It runs after the checks and before ``sort_keys``. With it set, a YAML
 document that has an alias loads with the pure-Python parser, because the
@@ -155,12 +158,17 @@ _KEY_OR_BRACKET_RE = re.compile(
 
 
 def format_json(
-    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+    text: str | bytes,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+    minify: bool = False,
 ) -> str:
     """Return ``text`` parsed as JSON and pretty-printed.
 
     ``sort_keys`` writes every object's keys in code-point order. Arrays
-    keep their order. Repeated keys are still an error.
+    keep their order. Repeated keys are still an error. ``minify`` writes
+    :func:`compact_json` instead, with no trailing newline.
 
     Valid text is scanned for lone surrogates, parsed with ``json.loads``,
     and checked against the nesting limit. The character walk runs only when
@@ -170,9 +178,11 @@ def format_json(
     source = _decode_json(text)
     parsed = _json_fast_value(source)
     if parsed is _CHARACTER_WALK:
-        return _format_json_walk_first(source, sort_keys=sort_keys, prepare=prepare)
+        return _format_json_walk_first(
+            source, sort_keys=sort_keys, prepare=prepare, minify=minify
+        )
     try:
-        return _dump_json(_apply(prepare, parsed), sort_keys=sort_keys)
+        return _dump_json(_apply(prepare, parsed), sort_keys=sort_keys, minify=minify)
     except RecursionError:
         opened = _json_limits(source)
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
@@ -743,7 +753,11 @@ def _decode_json(text: str | bytes) -> str:
 
 
 def _format_json_walk_first(
-    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+    text: str | bytes,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+    minify: bool = False,
 ) -> str:
     """Format JSON by walking characters before ``json.loads``.
 
@@ -755,7 +769,7 @@ def _format_json_walk_first(
     opened = _json_limits(source)
     try:
         parsed = _apply(prepare, _json_walked_value(source, opened))
-        return _dump_json(parsed, sort_keys=sort_keys)
+        return _dump_json(parsed, sort_keys=sort_keys, minify=minify)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1260,6 +1274,7 @@ def format_document(
     *,
     sort_keys: bool = False,
     prepare: Prepare | None = None,
+    minify: bool = False,
 ) -> str:
     """Format ``text`` from ``source`` into ``target``.
 
@@ -1271,11 +1286,14 @@ def format_document(
     :func:`sort_mapping_keys`; XML and HTML ignore it. ``prepare`` rewrites
     the loaded JSON or YAML value before it is written. XML and HTML do not
     load to a value, so they raise ``ValueError`` with ``prepare``.
+    ``minify`` is for JSON to JSON only; any other pair raises ``ValueError``.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
     if target_kind not in (fmt.name for fmt in targets_for(source_kind)):
         raise ValueError(f"Can't write {source.strip()} as {target.strip()}.")
+    if minify and (source_kind, target_kind) != ("json", "json"):
+        raise ValueError("Minify writes JSON from JSON only.")
     if prepare is not None:
         _value_format(source)
     if source_kind == "xml":
@@ -1283,7 +1301,7 @@ def format_document(
     if source_kind == "html":
         return format_html(text)
     if source_kind == "json" and target_kind == "json":
-        return format_json(text, sort_keys=sort_keys, prepare=prepare)
+        return format_json(text, sort_keys=sort_keys, prepare=prepare, minify=minify)
     if source_kind == "yaml" and target_kind == "yaml":
         return format_yaml(text, sort_keys=sort_keys, prepare=prepare)
     if source_kind == "json":
@@ -1407,13 +1425,30 @@ def _value_format(name: str) -> str:
     return fmt.name
 
 
+def compact_json(value: object, *, sort_keys: bool = False) -> str:
+    """``value`` as JSON with no spaces or line breaks between tokens.
+
+    Minify writes this, and Escape as String escapes it. ``sort_keys`` is
+    for JSON input, whose keys are all strings.
+    """
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=sort_keys
+    )
+
+
 def _dump_json(
     value: object,
     *,
     sort_keys: bool = False,
     default: Callable[[object], object] | None = None,
+    minify: bool = False,
 ) -> str:
-    """``sort_keys`` is for JSON input, whose keys are all strings."""
+    """``sort_keys`` is for JSON input, whose keys are all strings.
+
+    ``minify`` writes :func:`compact_json`, which has no trailing newline.
+    """
+    if minify:
+        return compact_json(value, sort_keys=sort_keys)
     return (
         json.dumps(
             value, indent=2, ensure_ascii=False, sort_keys=sort_keys, default=default

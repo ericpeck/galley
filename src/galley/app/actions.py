@@ -41,6 +41,8 @@ COMING_SOON = "Coming soon"
 # A command that doesn't apply to the Input format is greyed out with this
 # tooltip and status tip (B2 on #63), for example "Not available for XML".
 NOT_AVAILABLE = "Not available for {label}"
+# Minify's tooltip while Input is JSON (Bill).
+MINIFY_TOOLTIP = "Remove all spaces and line breaks from the JSON"
 
 # Menu order: menu bar, then the toolbar.
 # Delete a name here to ship that command. Do not keep a second list.
@@ -51,7 +53,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Previous Change",
     "Link Scrolling",
     "Indent",
-    "Minify",
     "Validate",
 )
 
@@ -206,6 +207,26 @@ def set_not_available(action: QAction, reason: str) -> None:
         return
     action.setToolTip(action.property("readyToolTip"))
     action.setStatusTip(action.property("readyStatusTip"))
+
+
+def set_busy(action: QAction, tooltip: str, description: str) -> None:
+    """Mark ``action`` as running its job, or "" for both when it is done.
+
+    The toolbar shows the tooltip, the description and a busy cursor on its
+    button. The caller enables and disables the action.
+    """
+    action.setProperty("busyToolTip", tooltip)
+    action.setProperty("busyDescription", description)
+
+
+def busy_tips(action: QAction) -> tuple[str, str]:
+    """The busy tooltip and description of ``action``, or two empty strings."""
+    tooltip = action.property("busyToolTip")
+    description = action.property("busyDescription")
+    return (
+        tooltip if isinstance(tooltip, str) else "",
+        description if isinstance(description, str) else "",
+    )
 
 
 def not_available_reason(action: QAction) -> str:
@@ -424,7 +445,9 @@ class ShellActions:
         # On: the next Format writes keys A–Z at every level. Output only.
         self.sort_keys = _action(parent, "Sort keys", checkable=True)
         self.sort_keys.setObjectName("sortKeys")
+        # Writes Input's JSON to Output with no spaces or line breaks.
         self.minify = _action(parent, "Minify")
+        self.minify.setToolTip(MINIFY_TOOLTIP)
         self.expand_all = _action(parent, "Expand all", shortcut=EXPAND_ALL)
         self.collapse_all = _action(parent, "Collapse all", shortcut=COLLAPSE_ALL)
         self.fold = _action(parent, "Fold", shortcut=FOLD)
@@ -493,7 +516,6 @@ class ShellActions:
             self.previous_change,
             self.link_scrolling,
             self.indent,
-            self.minify,
             self.validate,
         ]
 

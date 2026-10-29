@@ -78,7 +78,8 @@ class FormatJob:
     ``sort_keys`` orders the output's keys; the text in ``text`` is unchanged.
     ``mask`` is ``None`` when masking is off, and the job formats exactly as
     before. With rules set, matched values are replaced with ``"•••"``, and
-    ``sort_keys`` orders the masked output the same way.
+    ``sort_keys`` orders the masked output the same way. ``minify`` writes
+    JSON to JSON as compact JSON, with Format's checks; it takes no ``mask``.
     """
 
     job_id: int
@@ -92,6 +93,7 @@ class FormatJob:
     fault: str | None = None
     sort_keys: bool = False
     mask: MaskRules | None = None
+    minify: bool = False
 
 
 @dataclass(frozen=True)
@@ -304,7 +306,8 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     except Exception as exc:
         event_queue.put(_job_failure(job, exc, None))
         return
-    folds = _scan_folds(text, job.target)
+    # Minified JSON is one line, so it has nothing to fold.
+    folds = b"" if job.minify else _scan_folds(text, job.target)
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
         event_queue.put(SuccessEvent(job.job_id, text, None, folds, masked_count))
@@ -325,7 +328,11 @@ def _format_text(job: FormatJob) -> tuple[str, int | None]:
     """The job's output text, and its masked count when ``mask`` is set."""
     if job.mask is None:
         text = format_document(
-            job.text, job.source, job.target, sort_keys=job.sort_keys
+            job.text,
+            job.source,
+            job.target,
+            sort_keys=job.sort_keys,
+            minify=job.minify,
         )
         return text, None
     masked = mask_document(
