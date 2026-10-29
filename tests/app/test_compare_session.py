@@ -2,11 +2,8 @@
 
 import pytest
 
-from galley.app.main_window import (
-    JSON_WARNING_BYTES,
-    YAML_WARNING_BYTES,
-    compare_needs_size_warning,
-)
+from galley.app.compare_mode import compare_needs_size_warning
+from galley.app.limits import COMPARE_WARNING_BYTES
 from galley.app.parse_session import CompareFailure, ParseSession
 from galley.core.compare_report import CompareReport, SideMarks
 from galley.core.diff import DiffResult, diff, load_document
@@ -295,31 +292,30 @@ def test_a_worker_that_exits_mid_compare_reports_stopped(qtbot) -> None:
         session.shutdown()
 
 
-def test_the_size_prompt_uses_the_larger_side() -> None:
+def test_the_size_prompt_asks_when_either_side_is_over_2_mb() -> None:
+    """One 2 MB guard per side for JSON and YAML (Eric, 2026-10-25).
+
+    It replaces Format's per-format warning limits. Only a side over
+    2,000,000 bytes asks; exactly 2 MB doesn't.
+    """
+    assert COMPARE_WARNING_BYTES == 2_000_000
     small = "x"
-    assert not compare_needs_size_warning(small, "json", small, "json")
-    at_limit = "x" * JSON_WARNING_BYTES
-    assert compare_needs_size_warning(small, "json", at_limit, "json")
-    assert compare_needs_size_warning(at_limit, "json", small, "json")
-    just_under = "x" * (JSON_WARNING_BYTES - 1)
-    assert not compare_needs_size_warning(just_under, "json", just_under, "json")
-
-
-def test_the_size_prompt_keeps_the_yaml_and_json_limits() -> None:
-    yaml_limit = "x" * YAML_WARNING_BYTES
-    under = "x" * (YAML_WARNING_BYTES - 1)
-    assert compare_needs_size_warning("a: 1", "yaml", yaml_limit, "yaml")
-    assert not compare_needs_size_warning(under, "yaml", under, "yaml")
-    assert not compare_needs_size_warning(yaml_limit, "json", yaml_limit, "json")
-    # Mixed formats: the YAML side asks at its own limit beside a larger JSON side.
-    bigger_json = "x" * (YAML_WARNING_BYTES * 2)
-    assert compare_needs_size_warning(yaml_limit, "yaml", bigger_json, "json")
-    assert not compare_needs_size_warning(under, "yaml", bigger_json, "json")
+    assert not compare_needs_size_warning(small, small)
+    at_limit = "x" * COMPARE_WARNING_BYTES
+    assert not compare_needs_size_warning(at_limit, at_limit)
+    over = "x" * (COMPARE_WARNING_BYTES + 1)
+    assert compare_needs_size_warning(small, over)
+    assert compare_needs_size_warning(over, small)
+    # Format's YAML limit (352 kB) no longer asks.
+    assert not compare_needs_size_warning("a: 1", "x" * 400_000)
 
 
 def test_the_size_prompt_counts_utf8_bytes() -> None:
-    wide = "é" * (YAML_WARNING_BYTES // 2)
-    assert compare_needs_size_warning("a: 1", "yaml", wide, "yaml")
+    # 1,000,001 two-byte characters are 2,000,002 bytes.
+    wide = "é" * (COMPARE_WARNING_BYTES // 2 + 1)
+    assert len(wide) < COMPARE_WARNING_BYTES
+    assert compare_needs_size_warning("a: 1", wide)
+    assert not compare_needs_size_warning("a: 1", "é" * (COMPARE_WARNING_BYTES // 2))
 
 
 def _expected(left: str, right: str) -> DiffResult:

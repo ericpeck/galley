@@ -34,9 +34,9 @@ _RELEASE_FIX = (
 _NOT_YET_FIX = (
     "Build them or remove them from _not_yet_actions() in actions.py before tagging."
 )
-# Nothing is Not yet now. Tests of a non-empty Not yet list move Compare
-# off Coming soon and onto Not yet.
-_NOT_YET_EXAMPLE = "Compare"
+# Nothing is Not yet now. Tests of a non-empty Not yet list move Link
+# Scrolling off Coming soon and onto Not yet.
+_NOT_YET_EXAMPLE = "Link Scrolling"
 _NOT_YET_MENU_NAMES = (_NOT_YET_EXAMPLE,)
 _COMING_SOON_WITHOUT_EXAMPLE = tuple(
     name for name in UNBUILT_ACTIONS if name != _NOT_YET_EXAMPLE
@@ -171,14 +171,14 @@ def _not_yet_text(names: str) -> str:
     )
 
 
-def _compare_not_yet(monkeypatch) -> None:
-    """Move Compare from Coming soon to Not yet."""
+def _example_not_yet(monkeypatch) -> None:
+    """Move Link Scrolling from Coming soon to Not yet."""
     monkeypatch.setattr(
         "galley.app.actions.UNBUILT_ACTIONS", _COMING_SOON_WITHOUT_EXAMPLE
     )
     monkeypatch.setattr(
         "galley.app.actions.ShellActions._not_yet_actions",
-        lambda self: [self.compare],
+        lambda self: [self.link_scrolling],
     )
 
 
@@ -244,7 +244,7 @@ def test_release_check_fails_when_only_coming_soon_remains(monkeypatch, capsys) 
 def test_release_check_fails_when_only_not_yet_remains(
     monkeypatch, qtbot, capsys
 ) -> None:
-    _compare_not_yet(monkeypatch)
+    _example_not_yet(monkeypatch)
     monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", ())
     window = _show(qtbot)
     names = _not_yet_menu_order(window)
@@ -260,7 +260,7 @@ def test_release_check_fails_when_only_not_yet_remains(
 
 
 def test_release_check_fails_when_both_lists_remain(monkeypatch, qtbot, capsys) -> None:
-    _compare_not_yet(monkeypatch)
+    _example_not_yet(monkeypatch)
     window = _show(qtbot)
     coming = _menu_order(window)
     not_yet = _not_yet_menu_order(window)
@@ -635,39 +635,40 @@ def test_release_check_no_longer_lists_tabs() -> None:
         assert name not in not_yet
 
 
-# Menu order: File, then the View section after Previous Problem.
+# Menu order: File, then the View section after Previous Problem. Slice 3d
+# shipped Compare, Next Change and Previous Change; 3e ships the rest.
 _COMPARE_UNBUILT = (
     "Open Right Document…",
-    "Compare",
-    "Next Change",
-    "Previous Change",
     "Link Scrolling",
 )
+_COMPARE_SHIPPED = ("Compare", "Next Change", "Previous Change")
 
 
 def test_compare_items_stay_unbuilt_until_they_ship(qtbot, capsys) -> None:
-    """#65 slices 3d and 3e stay on the release check until they ship.
+    """#65 slice 3e's items stay on the release check until they ship.
 
-    Open Right Document… uses one U+2026 ellipsis. None of the five has a
-    shortcut. Compare is the only checkable item. Each one is disabled and
-    says Coming soon.
+    Open Right Document… uses one U+2026 ellipsis. Neither has a shortcut.
+    Each one is disabled and says Coming soon. Compare, Next Change and
+    Previous Change (3d) are built: off the list, with their shortcuts,
+    while the stub map still names all five.
     """
-    missing = [name for name in _COMPARE_UNBUILT if name not in UNBUILT_ACTIONS]
-    assert missing == []
+    assert UNBUILT_ACTIONS == _COMPARE_UNBUILT
     open_right = _COMPARE_UNBUILT[0]
     assert open_right.endswith("\u2026")
     assert not open_right.endswith("...")
-    for name in _COMPARE_UNBUILT:
+    for name in (*_COMPARE_UNBUILT, *_COMPARE_SHIPPED):
         assert name in _ACTION_ATTRS
 
     window = _show(qtbot)
     actions = window._actions
     wired = {
         "Open Right Document…": actions.open_right_document,
+        "Link Scrolling": actions.link_scrolling,
+    }
+    shipped = {
         "Compare": actions.compare,
         "Next Change": actions.next_change,
         "Previous Change": actions.previous_change,
-        "Link Scrolling": actions.link_scrolling,
     }
     file_menu = _menu(window, "File")
     file_items = file_menu.actions()
@@ -711,17 +712,30 @@ def test_compare_items_stay_unbuilt_until_they_ship(qtbot, capsys) -> None:
         assert action.menuRole() == QAction.MenuRole.NoRole
         assert action.shortcut().isEmpty()
         assert list(action.shortcuts()) == []
-        if name != "Compare":
-            assert not action.isCheckable()
+        assert not action.isCheckable()
+    for name, action in shipped.items():
+        assert action.text() == name
+        assert action not in actions._stub_actions()
+        assert action not in actions.stubs()
+        assert action not in actions._not_yet_actions()
+        assert action.toolTip() != COMING_SOON
+        assert not is_unbuilt(action)
+        assert action.menuRole() == QAction.MenuRole.NoRole
+        assert list(action.shortcuts())
+    # Compare is ready on an empty JSON window. Next and Previous Change
+    # wait for Compare mode.
+    assert actions.compare.isEnabled()
+    assert not actions.next_change.isEnabled()
+    assert not actions.previous_change.isEnabled()
     assert actions.open_right_document.text()[-1] == "\u2026"
     assert "..." not in actions.open_right_document.text()
 
     message = release_failure()
-    assert message is not None
-    assert ", ".join(_COMPARE_UNBUILT) in message
+    assert message == _release_text("Open Right Document…, Link Scrolling")
+    assert not_yet_failure() is None
     assert main() == 1
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert message in captured.out
-    for name in _COMPARE_UNBUILT:
-        assert name in captured.out
+    assert captured.out == message + "\n"
+    for name in _COMPARE_SHIPPED:
+        assert name not in captured.out

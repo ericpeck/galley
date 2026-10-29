@@ -624,8 +624,7 @@ def test_output_options_is_off_the_not_yet_list(qtbot) -> None:
         assert main() == 1
     assert printed.getvalue() == (
         'Release blocked: these actions still show "Coming soon": '
-        "Open Right Document…, Compare, Next Change, Previous Change, "
-        "Link Scrolling.\n"
+        "Open Right Document…, Link Scrolling.\n"
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
         "before tagging.\n"
     )

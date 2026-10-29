@@ -38,8 +38,7 @@ _WAIT_MS = 15_000
 _ORDERS = '{"qty": 1, "items": [{"qty": 2}, {"QTY": 3}]}'
 _COMING_SOON_OUTPUT = (
     'Release blocked: these actions still show "Coming soon": '
-    "Open Right Document…, Compare, Next Change, Previous Change, "
-    "Link Scrolling.\n"
+    "Open Right Document…, Link Scrolling.\n"
     "Build them or remove them from UNBUILT_ACTIONS in actions.py "
     "before tagging.\n"
 )
