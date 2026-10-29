@@ -745,6 +745,7 @@ class MainWindow(QMainWindow):
         actions.find.triggered.connect(self._open_find)
         actions.find_next.triggered.connect(self._find_next)
         actions.find_previous.triggered.connect(self._find_previous)
+        actions.find_replace.triggered.connect(self._open_find_replace)
         actions.word_wrap.toggled.connect(self._set_word_wrap)
         actions.show_whitespace.toggled.connect(self._set_show_whitespace)
         actions.default_font.triggered.connect(
@@ -1640,6 +1641,10 @@ class MainWindow(QMainWindow):
     def _open_find(self) -> None:
         self._find_pane().find_bar.open()
 
+    def _open_find_replace(self) -> None:
+        """Input's bar with the replace row, whichever pane has focus."""
+        self._input_pane.find_bar.open(replace=True)
+
     def _find_next(self) -> None:
         self._find_pane().find_bar.find_next()
 
@@ -2135,6 +2140,7 @@ class MainWindow(QMainWindow):
         action = self._actions.format
         if action.isEnabled() != available:
             action.setEnabled(available)
+        self._input_pane.find_bar.set_replace_blocked(self._formatting or loading)
         button = self._format_button
         # A Minify or Validate job is busy on its own button; Format stays
         # idle and greyed out.

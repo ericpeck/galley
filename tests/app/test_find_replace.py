@@ -152,7 +152,7 @@ def test_the_shortcut_clashes_with_no_other_action(qtbot) -> None:
         item.text() or item.objectName()
         for item in window.findChildren(QAction)
         if item is not action
-        and any(sequence.matches(FIND_AND_REPLACE) for sequence in item.shortcuts())
+        and any(sequence == FIND_AND_REPLACE for sequence in item.shortcuts())
     ]
     assert others == []
     if sys.platform != "darwin":

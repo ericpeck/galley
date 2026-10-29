@@ -99,9 +99,13 @@ class PaneWidget(QWidget):
         self.editor.setObjectName(f"{spec.name}Editor")
         self.editor.setAccessibleName(f"{spec.title} editor")
 
-        # Only Output offers Keys only (#62): Input may not parse.
+        # Only Output offers Keys only (#62): Input may not parse. Only
+        # Input offers the replace row; Output find is search only.
         self.find_bar = FindBar(
-            self.editor, spec.name, keys_option=spec.kind is PaneKind.RESULT
+            self.editor,
+            spec.name,
+            keys_option=spec.kind is PaneKind.RESULT,
+            replace_option=spec.kind is PaneKind.SOURCE,
         )
 
         self.tab_strip = QWidget()

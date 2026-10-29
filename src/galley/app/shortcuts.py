@@ -31,6 +31,11 @@ Indent is portable ``Ctrl+]`` and Outdent ``Ctrl+[`` (⌘] and ⌘[ on macOS,
 Ctrl+] and Ctrl+[ on Windows), as in VS Code. Fold and Unfold add Alt on
 macOS and Shift elsewhere, so neither clashes.
 
+Find and Replace differs by platform and is not Qt's standard Replace key,
+which is ⌘H on macOS, the system Hide. macOS uses ⌥⌘F (portable
+``Ctrl+Alt+F``), as the Edit menu shows. Windows and Linux use ``Ctrl+H``,
+which keeps Ctrl+Alt off them.
+
 Next Problem is F8 and Previous Problem Shift+F8 on every platform (Bill's
 #78 spec). On macOS F8 is Play/Pause unless Fn is held, so macOS lists ⌘'
 and ⇧⌘' first, which the menu shows, and keeps F8 and ⇧F8 as second keys.
@@ -59,6 +64,9 @@ COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
 INDENT = QKeySequence("Ctrl+]", _PORTABLE)
 OUTDENT = QKeySequence("Ctrl+[", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
+FIND_AND_REPLACE = QKeySequence(
+    "Ctrl+Alt+F" if sys.platform == "darwin" else "Ctrl+H", _PORTABLE
+)
 # The first key of each list is the one the menu shows.
 _PROBLEM_KEYS = ("Ctrl+'", "F8") if sys.platform == "darwin" else ("F8",)
 NEXT_PROBLEM = tuple(QKeySequence(key, _PORTABLE) for key in _PROBLEM_KEYS)
