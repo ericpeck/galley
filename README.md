@@ -38,6 +38,8 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 | Find and Replace | ⌥⌘F | Ctrl+H |
 | Regex / Whole word (in the find bar) | ⌥⌘R / ⌥⌘W | Alt+R / Alt+W |
 | Show Problems | ⇧⌘M | Ctrl+Shift+M |
+| Compare | ⇧⌘D | Ctrl+Shift+D |
+| Next Change / Previous Change | ⌥⌘↓ / ⌥⌘↑ (also F7 / ⇧F7) | F7 / Shift+F7 |
 | Fold / Unfold | ⌥⌘[ / ⌥⌘] | Ctrl+Shift+[ / Ctrl+Shift+] |
 | Collapse all / Expand all | ⌘K ⌘0 / ⌘K ⌘J | Ctrl+K, Ctrl+0 / Ctrl+K, Ctrl+J |
 | Escape as String | ⇧⌘E | Ctrl+Shift+E |

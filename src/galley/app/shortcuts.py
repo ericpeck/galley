@@ -44,6 +44,13 @@ them. No menu title has a mnemonic, so Alt+R and Alt+W open no menu.
 Next Problem is F8 and Previous Problem Shift+F8 on every platform (Bill's
 #78 spec). On macOS F8 is Play/Pause unless Fn is held, so macOS lists ⌘'
 and ⇧⌘' first, which the menu shows, and keeps F8 and ⇧F8 as second keys.
+
+Compare is portable ``Ctrl+Shift+D`` (⇧⌘D on macOS, Ctrl+Shift+D on
+Windows). Next Change is F7 and Previous Change Shift+F7 on every platform,
+never F8, which is Next Problem's. F7 is a media key on Mac keyboards, so
+macOS lists ⌥⌘↓ and ⌥⌘↑ (portable ``Ctrl+Alt+Down`` and ``Ctrl+Alt+Up``)
+first, which the menu shows. Windows and Linux get F7 alone, which keeps
+Ctrl+Alt off them.
 """
 
 import sys
@@ -81,6 +88,13 @@ NEXT_PROBLEM = tuple(QKeySequence(key, _PORTABLE) for key in _PROBLEM_KEYS)
 PREVIOUS_PROBLEM = tuple(
     QKeySequence(f"Shift+{key}", _PORTABLE) for key in _PROBLEM_KEYS
 )
+COMPARE = QKeySequence("Ctrl+Shift+D", _PORTABLE)
+_NEXT_CHANGE_KEYS = ("Ctrl+Alt+Down", "F7") if sys.platform == "darwin" else ("F7",)
+_PREVIOUS_CHANGE_KEYS = (
+    ("Ctrl+Alt+Up", "Shift+F7") if sys.platform == "darwin" else ("Shift+F7",)
+)
+NEXT_CHANGE = tuple(QKeySequence(key, _PORTABLE) for key in _NEXT_CHANGE_KEYS)
+PREVIOUS_CHANGE = tuple(QKeySequence(key, _PORTABLE) for key in _PREVIOUS_CHANGE_KEYS)
 
 
 def native_chord_text(sequence: QKeySequence) -> str:

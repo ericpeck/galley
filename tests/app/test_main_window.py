@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QAction, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -41,6 +41,7 @@ from galley.app.problems_pane import ProblemsPane
 from galley.app.theme import ACCENT, ACCENT_DISABLED
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
+_PORTABLE = QKeySequence.SequenceFormat.PortableText
 
 # Portable text. Ctrl is Command on macOS. ⇧⌘[ switches tabs on macOS, so
 # only macOS keeps ⌥⌘ for Fold and Unfold (#95). F8 is Play/Pause on Mac
@@ -50,6 +51,14 @@ _PROBLEM = ["Ctrl+'", "F8"] if sys.platform == "darwin" else ["F8"]
 _PREVIOUS = ["Ctrl+Shift+'", "Shift+F8"] if sys.platform == "darwin" else ["Shift+F8"]
 # ⌘H is the system Hide on macOS, so Find and Replace is ⌥⌘F there.
 _FIND_AND_REPLACE = ["Ctrl+Alt+F"] if sys.platform == "darwin" else ["Ctrl+H"]
+# Compare (#65 slice 3d): F7 is a media key on Mac keyboards, so macOS lists
+# ⌥⌘↓ and ⌥⌘↑ first. Never F8, which is Next Problem's.
+_NEXT_CHANGE = ["Ctrl+Alt+Down", "F7"] if sys.platform == "darwin" else ["F7"]
+_PREVIOUS_CHANGE = (
+    ["Ctrl+Alt+Up", "Shift+F7"] if sys.platform == "darwin" else ["Shift+F7"]
+)
+# The find bars' Regex and Whole word keys are QShortcuts, not actions.
+_FIND_TOGGLES = "Ctrl+Alt+" if sys.platform == "darwin" else "Alt+"
 CUSTOM_SHORTCUTS = {
     "Word Wrap": ["Alt+Z"],
     "Escape as String": ["Ctrl+Shift+E"],
@@ -66,6 +75,9 @@ CUSTOM_SHORTCUTS = {
     "Next Problem": _PROBLEM,
     "Previous Problem": _PREVIOUS,
     "Find and Replace…": _FIND_AND_REPLACE,
+    "Compare": ["Ctrl+Shift+D"],
+    "Next Change": _NEXT_CHANGE,
+    "Previous Change": _PREVIOUS_CHANGE,
 }
 # Ctrl+H is Qt's standard Replace key on Windows: the same command.
 _SAME_COMMAND = {("Find and Replace…", "Replace")}
@@ -519,19 +531,52 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
 
     owners: dict[tuple[int, ...], str] = {}
     duplicates: list[str] = []
-    for action in window.findChildren(QAction):
-        for sequence in action.shortcuts():
-            if sequence.isEmpty() or sequence.count() == 0:
-                continue
-            ident = _sequence_id(sequence)
-            previous = owners.get(ident)
-            label = action.text() or action.objectName()
-            if previous is None:
-                owners[ident] = label
-            elif previous != label:
-                rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
-                duplicates.append(f"{rendered}: {previous} and {label}")
+    for label, sequence in _bound_keys(window):
+        if sequence.isEmpty() or sequence.count() == 0:
+            continue
+        ident = _sequence_id(sequence)
+        previous = owners.get(ident)
+        if previous is None:
+            owners[ident] = label
+        elif previous != label:
+            rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+            duplicates.append(f"{rendered}: {previous} and {label}")
     assert duplicates == []
+
+
+def _bound_keys(window) -> list[tuple[str, QKeySequence]]:
+    """Every action's keys, then the find bars' Regex and Whole word keys.
+
+    The toggles are QShortcuts on each find bar. Every bar binds the same
+    key to the same toggle, so a toggle is labelled by its key.
+    """
+    bound: list[tuple[str, QKeySequence]] = []
+    for action in window.findChildren(QAction):
+        label = action.text() or action.objectName()
+        bound.extend((label, sequence) for sequence in action.shortcuts())
+    for shortcut in window.findChildren(QShortcut):
+        key = shortcut.key()
+        bound.append((f"find toggle {key.toString(_PORTABLE)}", key))
+    return bound
+
+
+def test_compare_keys_avoid_the_find_toggles(qtbot) -> None:
+    """Compare, Next Change and Previous Change miss Regex and Whole word.
+
+    Regex is ⌥⌘R / Alt+R and Whole word ⌥⌘W / Alt+W (#170). The toggles
+    are QShortcuts on the find bars, so the action-only walk above would
+    not see them.
+    """
+    window = _show(qtbot)
+    toggles = {
+        _sequence_id(shortcut.key()) for shortcut in window.findChildren(QShortcut)
+    }
+    assert _sequence_id(QKeySequence(_FIND_TOGGLES + "R", _PORTABLE)) in toggles
+    assert _sequence_id(QKeySequence(_FIND_TOGGLES + "W", _PORTABLE)) in toggles
+    for text in ("Compare", "Next Change", "Previous Change"):
+        for sequence in _action(window, text).shortcuts():
+            assert _sequence_id(sequence) not in toggles, text
+            assert "F8" not in sequence.toString(_PORTABLE), text
 
 
 def test_custom_shortcuts_avoid_standard_keys_and_chord_prefixes(qtbot) -> None:
@@ -649,14 +694,14 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
 
 
 def test_stub_action_reports_not_yet(qtbot, monkeypatch) -> None:
-    # Nothing is Not yet any more. A Compare item off the Coming soon list
+    # Nothing is Not yet any more. Link Scrolling off the Coming soon list
     # is the example: it stays a stub, so it reports Not yet.
     monkeypatch.setattr(
         "galley.app.actions.UNBUILT_ACTIONS",
-        tuple(name for name in UNBUILT_ACTIONS if name != "Compare"),
+        tuple(name for name in UNBUILT_ACTIONS if name != "Link Scrolling"),
     )
     window = _show(qtbot)
-    _action(window, "Compare").trigger()
+    _action(window, "Link Scrolling").trigger()
     assert NOT_YET_MESSAGE.lower().startswith("not yet")
     assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
     output = window.findChild(CodeEditor, "outputEditor")

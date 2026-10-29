@@ -44,8 +44,7 @@ _RUNAWAY = "(a+)+$"
 _ORDERS = "qty=1 qty=2\nQTY=3 qtys=4\n"
 _COMING_SOON_OUTPUT = (
     'Release blocked: these actions still show "Coming soon": '
-    "Open Right Document…, Compare, Next Change, Previous Change, "
-    "Link Scrolling.\n"
+    "Open Right Document…, Link Scrolling.\n"
     "Build them or remove them from UNBUILT_ACTIONS in actions.py "
     "before tagging.\n"
 )

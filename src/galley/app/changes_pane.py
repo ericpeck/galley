@@ -118,6 +118,8 @@ class ChangesState(Enum):
     ERRORS = "errors"
     CANCELED = "canceled"
     STOPPED = "stopped"
+    # A compare is running: an empty list, no message.
+    BUSY = "busy"
 
 
 _MESSAGES = {
@@ -801,7 +803,9 @@ class ChangesPane(QWidget):
 
     def message(self) -> str:
         """The message shown in place of the rows, or "" while rows show."""
-        return "" if self._state == ChangesState.ROWS else self._message.text()
+        if self._state in (ChangesState.ROWS, ChangesState.BUSY):
+            return ""
+        return self._message.text()
 
     def message_glyph(self) -> str:
         """The glyph beside the message: ✓ for "No differences.", else ""."""
@@ -826,6 +830,12 @@ class ChangesPane(QWidget):
         first = self._model.next_stop(-1)
         if first is not None:
             self._list.select_row(first)
+
+    def show_busy(self) -> None:
+        """Empty the list while a compare runs. The status bar says why."""
+        self._model.set_report(None)
+        self._state = ChangesState.BUSY
+        self._stack.setCurrentWidget(self._list)
 
     def show_empty_right(self) -> None:
         self._show_message(ChangesState.EMPTY_RIGHT)
