@@ -227,6 +227,52 @@ def find_match_colors(palette: QPalette) -> FindColors:
     return FindColors(current, other, ink, edge)
 
 
+class SegmentColors(NamedTuple):
+    """Colors for the Output Options popover's segments and its Options link.
+
+    A segment is ``ink`` on ``fill`` inside an ``edge``. The chosen one is
+    ``chosen_ink`` on ``chosen_fill`` and bold, so color is not its only cue.
+    A greyed-out label is ``unavailable_ink``. ``focus`` is the keyboard
+    ring. The pressed Options link is ``pressed_fill`` inside ``edge``.
+    """
+
+    fill: QColor
+    ink: QColor
+    chosen_fill: QColor
+    chosen_ink: QColor
+    unavailable_ink: QColor
+    edge: QColor
+    focus: QColor
+    pressed_fill: QColor
+
+
+def segment_colors(palette: QPalette) -> SegmentColors:
+    """Segment colors from ``palette`` roles, as the popover paints them.
+
+    The chosen segment takes the selection role (Highlight) with Text on
+    it, which reads at 4.5:1 in both schemes, and the focus ring clears
+    3:1 against it. The edge and the ring are the pane's, which clear 3:1
+    on the window and the base.
+    """
+    window = palette.color(QPalette.ColorRole.Window)
+    fill = composite(palette.color(QPalette.ColorRole.Base), window)
+    chosen_fill = composite(palette.color(QPalette.ColorRole.Highlight), window)
+    text = palette.color(QPalette.ColorRole.Text)
+    disabled = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
+    edge, focus = pane_edge_colors(palette)
+    pressed = composite(palette.color(QPalette.ColorRole.AlternateBase), window)
+    return SegmentColors(
+        fill=fill,
+        ink=composite(text, fill),
+        chosen_fill=chosen_fill,
+        chosen_ink=composite(text, chosen_fill),
+        unavailable_ink=composite(disabled, fill),
+        edge=edge,
+        focus=focus,
+        pressed_fill=pressed,
+    )
+
+
 def light_palette(current: QPalette) -> QPalette:
     """Light-mode roles on ``current``, with a legible disabled fade."""
     palette = QPalette(current)

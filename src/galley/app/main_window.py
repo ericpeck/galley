@@ -84,7 +84,7 @@ from galley.app.escape_string import (
 from galley.app.file_drop import dropped_files
 from galley.app.fonts import ui_font
 from galley.app.icons import toolbar_icon
-from galley.app.indent import YAML_TAB_REASON, indent_unit
+from galley.app.indent import DEFAULT_INDENT_CHOICE, YAML_TAB_REASON, indent_unit
 
 # The size thresholds live in limits.py so the editor can read them too.
 # Tests and callers still import them from here.
@@ -130,6 +130,7 @@ from galley.app.open_text import (
     opening_text,
     replace_input_text,
 )
+from galley.app.output_options import OutputOptionsPopover
 from galley.app.pane import PaneKind, PaneRole, PaneWidget
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import (
@@ -378,6 +379,7 @@ class MainWindow(QMainWindow):
         toolbar = self._build_toolbar()
         self._toolbar = toolbar
         self._status = self._build_status_bar()
+        self._output_options = self._build_output_options()
         self._assemble(toolbar)
         self._connect()
         self._set_syntax_colors(True)
@@ -692,6 +694,11 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> MainToolbar:
         return MainToolbar(self._actions, self._format_button, self._editing)
 
+    def _build_output_options(self) -> OutputOptionsPopover:
+        popover = OutputOptionsPopover(self._actions.sort_keys, self)
+        popover.set_output_format(self._output_pane.format_combo.currentText())
+        return popover
+
     def _build_status_bar(self) -> StatusBar:
         status = StatusBar()
         self.setStatusBar(status)
@@ -798,6 +805,9 @@ class MainWindow(QMainWindow):
         self._input_pane.format_changed.connect(self._sync_indent_units)
         self._output_pane.format_changed.connect(self._sync_indent_units)
         self._toolbar.indent_choice_changed.connect(self._on_indent_choice)
+        self._output_pane.format_changed.connect(self._output_options.set_output_format)
+        self._output_options.indent_chosen.connect(self._toolbar.set_indent_choice)
+        self._output_options.reset_requested.connect(self._reset_output_options)
         self._bind_pane(self._input_pane)
         self._bind_pane(self._output_pane)
         for editor in self._editors():
@@ -822,6 +832,7 @@ class MainWindow(QMainWindow):
         copy_output = self._output_pane.copy_button
         if options is not None:
             options.clicked.connect(actions.output_options.trigger)
+        actions.output_options.triggered.connect(self._toggle_output_options)
         if copy_output is not None:
             copy_output.clicked.connect(self._copy_output)
 
@@ -848,6 +859,11 @@ class MainWindow(QMainWindow):
             and isinstance(event, QKeyEvent)
             and event.key() == Qt.Key.Key_Escape
             and _is_inside(watched if isinstance(watched, QWidget) else None, self)
+            # Esc in the Output Options popover closes the popover.
+            and not _is_inside(
+                watched if isinstance(watched, QWidget) else None,
+                self._output_options,
+            )
         ):
             self._cancel_format()
             return True
@@ -869,6 +885,20 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         show_about_dialog(self)
+
+    def _toggle_output_options(self) -> None:
+        """Open the Output Options popover from the Options link, or close it."""
+        popover = self._output_options
+        options = self._output_pane.options_button
+        if popover.isVisible():
+            popover.close()
+        elif options is not None:
+            popover.open_from(options)
+
+    def _reset_output_options(self) -> None:
+        """2 spaces and Sort keys off, through the toolbar's own controls."""
+        self._toolbar.set_indent_choice(DEFAULT_INDENT_CHOICE)
+        self._actions.sort_keys.setChecked(False)
 
     def _not_yet(self) -> None:
         self.statusBar().showMessage(NOT_YET_MESSAGE, _NOT_YET_MS)
@@ -1402,13 +1432,18 @@ class MainWindow(QMainWindow):
     def _sync_indent_units(self) -> None:
         """Give each editor its pane's unit, and grey out Tab for YAML Output.
 
-        A pane in YAML indents with two spaces when Tab is chosen.
+        A pane in YAML indents with two spaces when Tab is chosen. The
+        Output Options popover shows the same choice and greys out the same
+        Tab.
         """
         choice = self._toolbar.indent_choice()
         for pane in (self._input_pane, self._output_pane):
             pane.editor.set_indent_unit(indent_unit(choice, pane.format_name()))
         output = format_named(self._output_pane.format_name())
-        self._toolbar.set_tab_unavailable(YAML_TAB_REASON if output is YAML else "")
+        reason = YAML_TAB_REASON if output is YAML else ""
+        self._toolbar.set_tab_unavailable(reason)
+        self._output_options.set_indent_choice(choice)
+        self._output_options.set_tab_unavailable(reason)
 
     def _format_indent(self) -> str:
         """What the Format job adds per level. Minify and Validate ignore it."""

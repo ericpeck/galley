@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from galley.app.actions import main, not_yet_failure
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
+from galley.app.parse_session import ParseSession
 from galley.app.problems_settings import (
     load_indent_size,
     load_sort_keys,
@@ -157,11 +158,15 @@ def test_the_options_link_opens_the_popover_anchored_to_it(qtbot) -> None:
     assert link.isCheckable()
     assert link.isChecked()
     assert window.statusBar().currentMessage() == ""
-    # Above the link, starting at its left edge, as in 6h.
+    # Above the link, starting at its left edge as in 6h, unless that would
+    # run off the screen's right edge.
     anchor = link.mapToGlobal(QPoint(0, 0))
     frame = popover.frameGeometry()
+    screen = link.screen().availableGeometry()
     assert frame.bottom() < anchor.y()
-    assert abs(frame.left() - anchor.x()) <= 2
+    assert frame.left() == min(anchor.x(), screen.right() + 1 - frame.width())
+    assert screen.left() <= frame.left()
+    assert frame.right() <= screen.right()
 
 
 def test_the_header_names_the_popover_and_the_output_format(qtbot) -> None:
@@ -196,6 +201,23 @@ def test_esc_closes_and_returns_focus_to_the_options_link(qtbot) -> None:
     qtbot.waitUntil(lambda: _focused() is _link(window), timeout=_WAIT_MS)
 
 
+def test_esc_in_the_popover_closes_it_and_leaves_a_running_format(
+    qtbot, monkeypatch
+) -> None:
+    window = _show(qtbot)
+    source, _output = _editors(window)
+    source.setPlainText(_JSON)
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    window._actions.format.trigger()
+    assert window._formatting
+    popover = _open(qtbot, window)
+    qtbot.waitUntil(lambda: _focused().window() is popover, timeout=_WAIT_MS)
+    _press(qtbot, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not popover.isVisible(), timeout=_WAIT_MS)
+    assert window._formatting
+
+
 def test_a_click_outside_closes_and_returns_focus_to_the_options_link(
     qtbot,
 ) -> None:
@@ -204,7 +226,7 @@ def test_a_click_outside_closes_and_returns_focus_to_the_options_link(
     qtbot.mouseClick(popover, Qt.MouseButton.LeftButton, pos=QPoint(-20, -20))
     qtbot.waitUntil(lambda: not popover.isVisible(), timeout=_WAIT_MS)
     assert not _link(window).isChecked()
-    assert _focused() is _link(window)
+    qtbot.waitUntil(lambda: _focused() is _link(window), timeout=_WAIT_MS)
 
 
 def test_a_press_on_the_options_link_while_open_only_closes_it(qtbot) -> None:
@@ -535,8 +557,9 @@ def _on_window(palette: QPalette, role: QPalette.ColorRole) -> float:
 def test_text_reads_at_4_5_to_1_and_edges_at_3_to_1(
     qtbot, install_scheme, scheme
 ) -> None:
-    palette = install_scheme(scheme)
     window = _show(qtbot)
+    # After the window: creating it applies the saved appearance.
+    palette = install_scheme(scheme)
     popover = _open(qtbot, window)
     assert popover.palette().color(QPalette.ColorRole.Window) == _surface(palette)
     for role in (
@@ -566,8 +589,8 @@ def test_text_reads_at_4_5_to_1_and_edges_at_3_to_1(
 
 
 def test_a_scheme_switch_restyles_the_popover(qtbot, install_scheme) -> None:
-    install_scheme("light")
     window = _show(qtbot)
+    install_scheme("light")
     _open(qtbot, window)
     light = _segment(window, "2").parentWidget().styleSheet()
     palette = install_scheme("dark")

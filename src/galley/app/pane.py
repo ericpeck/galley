@@ -26,6 +26,7 @@ from galley.app.open_file import InputDocument
 from galley.app.style import (
     link_button_style,
     muted_text_style,
+    options_link_style,
     pane_style,
     primary_button_style,
     secondary_button_style,
@@ -423,6 +424,9 @@ class PaneWidget(QWidget):
         self.footer_paste_button = None
         self.clear_button = None
         self.options_button = _link("Options", f"{self.spec.name}OptionsButton")
+        # Shows pressed while the Output Options popover is open.
+        self.options_button.setCheckable(True)
+        self.options_button.setStyleSheet(options_link_style())
         self.copy_button = _link("Copy", f"{self.spec.name}CopyButton")
         self.copy_button.setEnabled(False)
         row.addWidget(self.options_button)
