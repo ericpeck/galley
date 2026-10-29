@@ -138,7 +138,8 @@ def _status(window) -> str:
 
 
 def _write(path: Path, text: str) -> Path:
-    path.write_text(text, encoding="utf-8")
+    # Bytes, so Windows doesn't write "\r\n" and change the sizes shown.
+    path.write_bytes(text.encode("utf-8"))
     return path
 
 
