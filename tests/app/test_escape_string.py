@@ -81,10 +81,7 @@ def test_both_commands_are_built_and_follow_the_input(qtbot) -> None:
     assert escape not in actions._not_yet_actions()
     assert unescape not in actions._not_yet_actions()
     assert all(item not in actions.stubs() for item in (escape, unescape))
-    message = not_yet_failure()
-    assert message is not None
-    assert _ESCAPE not in message
-    assert _UNESCAPE not in message
+    assert not_yet_failure() is None
 
 
 def test_escape_writes_output_as_one_undo_step_and_keeps_input(qtbot) -> None:
