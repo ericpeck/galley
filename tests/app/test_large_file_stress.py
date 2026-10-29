@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
 )
+from tests.perf import time_runs
 
 from galley.app.editor import CHANGE_MARKERS, CodeEditor, LineMarker
 from galley.app.limits import MARKUP_FORMAT_LIMIT_BYTES
@@ -882,3 +883,34 @@ def _visible_warning(window) -> QMessageBox | None:
         return None
     assert len(visible) == 1
     return visible[0]
+
+
+@pytest.mark.perf
+def test_format_at_four_spaces_and_tab_is_timed() -> None:
+    """Time Format at 4 spaces and at Tab on the 2 MB JSON and XML fixtures.
+
+    Timing only: the medians are printed with no budget (Isaac). The
+    2-space medians print beside them for comparison; their budgets are
+    the existing ones and do not change.
+    """
+    json_text = _build(_BYTES["2 MB"])
+    xml_text = _xml_items(MARKUP_FORMAT_LIMIT_BYTES - 2048)
+    validate_xml(xml_text)
+    timings = {
+        "JSON 2 spaces": time_runs(lambda: format_json(json_text)),
+        "JSON 4 spaces": time_runs(lambda: format_json(json_text, indent="    ")),
+        "JSON Tab": time_runs(lambda: format_json(json_text, indent="\t")),
+        "XML 2 spaces": time_runs(lambda: format_xml(xml_text)),
+        "XML 4 spaces": time_runs(lambda: format_xml(xml_text, indent="    ")),
+    }
+    lines = [
+        f"Format indent timings, {_utf8_len(json_text):,} B JSON and "
+        f"{_utf8_len(xml_text):,} B XML ({sys.platform}; timing only, no budget)"
+    ]
+    for label, timing in timings.items():
+        samples = ", ".join(f"{sample * 1000:.1f}" for sample in timing.samples)
+        lines.append(f"  {label}: median {timing.median * 1000:.1f} ms ({samples})")
+    print("\n".join(lines), flush=True)
+    assert format_json(json_text, indent="\t").count("\n") == format_json(
+        json_text
+    ).count("\n")

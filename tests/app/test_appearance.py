@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+from galley.app.actions import UNBUILT_ACTIONS, is_unbuilt
 from galley.app.appearance import (
     MODE_DARK,
     MODE_LIGHT,
@@ -454,14 +455,27 @@ def _label_ink(button: QToolButton) -> tuple[QColor, QColor]:
     return ink, background
 
 
-def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
+def _indent_coming_soon(monkeypatch) -> None:
+    """Put Indent back on the Coming soon list.
+
+    No toolbar button is unbuilt now, and Link Scrolling has no toolbar
+    button, so Indent stands in for the Coming soon face.
+    """
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS", (*UNBUILT_ACTIONS, "Indent")
+    )
+
+
+def test_disabled_controls_look_disabled_in_light_and_dark(monkeypatch, qtbot) -> None:
     """Carries #69's faded-text fix: Coming soon must not look like Paste."""
+    _indent_coming_soon(monkeypatch)
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
     assert paste.isEnabled()
     coming_soon = [_tool_button(window, name) for name in ("Indent",)]
     for button in coming_soon:
         assert not button.isEnabled()
+        assert is_unbuilt(button.defaultAction())
 
     for label in ("Light", "Dark"):
         _pick(qtbot, window, label)
@@ -499,13 +513,14 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
             )
 
 
-def test_icon_only_coming_soon_buttons_draw_3_to_1(qtbot) -> None:
+def test_icon_only_coming_soon_buttons_draw_3_to_1(monkeypatch, qtbot) -> None:
     """The Windows runner's wider fallback font made the toolbar overflow.
 
     Overflow shows Coming soon buttons icon-only, so the drawn disabled
     ink is the glyph's strokes. Off-center 1.6 px strokes covered each
     pixel at 80% and drew 2.57:1; centered strokes draw the role's color.
     """
+    _indent_coming_soon(monkeypatch)
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
     indent = _tool_button(window, "Indent")

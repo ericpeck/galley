@@ -1,11 +1,15 @@
-"""The Tab key types spaces up to the next indent stop (#91 item 6)."""
+"""The Tab key types spaces up to the next indent stop (#91 item 6).
+
+Over several lines, Tab indents them and Shift+Tab outdents them. The unit
+is the indent size picker's: 2 spaces by default.
+"""
 
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import QApplication, QComboBox
 
-from galley.app.editor import INDENT_WIDTH, CodeEditor
+from galley.app.editor import DEFAULT_INDENT_UNIT, CodeEditor
 from galley.app.main import create_main_window
 from galley.app.problems_pane import ProblemsPane
 
@@ -51,8 +55,9 @@ def _focus(qtbot, editor: CodeEditor) -> None:
     qtbot.waitUntil(lambda: QApplication.focusWidget() is editor)
 
 
-def test_indent_width_is_two_spaces() -> None:
-    assert INDENT_WIDTH == 2
+def test_the_default_unit_is_two_spaces(qtbot) -> None:
+    assert DEFAULT_INDENT_UNIT == "  "
+    assert _editor(qtbot, "", "JSON").indent_unit() == "  "
 
 
 @pytest.mark.parametrize("mode", ["JSON", "YAML"])
@@ -95,20 +100,44 @@ def test_tab_replaces_the_selection_with_spaces(qtbot) -> None:
 _LINES = "a:\n  b: 1\n  c: 2\n"
 
 
-@pytest.mark.parametrize(
-    ("position", "anchor"),
-    [
-        (12, 5),  # forward, from inside line 2 to inside line 3
-        (5, 12),  # backward
-        (13, 1),  # forward, from inside line 1 to inside line 3
-        (3, 0),  # the whole first line, ending at the start of line 2
-        (10, 0),  # lines 1 and 2, ending at the start of line 3
-        (0, 10),  # the same, selected backward
-        (len(_LINES), 0),  # the whole document
-        (0, len(_LINES)),  # the whole document, selected backward
-    ],
-)
-def test_tab_leaves_a_multi_line_selection_alone(qtbot, position, anchor) -> None:
+_MULTI_LINE = [
+    # (position, anchor, lines Tab indents)
+    (12, 5, (1, 2)),  # forward, from inside line 2 to inside line 3
+    (5, 12, (1, 2)),  # backward
+    (13, 1, (0, 1, 2)),  # forward, from inside line 1 to inside line 3
+    (3, 0, (0,)),  # the whole first line, ending at the start of line 2
+    (10, 0, (0, 1)),  # lines 1 and 2, ending at the start of line 3
+    (0, 10, (0, 1)),  # the same, selected backward
+    (len(_LINES), 0, (0, 1, 2)),  # the whole document, ending on the empty line
+    (0, len(_LINES), (0, 1, 2)),  # the whole document, selected backward
+]
+
+
+def _indented(text: str, lines: tuple[int, ...], unit: str = "  ") -> str:
+    rows = text.split("\n")
+    return "\n".join(unit + row if i in lines else row for i, row in enumerate(rows))
+
+
+def _assert_one_undo_step(editor: CodeEditor, before: str) -> None:
+    """One undo restores ``before`` and leaves nothing more to undo."""
+    editor.undo()
+    assert editor.toPlainText() == before
+    assert not editor.document().isUndoAvailable()
+
+
+def _selected_lines(editor: CodeEditor) -> tuple[int, int]:
+    cursor = editor.textCursor()
+    document = editor.document()
+    first = document.findBlock(cursor.selectionStart()).blockNumber()
+    last = document.findBlock(cursor.selectionEnd())
+    end = last.blockNumber()
+    if end > first and cursor.selectionEnd() == last.position():
+        end -= 1
+    return first, end
+
+
+@pytest.mark.parametrize(("position", "anchor", "lines"), _MULTI_LINE)
+def test_tab_indents_a_multi_line_selection(qtbot, position, anchor, lines) -> None:
     window = _show(qtbot)
     editor = _input(window)
     editor.set_syntax_mode("YAML")
@@ -117,22 +146,52 @@ def test_tab_leaves_a_multi_line_selection_alone(qtbot, position, anchor) -> Non
     _focus(qtbot, editor)
     _place(editor, position, anchor=anchor)
     qtbot.keyClick(window.windowHandle(), Qt.Key.Key_Tab)
-    assert editor.toPlainText() == _LINES
-    assert not editor.document().isUndoAvailable()
-    assert editor.document().availableUndoSteps() == 0
-    cursor = editor.textCursor()
-    assert (cursor.anchor(), cursor.position()) == (anchor, position)
+    assert editor.toPlainText() == _indented(_LINES, lines)
+    assert _selected_lines(editor) == (min(lines), max(lines))
     assert QApplication.focusWidget() is editor
+    _assert_one_undo_step(editor, _LINES)
 
 
-def test_select_all_then_tab_changes_nothing(qtbot) -> None:
+@pytest.mark.parametrize(("position", "anchor", "lines"), _MULTI_LINE)
+def test_shift_tab_outdents_a_multi_line_selection(
+    qtbot, position, anchor, lines
+) -> None:
+    window = _show(qtbot)
+    editor = _input(window)
+    editor.set_syntax_mode("YAML")
+    editor.setPlainText(_LINES)
+    _focus(qtbot, editor)
+    _place(editor, position, anchor=anchor)
+    qtbot.keyClick(window.windowHandle(), Qt.Key.Key_Tab)
+    editor.document().clearUndoRedoStacks()
+    qtbot.keyClick(window.windowHandle(), Qt.Key.Key_Backtab, _SHIFT)
+    assert editor.toPlainText() == _LINES
+    assert _selected_lines(editor) == (min(lines), max(lines))
+    assert QApplication.focusWidget() is editor
+    _assert_one_undo_step(editor, _indented(_LINES, lines))
+
+
+def test_select_all_then_tab_indents_every_line(qtbot) -> None:
     editor = _editor(qtbot, _LINES, "JSON")
     editor.document().clearUndoRedoStacks()
     editor.selectAll()
     qtbot.keyClick(editor, Qt.Key.Key_Tab)
-    assert editor.toPlainText() == _LINES
-    assert not editor.document().isUndoAvailable()
-    assert editor.textCursor().selectedText() == _LINES.replace("\n", "\u2029")
+    # The selection ends at the start of the empty last line, which stays.
+    assert editor.toPlainText() == _indented(_LINES, (0, 1, 2))
+    assert _selected_lines(editor) == (0, 2)
+    _assert_one_undo_step(editor, _LINES)
+
+
+@pytest.mark.parametrize(
+    ("unit", "column", "typed"),
+    [("    ", 0, "    "), ("    ", 1, "   "), ("    ", 5, "   "), ("\t", 2, "\t")],
+)
+def test_tab_steps_by_the_editors_unit(qtbot, unit, column, typed) -> None:
+    editor = _editor(qtbot, "abcdef", "JSON")
+    editor.set_indent_unit(unit)
+    _place(editor, column)
+    qtbot.keyClick(editor, Qt.Key.Key_Tab)
+    assert editor.toPlainText() == "abcdef"[:column] + typed + "abcdef"[column:]
 
 
 @pytest.mark.parametrize("mode", ["JSON", "YAML"])
@@ -167,7 +226,7 @@ def test_read_only_editor_types_nothing(qtbot) -> None:
     assert editor.toPlainText() == "a: 1\n"
 
 
-def test_shift_tab_still_moves_focus_back_and_types_nothing(qtbot) -> None:
+def test_shift_tab_without_a_multi_line_selection_moves_focus_back(qtbot) -> None:
     window = _show(qtbot)
     editor = _input(window)
     editor.setPlainText("a:\n  b: 1\n")

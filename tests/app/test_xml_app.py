@@ -204,11 +204,26 @@ def test_coming_soon_and_fold_commands_keep_their_own_state(qtbot) -> None:
     window = _show(qtbot)
     _choose(_pane(window, "input"), "XML")
     actions = window._actions
-    assert actions.indent.toolTip() == COMING_SOON
-    assert not actions.indent.isEnabled()
+    assert actions.link_scrolling.toolTip() == COMING_SOON
+    assert not actions.link_scrolling.isEnabled()
     for action in (actions.expand_all, actions.collapse_all):
         assert not action.isEnabled()
         assert action.toolTip().endswith("nothing to fold")
+
+
+def test_indent_works_on_xml_and_waits_only_for_text(qtbot) -> None:
+    """Indent is greyed out for XML only while Input is empty."""
+    window = _show(qtbot)
+    source = _pane(window, "input")
+    _choose(source, "XML")
+    actions = window._actions
+    for action, words in ((actions.indent, "Indent"), (actions.outdent, "Outdent")):
+        assert action.toolTip().startswith(f"{words} lines (")
+        assert action.toolTip() != COMING_SOON
+        assert not action.isEnabled()
+    source.editor.setPlainText(_XML)
+    assert actions.indent.isEnabled()
+    assert actions.outdent.isEnabled()
 
 
 def test_sort_keys_keeps_its_check_while_greyed_out(qtbot) -> None:
