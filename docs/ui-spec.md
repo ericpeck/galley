@@ -15,9 +15,9 @@ Galley formats, validates, and converts JSON and YAML. Users paste text or open 
 Main window, top to bottom (ref: 6c):
 
 1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
-2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input 1</b>` (names the pane that has focus / is the Format target).
+2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input</b>` (names the pane that has focus / is the Format target).
 3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes.
-4. Each pane holds one document: **tab strip** (the pane title, `Input 1` / `Output 1`) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
+4. Each pane holds one document: **tab strip** (the pane title, `Input` / `Output`) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
 5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
 
 Default split is 50/50 (Input / Output). The rail readout shows `50` over `50`. The mocks printed `40` over `60` while the panes looked near equal; the default ratio is 50/50.
@@ -131,11 +131,11 @@ Three states:
 - **No input**: label `{·} Format ⌘↵`, disabled face `#86BFD0` (45% of `accent` over `window.bg`). Only when there is nothing to format.
 - **Ready**: full `accent`, white bold label, shortcut hint `⌘↵` (platform layer supplies `Ctrl+Return` on Windows; §12).
 - **Working**: full color, small spinner, label `Formatting…`. Never looks disabled. Cancel lives in the status bar, not on the button.
-Caption below: `Editing Input 1` / `Editing Output 1` (bold pane name).
+Caption below: `Editing Input` / `Editing Output` (bold pane name).
 
 ### 5.3 Tab strip
 - Galley v1 has no tabs. Each pane holds one document, and the strip has no close `×`, no new tab `+`, and no right-click menu.
-- Left side of strip: the bold pane title (`Input 1`, `Output 1`).
+- Left side of strip: the bold pane title (`Input`, `Output`).
 - Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`).
 
 ### 5.4 Editor (QPlainTextEdit subclass)
@@ -174,7 +174,7 @@ Removed. Galley v1 has no pop-out windows; both panes stay in the main window.
 - Common: title bold; summary line with icon; rows on `card.bg` with `Line N, column M` left, snippet (mono) + explanation middle, `Show in input →` link right; legend row; footer buttons right-aligned, primary rightmost with check icon and focus ring.
 
 ### 5.12 Output options popover (6h)
-Anchored to the `Options` footer button. Header `Output options`, right `Output 1 · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
+Anchored to the `Options` footer button. Header `Output options`, right `Output · YAML`. Rows: Indent `2 | 4 | Tab`; Sort keys `☐ A–Z at every level` + `Comments may move.`; Non-ASCII `☐ Escape as \u00e9`; Line endings `LF | CRLF` + `CRLF is the Windows default`; section `YAML` (only when output is YAML): Quote style `Plain | Single | Double` + `Quotes are added only where needed`; Collections `Block | Flow`. Footer: `↺ Reset to defaults` link, `Applies on the next Format`.
 
 ### 5.13 Menus
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`. There is no Window menu. Menu-bar placement is in §12.
@@ -206,7 +206,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W is unbound, and ⇧⌘W stays free for a later Close Window binding.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W closes the window, and ⇧⌘W stays free.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions.
 
@@ -275,18 +275,18 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - While output fills in: breadcrumb shows `Path  Available when formatting finishes` greyed; `Copy path` greyed; find works as plain text (`Kei Tanaka`, `1 so far`), `Path` scope greyed. Output footer `1,284 lines so far`, Copy greyed.
 - Status: spinner `Formatting… 4.8 MB · writing output`, progress bar (accent fill on `gutter.bg` track) + `62%`, `✕ Cancel`. **Progress bar appears only while writing.**
 - Format button in Working state.
-- **Cancel** (ref: 6d cancel crop): rolls Output 1 back to the result it had before Format was pressed; a half-written output is never left behind. Status: `ⓘ Cancelled. Showing the previous result.` Footer `34 lines`, Copy enabled.
+- **Cancel** (ref: 6d cancel crop): rolls Output back to the result it had before Format was pressed; a half-written output is never left behind. Status: `ⓘ Cancelled. Showing the previous result.` Footer `34 lines`, Copy enabled.
 - Esc in the main window while working = Cancel (proposal; confirm).
 
 ### 6e — JSON to YAML (ref: 6e)
 - Input JSON, Output as YAML. YAML uses JSON colors, dash lists, folding by indentation.
 - Line 10 `zip: "04101"` keeps quotes; gutter info icon; inline note `ⓘ Kept "04101" in quotes so YAML doesn't read it as the number 4101.` Non-1:1 conversions are info notes, never errors.
 - Output focused (accent focus border). Breadcrumb `root › order › customer › address › zip`.
-- Footers: `34 lines · 612 characters`; `22 lines · 1 note`. Status `✓ Converted · 1 note`. Direction `JSON → YAML`. Caption `Editing Output 1`.
+- Footers: `34 lines · 612 characters`; `22 lines · 1 note`. Status `✓ Converted · 1 note`. Direction `JSON → YAML`. Caption `Editing Output`.
 
 ### 6f — Replace existing output? (ref: 6f)
 - Shown only when Format would overwrite Output the user edited (footer `Edited`).
-- Title `Output 1 has changes. Replace it?` Body `You edited Output 1 after the last Format. Replacing it discards those edits.`
+- Title `Output has changes. Replace it?` Body `You edited Output after the last Format. Replacing it discards those edits.`
 - Buttons: `Cancel` (text button, focused default, so Return never throws work away), `Replace`.
 - No `Don't ask again`: it only took effect with `Format into a new tab`, which Galley v1 doesn't have.
 

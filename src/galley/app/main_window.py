@@ -669,6 +669,9 @@ class MainWindow(QMainWindow):
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
+        # The same close as the title bar button, so closeEvent still runs.
+        self.addAction(actions.close_window)
+        actions.close_window.triggered.connect(self.close)
         actions.undo.triggered.connect(self._undo)
         actions.redo.triggered.connect(self._redo)
         actions.cut.triggered.connect(self._cut)

@@ -262,6 +262,13 @@ class ShellActions:
             standard=QKeySequence.StandardKey.Quit,
             role=QAction.MenuRole.QuitRole,
         )
+        # ⌘W / Ctrl+W. It is in no menu; the window holds it so the keys work.
+        self.close_window = _action(
+            parent,
+            "Close Window",
+            standard=QKeySequence.StandardKey.Close,
+            role=QAction.MenuRole.NoRole,
+        )
         self.open_file = _action(
             parent,
             "Open file…",

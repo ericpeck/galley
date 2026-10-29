@@ -72,8 +72,8 @@ class StripShed(IntEnum):
 class PaneRole:
     """The two panes the main window shows today."""
 
-    INPUT = PaneSpec("input", "Input 1", "Input as", PaneKind.SOURCE)
-    OUTPUT = PaneSpec("output", "Output 1", "Output as", PaneKind.RESULT)
+    INPUT = PaneSpec("input", "Input", "Input as", PaneKind.SOURCE)
+    OUTPUT = PaneSpec("output", "Output", "Output as", PaneKind.RESULT)
 
 
 class PaneWidget(QWidget):

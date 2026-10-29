@@ -362,8 +362,8 @@ def test_900_px_with_problems_open_clips_nothing(
     problems = _open_problems(qtbot, window)
     qtbot.waitUntil(lambda: window.width() == 900)
     # The platform fonts can fit both unshed strips beside Problems at
-    # 900 px. Wide fonts still push Problems to 200 px, and the wider Output
-    # strip sheds.
+    # 900 px. Wide fonts push Problems toward 200 px, and a strip sheds only
+    # if Problems gets there.
     expected = _expected_problems_width(window, DEFAULT_WIDTH)
     _wait_problems(qtbot, window, problems, expected)
     assert _saved_width() == DEFAULT_WIDTH
