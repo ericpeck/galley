@@ -251,8 +251,10 @@ class CompareMode(QObject):
         host.left.format_changed.connect(self._on_format_changed)
         host.right.format_changed.connect(self._on_right_format_changed)
         left = host.left.editor
-        left.textChanged.connect(lambda: self._bump("left"))
-        self._right.textChanged.connect(lambda: self._bump("right"))
+        # Bound methods, not lambdas: a lambda on Right's signal would keep
+        # this object, Right and the window's wrapper alive after it closes.
+        left.textChanged.connect(self._bump_left)
+        self._right.textChanged.connect(self._bump_right)
         left.verticalScrollBar().valueChanged.connect(self._follow_left)
         left.horizontalScrollBar().valueChanged.connect(self._follow_left_across)
         self._right.verticalScrollBar().valueChanged.connect(self._follow_right)
@@ -854,8 +856,11 @@ class CompareMode(QObject):
         self._end_job()
         self._host.status.set_state(message)
 
-    def _bump(self, side: CompareSide) -> None:
-        self._versions[side] += 1
+    def _bump_left(self) -> None:
+        self._versions["left"] += 1
+
+    def _bump_right(self) -> None:
+        self._versions["right"] += 1
 
     # --- Opening ----------------------------------------------------------
 

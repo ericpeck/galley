@@ -1107,3 +1107,39 @@ def test_format_on_the_spawn_worker_formats_both_sides(qtbot) -> None:
         assert any(isinstance(row, ChangeRow) for row in rows)
     finally:
         window.shutdown_parse_worker()
+
+
+def test_a_closed_window_leaves_no_compare_widgets_behind(qtbot) -> None:
+    """Right's editor, its find bar and the Changes pane go with the window.
+
+    They have no parent while Compare is off. A lambda connected to one of
+    their signals kept them, Compare and the window's wrapper alive, so
+    every later window in the process got slower.
+    """
+    import gc
+
+    from PySide6.QtCore import QEvent
+
+    names = {"rightEditor", "rightFindBar", "changesPage"}
+
+    def _left_over() -> set[str]:
+        gc.collect()
+        return {
+            widget.objectName()
+            for widget in QApplication.topLevelWidgets()
+            if widget.objectName() in names
+        }
+
+    before = _left_over()
+    # A window that never enters Compare, as most are: Right and the
+    # Changes pane are still parentless.
+    window = create_main_window()
+    window.show()
+    qtbot.waitExposed(window)
+    _type_input(window, _LEFT)
+    window.close()
+    window.deleteLater()
+    del window
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    QApplication.processEvents()
+    assert _left_over() == before
