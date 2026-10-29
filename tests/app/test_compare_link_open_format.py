@@ -2,15 +2,16 @@
 
 - An empty Right shows "Paste or open the JSON or YAML to compare with."
   with Open Right Document…, which loads Right.
-- File › Open…, Open Recent and a drop outside the panes ask Open on left,
-  Open on right (the default) or Cancel. A drop on Left or Right loads that
-  side. XML and HTML are refused with the worker's "XML can't be compared."
-  Open on left replaces Input as one undo step, so Undo after leaving
-  Compare brings the old Input back.
+- File › Open…, Open Recent and a drop outside the panes ask Left, Right
+  (the default) or Cancel. A drop on Left or Right loads that side. Each
+  file is read once. XML and HTML are refused with the worker's "XML can't
+  be compared." Left replaces Input as one undo step, so Undo after
+  leaving Compare brings the old Input back.
 - Link Scrolling, on by default, keeps matching lines level on both sides.
 - Format reformats both sides, one Format job each, Left first. It ignores
-  Sort keys and uses the indent size, with YAML always in spaces. If either
-  side has errors, neither changes.
+  Sort keys and uses the indent size from before Compare, with YAML always
+  in spaces. Both results are held; if either side has errors or changed
+  meanwhile, neither changes.
 
 Compares and formats run in-process (``inline_compare``, ``inline_format``)
 behind the same ``ParseSession`` signals, except the last test, which uses
@@ -40,10 +41,11 @@ from PySide6.QtWidgets import (
 from tests.app.compare_inline import inline_compare as inline_compare
 from tests.app.compare_inline import inline_format as inline_format
 
-from galley.app.changes_pane import ADD_SECOND_DOCUMENT, FIX_ERRORS, ChangesPane
+from galley.app.changes_pane import ADD_SECOND_DOCUMENT, ChangesPane
 from galley.app.compare_mode import (
-    OPEN_ON_LEFT,
-    OPEN_ON_RIGHT,
+    FIX_ERRORS_TO_FORMAT,
+    FORMATTED_BOTH,
+    FORMATTED_LEFT,
     RIGHT_PLACEHOLDER,
     open_side_text,
 )
@@ -313,7 +315,7 @@ def test_open_right_document_loads_right_and_compares(
     assert inline_compare.sent[-1].right_text == _YAML
     assert inline_compare.sent[-1].right_format == "YAML"
     _wait_idle(qtbot, window)
-    assert _status(window) == "Opened other.yaml (27 B)"
+    assert _status(window) == "Opened other.yaml (28 B)"
     assert left.toPlainText() == _LEFT
     assert left.document().availableUndoSteps() == steps
     # The Output editor behind Right is untouched.
@@ -403,9 +405,55 @@ def test_canceling_the_dialog_outside_compare_stays_out(
 ) -> None:
     window = _show(qtbot)
     _type_input(window, _LEFT)
-    _choose_file(monkeypatch, None)
+    status = _status(window)
+    calls = _choose_file(monkeypatch, None)
     _action(window, "Open Right Document…").trigger()
+    assert calls == [1]
     assert not _action(window, "Compare").isChecked()
+    assert not window._compare.is_on()
+    assert _left(window).toPlainText() == _LEFT
+    assert not _left(window).isReadOnly()
+    assert window._compare.right_editor().toPlainText() == ""
+    assert _editor(window, "outputEditor").isVisible()
+    assert inline_compare.sent == []
+    assert _status(window) == status
+
+
+def _count_reads(monkeypatch) -> list[Path]:
+    import galley.app.open_file as open_file
+
+    reads: list[Path] = []
+    real = open_file.read_document
+
+    def _spy(path: Path, *args, **kwargs):
+        reads.append(path)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(open_file, "read_document", _spy)
+    return reads
+
+
+@pytest.mark.parametrize("side", ["Left", "Right"])
+def test_each_file_is_read_exactly_once(
+    qtbot, inline_compare, monkeypatch, tmp_path, side
+) -> None:
+    path = _write(tmp_path / "sample.json", _SAMPLE)
+    window = _show(qtbot)
+    _compare(qtbot, window)
+    reads = _count_reads(monkeypatch)
+    _choose_file(monkeypatch, path)
+    _action(window, "Open file…").trigger()
+    _box_button(_side_sheet(qtbot, window), side).click()
+    if side == "Left":
+        replace = _wait_box(qtbot, window, "replaceInput")
+        default = replace.defaultButton()
+        assert default is not None
+        default.click()
+        _wait_left(qtbot, window, _SAMPLE)
+    else:
+        _wait_right(qtbot, window, _SAMPLE)
+    _wait_idle(qtbot, window)
+    assert reads == [path]
 
 
 @pytest.mark.parametrize("label", ["XML", "HTML"])
@@ -436,7 +484,7 @@ def test_a_large_right_file_asks_before_comparing(
     _box_button(box, "Cancel").click()
 
 
-# --- The Open on left / Open on right sheet --------------------------------
+# --- The Left / Right / Cancel sheet --------------------------------------
 
 
 def test_file_open_while_comparing_asks_which_side(
@@ -453,11 +501,11 @@ def test_file_open_while_comparing_asks_which_side(
     assert box.text() == open_side_text("sample.json")
     assert box.text() == "Open “sample.json” on the left or the right?"
     assert box.windowModality() == Qt.WindowModality.WindowModal
-    assert sorted(_box_texts(box)) == sorted([OPEN_ON_LEFT, OPEN_ON_RIGHT, "Cancel"])
-    assert (OPEN_ON_LEFT, OPEN_ON_RIGHT) == ("Open on left", "Open on right")
+    # Eric's names, in place of the brief's Open on left and Open on right.
+    assert sorted(_box_texts(box)) == sorted(["Left", "Right", "Cancel"])
     default = box.defaultButton()
     assert default is not None
-    assert default.text() == OPEN_ON_RIGHT
+    assert default.text() == "Right"
     escape = box.escapeButton()
     assert isinstance(escape, QPushButton)
     assert escape.text() == "Cancel"
@@ -493,7 +541,7 @@ def test_open_on_left_replaces_input_as_one_undo_step(
     left = _left(window)
     _choose_file(monkeypatch, path)
     _action(window, "Open file…").trigger()
-    _box_button(_side_sheet(qtbot, window), OPEN_ON_LEFT).click()
+    _box_button(_side_sheet(qtbot, window), "Left").click()
     # Typed Input gets the same Replace prompt as File › Open.
     replace = _wait_box(qtbot, window, "replaceInput")
     default = replace.defaultButton()
@@ -528,7 +576,7 @@ def test_open_on_left_compares_once(
     _choose_file(monkeypatch, path)
     sent = len(inline_compare.sent)
     _action(window, "Open file…").trigger()
-    _box_button(_side_sheet(qtbot, window), OPEN_ON_LEFT).click()
+    _box_button(_side_sheet(qtbot, window), "Left").click()
     replace = _wait_box(qtbot, window, "replaceInput")
     default = replace.defaultButton()
     assert default is not None
@@ -546,7 +594,7 @@ def test_open_on_left_refuses_xml(qtbot, inline_compare, monkeypatch, tmp_path) 
     _compare(qtbot, window)
     _choose_file(monkeypatch, path)
     _action(window, "Open file…").trigger()
-    _box_button(_side_sheet(qtbot, window), OPEN_ON_LEFT).click()
+    _box_button(_side_sheet(qtbot, window), "Left").click()
     qtbot.waitUntil(
         lambda: _status(window) == "XML can't be compared.", timeout=_WAIT_MS
     )
@@ -643,7 +691,7 @@ def test_a_file_dropped_elsewhere_asks_which_side(
     assert _drop(_toolbar(window), mime)
     box = _side_sheet(qtbot, window)
     assert box.text() == open_side_text("sample.json")
-    _box_button(box, OPEN_ON_RIGHT).click()
+    _box_button(box, "Right").click()
     _wait_right(qtbot, window, _SAMPLE)
 
 
@@ -825,8 +873,12 @@ def test_format_reformats_both_sides_at_the_indent_size(
     qtbot, inline_compare, inline_format
 ) -> None:
     window = _show(qtbot)
-    _indent_picker(window).setCurrentText("4 spaces")
+    picker = _indent_picker(window)
+    picker.setCurrentText("4 spaces")
     _compare(qtbot, window, _COMPACT_LEFT, _COMPACT_RIGHT)
+    # The picker is greyed out while comparing and still shows its value.
+    assert not picker.isEnabled()
+    assert picker.currentText() == "4 spaces"
     compares = len(inline_compare.sent)
     _action(window, "Format").trigger()
     qtbot.waitUntil(
@@ -849,6 +901,8 @@ def test_format_reformats_both_sides_at_the_indent_size(
     assert last.left_text == _left(window).toPlainText()
     assert last.right_text == _right(window).toPlainText()
     assert _changes(window).count() == 1
+    assert _status(window) == FORMATTED_BOTH
+    assert FORMATTED_BOTH == "Formatted both sides."
 
 
 def test_format_never_sorts_keys(qtbot, inline_compare, inline_format) -> None:
@@ -890,16 +944,17 @@ def test_the_left_format_is_one_undo_step_on_input(
     window = _show(qtbot)
     _compare(qtbot, window, _COMPACT_LEFT, _COMPACT_RIGHT)
     left = _left(window)
-    steps = left.document().availableUndoSteps()
     _action(window, "Format").trigger()
     qtbot.waitUntil(lambda: left.toPlainText() != _COMPACT_LEFT, timeout=_WAIT_MS)
     _wait_idle(qtbot, window)
-    assert left.document().availableUndoSteps() == steps + 1
     formatted = left.toPlainText()
     _action(window, "Compare").trigger()
     assert left.toPlainText() == formatted
+    # One Undo after leaving brings the text from before Format back.
     _action(window, "Undo").trigger()
     assert left.toPlainText() == _COMPACT_LEFT
+    _action(window, "Redo").trigger()
+    assert left.toPlainText() == formatted
 
 
 @pytest.mark.parametrize("broken", ["left", "right"])
@@ -913,11 +968,11 @@ def test_errors_on_either_side_change_neither(
     _action(window, "Format").trigger()
     qtbot.waitUntil(
         lambda: (
-            _changes(window).message() == FIX_ERRORS
-            and not window._compare.is_running()
+            _status(window) == FIX_ERRORS_TO_FORMAT and not window._compare.is_running()
         ),
         timeout=_WAIT_MS,
     )
+    assert FIX_ERRORS_TO_FORMAT == "Fix errors to format."
     assert _left(window).toPlainText() == left_text
     assert _right(window).toPlainText() == right_text
     assert window._problems_pane.count() > 0
@@ -945,6 +1000,10 @@ def test_formatting_shows_after_500_ms_with_cancel_and_cancel_changes_nothing(
     # A second Format while one runs does nothing.
     _action(window, "Format").trigger()
     assert len(inline_format.sent) == 1
+    # Left finishes; Cancel stops Right's job and drops Left's result.
+    inline_format.release()
+    assert len(inline_format.sent) == 2
+    assert inline_format.sent[-1].text == _COMPACT_RIGHT
     cancel.click()
     assert not window._compare.is_running()
     assert _status(window) == CANCELLED_MESSAGE
@@ -967,6 +1026,57 @@ def test_format_with_right_empty_formats_left_only(
     assert [job.text for job in inline_format.sent] == [_COMPACT_LEFT]
     assert _right(window).toPlainText() == ""
     assert _changes(window).message() == ADD_SECOND_DOCUMENT
+    assert _status(window) == FORMATTED_LEFT
+    assert FORMATTED_LEFT == "Formatted Left side."
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_a_side_that_changed_meanwhile_drops_both_results(
+    qtbot, inline_compare, inline_format, side
+) -> None:
+    window = _show(qtbot)
+    _compare(qtbot, window, _COMPACT_LEFT, _COMPACT_RIGHT)
+    compares = len(inline_compare.sent)
+    inline_format.hold = True
+    _action(window, "Format").trigger()
+    inline_format.release()
+    assert len(inline_format.sent) == 2
+    # The side changes while Right's job runs, with no compare asked for.
+    edited = '{"edited": true}'
+    _left(window).setPlainText(edited) if side == "left" else _right(
+        window
+    ).setPlainText(edited)
+    inline_format.release()
+    assert not window._compare.is_running()
+    expected_left = edited if side == "left" else _COMPACT_LEFT
+    expected_right = edited if side == "right" else _COMPACT_RIGHT
+    assert _left(window).toPlainText() == expected_left
+    assert _right(window).toPlainText() == expected_right
+    assert len(inline_compare.sent) == compares
+    assert _status(window) not in (FORMATTED_BOTH, FORMATTED_LEFT)
+
+
+def test_format_keeps_its_own_size_sheet(qtbot, inline_compare, inline_format) -> None:
+    """Format's 352 kB YAML question still asks; the 2 MB one is for the compare."""
+    big = "rows:\n" + "".join(f"- name: row {i:06}\n" for i in range(20_000))
+    assert 352_000 <= len(big.encode("utf-8")) < 2_000_000
+    window = _show(qtbot)
+    _set_picker(window, "inputFormat", "YAML")
+    _enter(qtbot, window, big)
+    _paste_right(window, "rows: []\n")
+    _wait_idle(qtbot, window)
+    _action(window, "Format").trigger()
+    box = _wait_box(qtbot, window, "sizeWarning")
+    assert window.findChild(QMessageBox, "compareSizeWarning") is None
+    assert inline_format.sent == []
+    _box_button(box, "Cancel").click()
+    assert inline_format.sent == []
+    _action(window, "Format").trigger()
+    box = _wait_box(qtbot, window, "sizeWarning")
+    _box_button(box, "Format anyway").click()
+    qtbot.waitUntil(lambda: len(inline_format.sent) == 2, timeout=_WAIT_MS)
+    _wait_idle(qtbot, window)
+    assert _status(window) == FORMATTED_BOTH
 
 
 def test_format_on_the_spawn_worker_formats_both_sides(qtbot) -> None:

@@ -2,6 +2,7 @@
 
 import html
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -404,15 +405,15 @@ class MainWindow(QMainWindow):
         self._compare = self._build_compare()
 
     def _build_compare(self) -> CompareMode:
-        """Compare mode (#65 slice 3d): the one place the window wires it in.
+        """Compare mode (#65 slices 3d and 3e): the one place the window wires it in.
 
         Everything else lives in compare_mode.py. The held commands are the
-        3d brief's list, plus the ones that would change Input or Output
-        or act on the hidden Output editor.
+        3d brief's list, less Format, plus the ones that would change Input
+        or Output or act on the hidden Output editor. While Compare is on,
+        Format, File › Open… and Open Recent go to Compare instead.
         """
         actions = self._actions
         held = (
-            actions.format,
             actions.minify,
             actions.validate,
             actions.sort_keys,
@@ -429,14 +430,11 @@ class MainWindow(QMainWindow):
             actions.output_options,
             actions.fold,
             actions.unfold,
-            actions.open_file,
-            self._recent_menu.menuAction(),
             self._copy_as_menu.menuAction(),
             *actions.copy_as_actions().values(),
         )
         picker = self._toolbar.findChild(QComboBox, "indentSize")
         widgets = [
-            self._format_button,
             picker,
             self._output_pane.options_button,
             self._input_pane.footer_paste_button,
@@ -461,7 +459,36 @@ class MainWindow(QMainWindow):
             self._update_caption()
             self._update_focus_ring()
 
-        return CompareMode(
+        def _choose_path() -> Path | None:
+            chosen = self._choose_open_path()
+            if chosen is not None:
+                save_last_open_dir(chosen.parent)
+            return chosen
+
+        def _remember(path: Path) -> None:
+            remember_recent_file(path)
+            self._recent_menu.rebuild()
+
+        def _check_format_size(
+            sides: list[tuple[str, str]], proceed: Callable[[], None]
+        ) -> None:
+            # Format's own size rules: the markup limit, then its one sheet.
+            sizes = [(_utf8_size(text), text, source) for text, source in sides]
+            for size, _text, source in sizes:
+                limit = _format_limit_bytes(source)
+                if limit is not None and size > limit:
+                    self._status.set_state(
+                        format_too_large_message(si_size_up(size), si_size(limit))
+                    )
+                    return
+            large = [item for item in sizes if item[0] >= _warning_bytes(item[2])]
+            if large and not self._size_warning_accepted:
+                size, text, _source = max(large, key=lambda item: item[0])
+                self._open_size_warning(text, size, then=proceed)
+                return
+            proceed()
+
+        mode = CompareMode(
             CompareHost(
                 window=self,
                 actions=actions,
@@ -484,8 +511,36 @@ class MainWindow(QMainWindow):
                 bind_menu=self._bind_pane,
                 toolbar_sync=self._toolbar.sync_not_available,
                 resync=_resync,
+                choose_path=_choose_path,
+                open_left=lambda path, loaded, of_files: self.open_path(
+                    path, of_files=of_files, loaded=loaded
+                ),
+                check_format_size=_check_format_size,
+                remember_recent=_remember,
+                size_text=si_size,
+                indent_choice=self._toolbar.indent_choice,
+                formatting_text=FORMATTING_MESSAGE,
+                format_canceled_text=CANCELLED_MESSAGE,
             )
         )
+        self.open_finished.connect(lambda _document: mode.left_opened())
+        actions.format.triggered.disconnect(self._format)
+        actions.format.triggered.connect(
+            lambda _checked=False: mode.format() if mode.is_on() else self._format()
+        )
+        actions.open_file.triggered.disconnect(self._open_file)
+        actions.open_file.triggered.connect(
+            lambda _checked=False: (
+                mode.open_file() if mode.is_on() else self._open_file()
+            )
+        )
+        self._recent_menu.open_requested.disconnect(self.open_path)
+        self._recent_menu.open_requested.connect(
+            lambda path: (
+                mode.open_recent(path) if mode.is_on() else self.open_path(path)
+            )
+        )
+        return mode
 
     def start_parse_worker(self) -> None:
         """Start the warm formatter after runtime configuration."""
@@ -1062,12 +1117,19 @@ class MainWindow(QMainWindow):
         self._start_format(text, minify=minify, validate=validate)
 
     def _open_size_warning(
-        self, text: str, size: int, *, minify: bool = False, validate: bool = False
+        self,
+        text: str,
+        size: int,
+        *,
+        minify: bool = False,
+        validate: bool = False,
+        then: Callable[[], None] | None = None,
     ) -> None:
         """Ask once, with a window-modal sheet, before a large format.
 
         Minify and Validate ask the same question in their own words. One
-        answer covers all three.
+        answer covers all three. ``then`` runs on Format anyway instead of
+        a Format of Input, as Format in Compare asks.
         """
         box = QMessageBox(self)
         box.setObjectName("sizeWarning")
@@ -1101,6 +1163,9 @@ class MainWindow(QMainWindow):
             if not accepted:
                 return
             self._size_warning_accepted = True
+            if then is not None:
+                then()
+                return
             if _is_blank(self._input_pane.editor.toPlainText()):
                 return
             if minify and self._minify_reason():
@@ -1833,20 +1898,28 @@ class MainWindow(QMainWindow):
             or self._size_warning is not None
         )
 
-    def open_path(self, path: Path, *, of_files: int = 1) -> None:
+    def open_path(
+        self,
+        path: Path,
+        *,
+        of_files: int = 1,
+        loaded: LoadedDocument | None = None,
+    ) -> None:
         """Load ``path`` into the source pane. Opening never formats.
 
         Every way of opening a file comes through here. Unsaved edits are
         confirmed first. ``of_files`` counts a drop of several files, of
         which ``path`` is the first and the only one opened (#86).
+        ``loaded`` is the file when the caller has read it already, as
+        Compare does to check it first; it is not read again.
         """
         if not self.can_open():
             return
         pane = self._source_pane()
         if input_needs_replace(pane.editor.toPlainText(), pane.document):
-            self._ask_replace_input(path, of_files)
+            self._ask_replace_input(path, of_files, loaded)
             return
-        self._start_loading(path, of_files)
+        self._start_loading(path, of_files, loaded)
 
     def cancel_open(self) -> None:
         """Drop the file being read. The read itself runs to its end."""
@@ -1925,7 +1998,9 @@ class MainWindow(QMainWindow):
             return None
         return Path(filename)
 
-    def _ask_replace_input(self, path: Path, of_files: int = 1) -> None:
+    def _ask_replace_input(
+        self, path: Path, of_files: int = 1, loaded: LoadedDocument | None = None
+    ) -> None:
         """Ask before replacing unsaved Input. Cancel leaves it unchanged."""
         box = QMessageBox(self)
         box.setObjectName("replaceInput")
@@ -1953,20 +2028,28 @@ class MainWindow(QMainWindow):
             if not accepted or not self.can_open():
                 self._return_focus_to_input()
                 return
-            self._start_loading(path, of_files)
+            self._start_loading(path, of_files, loaded)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_loading(self, path: Path, of_files: int = 1) -> None:
-        """Read ``path`` off the UI thread. Open and Format wait for it."""
+    def _start_loading(
+        self, path: Path, of_files: int = 1, loaded: LoadedDocument | None = None
+    ) -> None:
+        """Read ``path`` off the UI thread. Open and Format wait for it.
+
+        A file already ``loaded`` skips the read and is applied now.
+        """
         self._opened_status_timer.stop()
         self._open_job += 1
         self._loading_path = path
         self._loading_of_files = of_files
         self._sync_format_button()
-        self._open_reveal_timer.start(OPEN_REVEAL_MS)
         self.open_started.emit()
+        if loaded is not None:
+            self._on_file_read(self._open_job, loaded)
+            return
+        self._open_reveal_timer.start(OPEN_REVEAL_MS)
         self._reader.read(self._open_job, path)
 
     def _show_opening(self) -> None:
@@ -2004,7 +2087,8 @@ class MainWindow(QMainWindow):
         cursor = editor.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         editor.setTextCursor(cursor)
-        self._output_pane.editor.clear()
+        # Output's own editor, even while Compare shows Right in its place.
+        self._output_pane.own_editor.clear()
         self._clear_problems()
         if loaded.fmt is not None:
             _set_format(pane, loaded.fmt)

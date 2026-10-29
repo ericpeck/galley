@@ -16,6 +16,7 @@ from galley.core.worker import (
     CompareJob,
     ProgressEvent,
     _execute_compare,
+    not_comparable,
     run_compare,
     run_worker,
 )
@@ -157,3 +158,13 @@ def _run_in_child(job: CompareJob, timeout: float = 30.0) -> list[object]:
             item.cancel_join_thread()
             item.close()
     return collected
+
+
+def test_not_comparable_names_the_formats_compare_refuses() -> None:
+    """Compare's Open refuses a file with the worker's own words."""
+    assert not_comparable("XML") == "XML can't be compared."
+    assert not_comparable("HTML") == "HTML can't be compared."
+    assert not_comparable("JSON") is None
+    assert not_comparable("YAML") is None
+    # An unknown name is left for loading to report.
+    assert not_comparable("TOML") is None
