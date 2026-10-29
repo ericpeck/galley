@@ -377,7 +377,7 @@ def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
     assert all(
         host is not None and host.property("comingSoonHost") is True for host in hosts
     )
-    assert seen == {"Indent", "Validate"}
+    assert seen == {"Indent"}
 
 
 def test_unbuilt_shortcuts_do_nothing_and_write_nothing(qtbot) -> None:
@@ -482,7 +482,7 @@ def test_expand_and_collapse_all_shipped(qtbot) -> None:
     assert message is not None
     assert "Expand" not in message
     assert "Collapse" not in message
-    assert "Validate" in message
+    assert "Indent" in message
 
 
 def test_indent_size_picker_is_coming_soon_until_indent_ships(qtbot) -> None:

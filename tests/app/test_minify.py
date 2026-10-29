@@ -113,7 +113,7 @@ def test_minify_is_built_and_off_the_release_lists(qtbot) -> None:
     assert printed.getvalue() == (
         'Release blocked: these actions still show "Coming soon": '
         "Open Right Document…, Compare, Next Change, Previous Change, "
-        "Link Scrolling, Indent, Validate.\n"
+        "Link Scrolling, Indent.\n"
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
         "before tagging.\n"
         'Release blocked: these actions still show "Not yet": '

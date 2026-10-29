@@ -201,10 +201,7 @@ def test_overflow_menu_triggers_the_same_actions(qtbot) -> None:
         assert all(item is not action for item in menu.actions())
 
 
-_UNBUILT_ICON_NAMES = (
-    "Indent",
-    "Validate",
-)
+_UNBUILT_ICON_NAMES = ("Indent",)
 
 
 def _shrink(qtbot, window, toolbar: QWidget, ready, start: int = 1024) -> int:
