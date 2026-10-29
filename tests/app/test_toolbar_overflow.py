@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import galley.app.actions as actions_module
 from galley.app.actions import COMING_SOON, is_unbuilt, not_available_reason
 from galley.app.appearance import set_application_palette
 from galley.app.main import create_main_window
@@ -224,8 +225,16 @@ def _shrink(qtbot, window, toolbar: QWidget, ready, start: int = 1024) -> int:
     return width
 
 
-def test_icon_only_unbuilt_actions_keep_their_name(qtbot) -> None:
-    """An icon-only Coming soon button still says which action it is."""
+def test_icon_only_unbuilt_actions_keep_their_name(monkeypatch, qtbot) -> None:
+    """An icon-only Coming soon button still says which action it is.
+
+    No toolbar button is unbuilt now, and Link Scrolling has no toolbar
+    button, so Indent goes back on the list here.
+    """
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS",
+        (*actions_module.UNBUILT_ACTIONS, *_UNBUILT_ICON_NAMES),
+    )
     _window, toolbar = _show(qtbot, 1280)
     pending = set(_UNBUILT_ICON_NAMES)
     seen: set[str] = set()

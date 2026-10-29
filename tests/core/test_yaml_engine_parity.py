@@ -16,6 +16,7 @@ import pytest
 import ruamel.yaml.main as ruamel_main
 from ruamel.yaml import YAML
 from tests.core.mask_rows import pretty_json, text_of_size
+from tests.perf import time_runs
 from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
@@ -350,6 +351,30 @@ def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
         lambda: format_document(text, "json", "yaml"),
         fixture="2.4 MB pretty JSON, fake customer rows, to YAML",
     )
+
+
+@pytest.mark.perf
+def test_json_to_yaml_at_four_spaces_on_2_4_mb_is_timed() -> None:
+    """Time the 2.4 MB conversion at four spaces next to two spaces.
+
+    Timing only, no budget (Isaac). Four spaces takes the pure emitter, so
+    the median prints beside the 2-space median and its budget.
+    """
+    text = _json_to_yaml_fixture()
+    two = time_runs(lambda: format_document(text, "json", "yaml"))
+    four = time_runs(lambda: format_document(text, "json", "yaml", indent="    "))
+    lines = [
+        f"JSON to YAML on {len(text.encode('utf-8')):,} B ({sys.platform}; "
+        f"timing only; 2-space budget {_JSON_TO_YAML_BUDGET_HERE_S * 1000:.0f} ms)"
+    ]
+    for label, timing in (("2 spaces", two), ("4 spaces", four)):
+        samples = ", ".join(f"{sample * 1000:.1f}" for sample in timing.samples)
+        share = timing.median / _JSON_TO_YAML_BUDGET_HERE_S * 100
+        lines.append(
+            f"  {label}: median {timing.median * 1000:.1f} ms, "
+            f"{share:.1f}% of the 2-space budget ({samples})"
+        )
+    print("\n".join(lines), flush=True)
 
 
 def _json_to_yaml_fixture() -> str:

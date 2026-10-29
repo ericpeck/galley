@@ -11,6 +11,7 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 - **Format and convert.** Pick the Input format and the Output format, then press Format. JSON to JSON, YAML to YAML, JSON to YAML and YAML to JSON all work. Input is never changed, and each result lands in Output as one undo step.
 - **Minify JSON.** Press Minify to write Input's JSON to Output with no spaces or line breaks. Key order is kept, and Input is never changed.
 - **Validate.** Press Validate to check Input for errors. Problems lists each one, and Output is never changed.
+- **Indent size, Indent and Outdent.** Pick 2 spaces, 4 spaces or Tab, and Format writes that indent from the next Format on. YAML always indents with spaces. Indent and Outdent (⌘] and ⌘[) shift the selected lines in either pane, and Tab and Shift+Tab do the same for a selection over several lines.
 - **Point at the problem.** Errors open the Problems pane, with one row per error and a marker in the gutter on the line to fix. The messages are plain sentences, such as "Remove the repeated key "status" on line 5." Repeated JSON keys are reported as errors, where most parsers silently keep only the last value.
 - **Fold big documents.** Collapse objects and arrays in Output from the gutter, the View menu, or the keyboard. A folded line shows a summary such as `{ … }, 3 keys`. Collapse all and Expand all work across the whole document, and copying always gives the full text.
 - **Convert from Python.** Paste a Python literal (a dict or list with `True`, `None`, tuples and so on) and get JSON or YAML. Galley reads it with Python's `ast` module. It never runs the text.
@@ -65,7 +66,6 @@ These features are being built now, and most are already in review. They aren't 
 Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain. Not started yet:
 
 - Find and Replace
-- Indent and indent size
 - Windows builds
 
 Specs for each feature live in their [GitHub issues](https://github.com/ericpeck/galley/issues).

@@ -84,6 +84,7 @@ from galley.app.escape_string import (
 from galley.app.file_drop import dropped_files
 from galley.app.fonts import ui_font
 from galley.app.icons import toolbar_icon
+from galley.app.indent import YAML_TAB_REASON, indent_unit
 
 # The size thresholds live in limits.py so the editor can read them too.
 # Tests and callers still import them from here.
@@ -143,10 +144,12 @@ from galley.app.problems_settings import (
     STATE_MINIMIZED,
     STATE_OPEN,
     STRIP_WIDTH,
+    load_indent_size,
     load_problems_preferences,
     load_sort_keys,
     load_split_sizes,
     load_stacked_panes,
+    save_indent_size,
     save_problems_preferences,
     save_sort_keys,
     save_split_sizes,
@@ -214,7 +217,9 @@ MINIFY_SIZE_DETAIL = (
 VALID_MESSAGE = "Valid {label}."
 VALIDATE_STATUS_MS = OPENED_STATUS_MS
 VALIDATE_NOT_AVAILABLE = "Validate works on JSON, YAML and XML."
-VALIDATE_EMPTY = "Input is empty."
+# Format's and Validate's tooltip while they are greyed out for empty Input.
+INPUT_EMPTY = "Input is empty."
+VALIDATE_EMPTY = INPUT_EMPTY
 # A Validate job's busy words, in Minify's pattern. The busy state is on
 # Validate, not Format.
 VALIDATING_MESSAGE = "Validating…"
@@ -383,6 +388,7 @@ class MainWindow(QMainWindow):
         self._layout_problems()
         self._restore_stacked_panes()
         self._restore_sort_keys()
+        self._restore_indent_size()
         self._follow_editor_palette()
         self._apply_editor_font()
         self._editor_font.changed.connect(self._apply_editor_font)
@@ -516,6 +522,9 @@ class MainWindow(QMainWindow):
             self._copy_as_menu.addAction(item)
         edit.addAction(actions.paste)
         edit.addAction(actions.select_all)
+        edit.addSeparator()
+        edit.addAction(actions.indent)
+        edit.addAction(actions.outdent)
         edit.addSeparator()
         edit.addAction(actions.find)
         edit.addAction(actions.find_next)
@@ -724,6 +733,8 @@ class MainWindow(QMainWindow):
             item.triggered.connect(lambda _checked=False, m=mode: self._copy_as(m))
         actions.paste.triggered.connect(self._paste)
         actions.select_all.triggered.connect(self._select_all)
+        actions.indent.triggered.connect(self._indent_lines)
+        actions.outdent.triggered.connect(self._outdent_lines)
         actions.find.triggered.connect(self._open_find)
         actions.find_next.triggered.connect(self._find_next)
         actions.find_previous.triggered.connect(self._find_previous)
@@ -784,6 +795,9 @@ class MainWindow(QMainWindow):
         self._input_pane.format_changed.connect(self._sync_direction)
         self._output_pane.format_changed.connect(self._remember_output_format)
         self._output_pane.format_changed.connect(self._sync_direction)
+        self._input_pane.format_changed.connect(self._sync_indent_units)
+        self._output_pane.format_changed.connect(self._sync_indent_units)
+        self._toolbar.indent_choice_changed.connect(self._on_indent_choice)
         self._bind_pane(self._input_pane)
         self._bind_pane(self._output_pane)
         for editor in self._editors():
@@ -1004,6 +1018,7 @@ class MainWindow(QMainWindow):
             sort_keys=self._format_sorted,
             minify=minify,
             validate=validate,
+            indent=self._format_indent(),
         )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
@@ -1372,6 +1387,33 @@ class MainWindow(QMainWindow):
         action.setChecked(load_sort_keys())
         action.blockSignals(False)
 
+    def _restore_indent_size(self) -> None:
+        toolbar = self._toolbar
+        toolbar.blockSignals(True)
+        toolbar.set_indent_choice(load_indent_size())
+        toolbar.blockSignals(False)
+        self._sync_indent_units()
+
+    def _on_indent_choice(self, choice: str) -> None:
+        """Remember the choice. Output keeps its text until the next Format."""
+        save_indent_size(choice)
+        self._sync_indent_units()
+
+    def _sync_indent_units(self) -> None:
+        """Give each editor its pane's unit, and grey out Tab for YAML Output.
+
+        A pane in YAML indents with two spaces when Tab is chosen.
+        """
+        choice = self._toolbar.indent_choice()
+        for pane in (self._input_pane, self._output_pane):
+            pane.editor.set_indent_unit(indent_unit(choice, pane.format_name()))
+        output = format_named(self._output_pane.format_name())
+        self._toolbar.set_tab_unavailable(YAML_TAB_REASON if output is YAML else "")
+
+    def _format_indent(self) -> str:
+        """What the Format job adds per level. Minify and Validate ignore it."""
+        return indent_unit(self._toolbar.indent_choice(), self._format_target)
+
     def _on_stack_panes_toggled(self, stacked: bool) -> None:
         self._apply_stacked_layout(stacked)
         save_stacked_panes(stacked)
@@ -1529,6 +1571,7 @@ class MainWindow(QMainWindow):
             self._active_editor = editor
             self._update_caption()
             self._sync_undo_actions()
+            self._sync_indent_actions()
         self._update_focus_ring()
 
     def _update_caption(self) -> None:
@@ -1598,6 +1641,24 @@ class MainWindow(QMainWindow):
 
     def _select_all(self) -> None:
         self._target_editor().selectAll()
+
+    def _indent_lines(self) -> None:
+        if self._indent_enabled():
+            self._target_editor().indent_lines()
+
+    def _outdent_lines(self) -> None:
+        if self._indent_enabled():
+            self._target_editor().outdent_lines()
+
+    def _indent_enabled(self) -> bool:
+        """Indent and Outdent need text in the focused pane and no job."""
+        return not self._formatting and not self._target_editor().document().isEmpty()
+
+    def _sync_indent_actions(self) -> None:
+        enabled = self._indent_enabled()
+        for action in (self._actions.indent, self._actions.outdent):
+            if action.isEnabled() != enabled:
+                action.setEnabled(enabled)
 
     def _clear_input(self) -> None:
         """Empty Input and put the status bar back to its empty state (#91)."""
@@ -2060,7 +2121,7 @@ class MainWindow(QMainWindow):
             button.setText(self._format_idle_text)
             button.setAccessibleName(FORMAT_ACCESSIBLE_NAME)
             button.setAccessibleDescription("")
-            button.setToolTip(self._format_idle_tooltip)
+            button.setToolTip(self._format_idle_tooltip if has_input else INPUT_EMPTY)
             button.unsetCursor()
         reason = self._not_available_reason()
         actions = self._actions
@@ -2091,6 +2152,7 @@ class MainWindow(QMainWindow):
         self._sync_open_actions()
         self._sync_fold_actions()
         self._sync_copy_as_actions()
+        self._sync_indent_actions()
 
     def _sync_fold_actions(self) -> None:
         """Fold commands work on Output while it has blocks and no job runs."""
@@ -2159,6 +2221,7 @@ class MainWindow(QMainWindow):
         if copy_button is not None:
             copy_button.setEnabled(not empty)
         self._sync_copy_as_actions()
+        self._sync_indent_actions()
         self._output_pane.set_empty_visible(empty)
         if empty:
             self._output_pane.count_label.setText("")

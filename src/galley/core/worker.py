@@ -34,7 +34,7 @@ from galley.core.diff import (
 )
 from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
-from galley.core.format import format_document, validate_document
+from galley.core.format import DEFAULT_INDENT, format_document, validate_document
 from galley.core.formats import format_named
 from galley.core.mask import (
     MASK,
@@ -82,7 +82,8 @@ class FormatJob:
     JSON to JSON as compact JSON, with Format's checks; it takes no ``mask``.
     ``validate`` runs Format's checks on ``text`` in ``source`` and writes
     nothing: success sends empty text. ``target`` and ``sort_keys`` are
-    ignored, and it takes no ``mask``.
+    ignored, and it takes no ``mask``. ``indent`` is what Format adds per
+    level, masked or not; Minify and Validate ignore it.
     """
 
     job_id: int
@@ -98,6 +99,7 @@ class FormatJob:
     mask: MaskRules | None = None
     minify: bool = False
     validate: bool = False
+    indent: str = DEFAULT_INDENT
 
 
 @dataclass(frozen=True)
@@ -340,10 +342,16 @@ def _format_text(job: FormatJob) -> tuple[str, int | None]:
             job.target,
             sort_keys=job.sort_keys,
             minify=job.minify,
+            indent=job.indent,
         )
         return text, None
     masked = mask_document(
-        job.text, job.source, job.target, job.mask, sort_keys=job.sort_keys
+        job.text,
+        job.source,
+        job.target,
+        job.mask,
+        sort_keys=job.sort_keys,
+        indent=job.indent,
     )
     return masked.text, masked.masked_count
 

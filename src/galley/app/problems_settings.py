@@ -1,6 +1,9 @@
-"""Remember Problems pane state, the Input / Output split, stacking, and Sort keys."""
+"""Remember Problems pane state, the Input / Output split, stacking, Sort keys,
+and the indent size."""
 
 from PySide6.QtCore import QSettings
+
+from galley.app.indent import DEFAULT_INDENT_CHOICE, is_indent_choice
 
 STATE_OPEN = "open"
 STATE_MINIMIZED = "minimized"
@@ -14,6 +17,7 @@ _WIDTH_KEY = "problems/width"
 _STACKED_KEY = "view/stackPanes"
 _SPLIT_KEY = "view/splitSizes"
 _SORT_KEYS_KEY = "format/sortKeys"
+_INDENT_KEY = "format/indentSize"
 _STATES = frozenset({STATE_OPEN, STATE_MINIMIZED, STATE_CLOSED})
 
 
@@ -66,6 +70,19 @@ def save_sort_keys(sort_keys: bool) -> None:
     """Store the Sort keys toggle so the next launch can restore it."""
     settings = problems_settings()
     settings.setValue(_SORT_KEYS_KEY, bool(sort_keys))
+    settings.sync()
+
+
+def load_indent_size() -> str:
+    """Return the saved indent size picker choice. A fresh install is 2 spaces."""
+    choice = problems_settings().value(_INDENT_KEY, DEFAULT_INDENT_CHOICE)
+    return choice if is_indent_choice(choice) else DEFAULT_INDENT_CHOICE
+
+
+def save_indent_size(choice: str) -> None:
+    """Store the indent size picker choice so the next launch can restore it."""
+    settings = problems_settings()
+    settings.setValue(_INDENT_KEY, choice)
     settings.sync()
 
 

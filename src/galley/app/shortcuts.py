@@ -27,6 +27,10 @@ Collapse all is the chord ``Ctrl+K, Ctrl+0`` (⌘K ⌘0) and Expand all
 ``Ctrl+K, Ctrl+J`` (⌘K ⌘J). Actual Size is ``Ctrl+0`` on its own, so the
 chord does not clash with it.
 
+Indent is portable ``Ctrl+]`` and Outdent ``Ctrl+[`` (⌘] and ⌘[ on macOS,
+Ctrl+] and Ctrl+[ on Windows), as in VS Code. Fold and Unfold add Alt on
+macOS and Shift elsewhere, so neither clashes.
+
 Next Problem is F8 and Previous Problem Shift+F8 on every platform (Bill's
 #78 spec). On macOS F8 is Play/Pause unless Fn is held, so macOS lists ⌘'
 and ⇧⌘' first, which the menu shows, and keeps F8 and ⇧F8 as second keys.
@@ -52,6 +56,8 @@ STACK_PANES_ALT = QKeySequence("Ctrl+Shift+L", _PORTABLE)
 FOLD = QKeySequence(_FOLD_MODIFIERS + "[", _PORTABLE)
 UNFOLD = QKeySequence(_FOLD_MODIFIERS + "]", _PORTABLE)
 COLLAPSE_ALL = QKeySequence("Ctrl+K, Ctrl+0", _PORTABLE)
+INDENT = QKeySequence("Ctrl+]", _PORTABLE)
+OUTDENT = QKeySequence("Ctrl+[", _PORTABLE)
 EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
 # The first key of each list is the one the menu shows.
 _PROBLEM_KEYS = ("Ctrl+'", "F8") if sys.platform == "darwin" else ("F8",)

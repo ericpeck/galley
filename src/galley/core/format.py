@@ -20,6 +20,14 @@ changed. See :func:`sort_mapping_keys` for the ordering rule.
 ``minify=True`` writes JSON from JSON with :func:`compact_json` instead of
 indenting it. It runs the same checks and raises the same errors.
 
+``indent`` is the text every writer adds per level: two spaces
+(:data:`DEFAULT_INDENT`), four spaces, or a tab. Minify ignores it. YAML
+can't indent with tabs, so a tab writes YAML at two spaces. At four
+spaces a mapping indents four, and a list item starts four in with its
+dash two in (ruamel's mapping 4, sequence 4, offset 2). Only the
+pure-Python emitter writes that: the C emitter ignores those settings.
+Two spaces is written exactly as before.
+
 :func:`validate_document` runs the same parse and checks and stops before
 anything is written.
 
@@ -145,6 +153,12 @@ _CHARACTER_WALK = object()
 # Rewrites a loaded value before it is written. See the module docstring.
 Prepare = Callable[[object], object]
 
+# The indent each writer adds per level unless told otherwise.
+DEFAULT_INDENT = "  "
+_YAML_DEFAULT_WIDTH = len(DEFAULT_INDENT)
+# Past two spaces a dash sits this far left of its item: "  - 1" at four.
+_DASH_GAP = 2
+
 # A surrogate in a YAML value, and the escape the pure-Python emitter writes
 # for one. YAML ``\u`` and ``\U`` escapes are code points, so two escapes
 # that would be a UTF-16 pair in JSON are two surrogates here.
@@ -166,8 +180,9 @@ def format_json(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     minify: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
-    """Return ``text`` parsed as JSON and pretty-printed.
+    """Return ``text`` parsed as JSON and pretty-printed with ``indent``.
 
     ``sort_keys`` writes every object's keys in code-point order. Arrays
     keep their order. Repeated keys are still an error. ``minify`` writes
@@ -182,10 +197,12 @@ def format_json(
     parsed = _json_fast_value(source)
     if parsed is _CHARACTER_WALK:
         return _format_json_walk_first(
-            source, sort_keys=sort_keys, prepare=prepare, minify=minify
+            source, sort_keys=sort_keys, prepare=prepare, minify=minify, indent=indent
         )
     try:
-        return _dump_json(_apply(prepare, parsed), sort_keys=sort_keys, minify=minify)
+        return _dump_json(
+            _apply(prepare, parsed), sort_keys=sort_keys, minify=minify, indent=indent
+        )
     except RecursionError:
         opened = _json_limits(source)
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
@@ -244,16 +261,26 @@ def _pure_python_yaml(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     check_only: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """Re-parse with pure Python and return that result, success or error."""
     _wait_for_pure_retry_gate()
     return _format_yaml_impl(
-        text, pure=True, sort_keys=sort_keys, **_given(prepare), **_checking(check_only)
+        text,
+        pure=True,
+        sort_keys=sort_keys,
+        **_given(prepare),
+        **_checking(check_only),
+        **_indented(indent),
     )
 
 
 def format_yaml(
-    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+    text: str | bytes,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """Return ``text`` parsed as YAML and dumped as a block document.
 
@@ -273,8 +300,9 @@ def format_yaml(
     after the document loads, so duplicate keys are still an error.
     ``prepare`` runs on the loaded value before that. With ``prepare`` set,
     a document with an alias is parsed again with pure Python too.
+    ``indent`` is the module docstring's YAML indent.
     """
-    return _run_yaml(text, sort_keys=sort_keys, prepare=prepare)
+    return _run_yaml(text, sort_keys=sort_keys, prepare=prepare, indent=indent)
 
 
 def _run_yaml(
@@ -283,9 +311,10 @@ def _run_yaml(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     check_only: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """:func:`format_yaml`. ``check_only`` returns "" before the dump."""
-    given = {**_given(prepare), **_checking(check_only)}
+    given = {**_given(prepare), **_checking(check_only), **_indented(indent)}
     retry = functools.partial(_pure_python_yaml, sort_keys=sort_keys, **given)
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
@@ -314,7 +343,7 @@ def _run_yaml(
     # Outside the retry, so a masking failure is not retried in pure Python.
     loaded = _apply(prepare, loaded)
     try:
-        return _dump_yaml(_ordered(loaded, sort_keys))
+        return _dump_yaml(_ordered(loaded, sort_keys), indent)
     except Exception:
         return retry(text)
 
@@ -326,25 +355,27 @@ def _format_yaml_impl(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     check_only: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """Parse and dump ``text`` with safe YAML, optionally forcing pure Python.
 
     ``check_only`` returns "" once ``text`` has loaded, before the dump.
     """
+    width = _yaml_indent_width(indent)
     opened = _yaml_limits(text, pure=pure)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
             parsed = _apply(prepare, _yaml_from_events(text, pure=pure))
             if check_only:
                 return ""
-            return _dump_block(_ordered(parsed, sort_keys))
+            return _dump_block(_ordered(parsed, sort_keys), width)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
     try:
         loaded = _apply(prepare, _load_parsed(text, opened, pure=pure))
         if check_only:
             return ""
-        return _dump_parsed(_ordered(loaded, sort_keys), pure=pure)
+        return _dump_parsed(_ordered(loaded, sort_keys), pure=pure, **_widened(width))
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -357,6 +388,23 @@ def _given(prepare: Prepare | None) -> dict[str, Prepare]:
 def _checking(check_only: bool) -> dict[str, bool]:
     """``check_only`` as a keyword only when set, like :func:`_given`."""
     return {"check_only": True} if check_only else {}
+
+
+def _indented(indent: str) -> dict[str, str]:
+    """``indent`` as a keyword only when not the default, like :func:`_given`."""
+    return {} if indent == DEFAULT_INDENT else {"indent": indent}
+
+
+def _widened(width: int) -> dict[str, int]:
+    """A YAML ``width`` as a keyword only when not two, like :func:`_given`."""
+    return {} if width == _YAML_DEFAULT_WIDTH else {"width": width}
+
+
+def _yaml_indent_width(indent: str) -> int:
+    """Spaces per YAML level. YAML can't indent with tabs: a tab is two."""
+    if "\t" in indent:
+        return _YAML_DEFAULT_WIDTH
+    return len(indent)
 
 
 def _has_alias(tokens: list[object]) -> bool:
@@ -381,9 +429,17 @@ def _load_parsed(
         raise
 
 
-def _dump_parsed(value: object, *, pure: bool) -> str:
-    """Dump ``value`` with safe YAML, using the pure emitter when asked."""
-    yaml = _block_dumper(_safe_yaml(pure=pure))
+def _dump_parsed(value: object, *, pure: bool, width: int = _YAML_DEFAULT_WIDTH) -> str:
+    """Dump ``value`` with safe YAML, using the pure emitter when asked.
+
+    ``width`` is spaces per level. Past two spaces only the pure emitter
+    writes it, with each dash ``_DASH_GAP`` spaces left of its item.
+    """
+    if width == _YAML_DEFAULT_WIDTH:
+        yaml = _block_dumper(_safe_yaml(pure=pure))
+    else:
+        yaml = _block_dumper(_safe_yaml(pure=True))
+        yaml.indent(mapping=width, sequence=width, offset=width - _DASH_GAP)
     buffer = StringIO()
     yaml.dump(value, buffer)
     return buffer.getvalue()
@@ -547,20 +603,21 @@ _CBlockRepresenter.add_representer(str, _CBlockRepresenter.represent_str)
 _CBlockRepresenter.add_representer(bytes, _CBlockRepresenter.represent_binary)
 
 
-def _dump_yaml(value: object) -> str:
+def _dump_yaml(value: object, indent: str = DEFAULT_INDENT) -> str:
     """Dump ``value`` as the block YAML Galley shows.
 
     With ``ruamel.yaml.clib`` the C emitter writes it, set up by
     ``_CBlockRepresenter`` to give the pure emitter's bytes. A value it
-    can't match that way is written by the pure emitter. The output is
-    never edited after either emitter writes it.
+    can't match that way, and any indent but two spaces, is written by the
+    pure emitter. The output is never edited after either emitter writes it.
     """
-    if _clib_available():
+    width = _yaml_indent_width(indent)
+    if width == _YAML_DEFAULT_WIDTH and _clib_available():
         try:
             return _c_emitter_dump(value)
         except _NeedsPureEmitter:
             pass
-    return _dump_parsed(value, pure=True)
+    return _dump_parsed(value, pure=True, **_widened(width))
 
 
 def _c_emitter_dump(value: object) -> str:
@@ -792,6 +849,7 @@ def _format_json_walk_first(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     minify: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """Format JSON by walking characters before ``json.loads``.
 
@@ -803,7 +861,7 @@ def _format_json_walk_first(
     opened = _json_limits(source)
     try:
         parsed = _apply(prepare, _json_walked_value(source, opened))
-        return _dump_json(parsed, sort_keys=sort_keys, minify=minify)
+        return _dump_json(parsed, sort_keys=sort_keys, minify=minify, indent=indent)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1197,8 +1255,11 @@ def _scalar_value(yaml: YAML, event: ScalarEvent) -> object:
     return yaml.constructor.construct_object(node)
 
 
-def _dump_block(value: object) -> str:
-    """Dump ``value`` as a block document without recursing per level."""
+def _dump_block(value: object, width: int = _YAML_DEFAULT_WIDTH) -> str:
+    """Dump ``value`` as a block document without recursing per level.
+
+    Each level is ``width`` spaces deeper than its parent.
+    """
     if not isinstance(value, (dict, list)):
         return _scalar_text(value) + "\n"
     lines: list[str] = []
@@ -1210,13 +1271,15 @@ def _dump_block(value: object) -> str:
     while jobs:
         job = jobs[-1]
         if job[0] == "map":
-            _dump_map_step(lines, jobs)
+            _dump_map_step(lines, jobs, width)
         else:
-            _dump_seq_step(lines, jobs)
+            _dump_seq_step(lines, jobs, width)
     return "\n".join(lines) + "\n"
 
 
-def _dump_map_step(lines: list[str], jobs: list[tuple[object, ...]]) -> None:
+def _dump_map_step(
+    lines: list[str], jobs: list[tuple[object, ...]], width: int
+) -> None:
     _, mapping, indent, keys, index = jobs[-1]
     if (
         not isinstance(mapping, dict)
@@ -1237,20 +1300,22 @@ def _dump_map_step(lines: list[str], jobs: list[tuple[object, ...]]) -> None:
     if isinstance(child, dict):
         if child:
             lines.append(f"{pad}{key_text}:")
-            jobs.append(("map", child, indent + 2, list(child), 0))
+            jobs.append(("map", child, indent + width, list(child), 0))
         else:
             lines.append(f"{pad}{key_text}: {{}}")
     elif isinstance(child, list):
         if child:
             lines.append(f"{pad}{key_text}:")
-            jobs.append(("seq", child, indent + 2, 0))
+            jobs.append(("seq", child, indent + width, 0))
         else:
             lines.append(f"{pad}{key_text}: []")
     else:
         lines.append(f"{pad}{key_text}: {_scalar_text(child)}")
 
 
-def _dump_seq_step(lines: list[str], jobs: list[tuple[object, ...]]) -> None:
+def _dump_seq_step(
+    lines: list[str], jobs: list[tuple[object, ...]], width: int
+) -> None:
     _, seq, indent, index = jobs[-1]
     if (
         not isinstance(seq, list)
@@ -1268,13 +1333,13 @@ def _dump_seq_step(lines: list[str], jobs: list[tuple[object, ...]]) -> None:
     if isinstance(child, dict):
         if child:
             lines.append(f"{pad}-")
-            jobs.append(("map", child, indent + 2, list(child), 0))
+            jobs.append(("map", child, indent + width, list(child), 0))
         else:
             lines.append(f"{pad}- {{}}")
     elif isinstance(child, list):
         if child:
             lines.append(f"{pad}-")
-            jobs.append(("seq", child, indent + 2, 0))
+            jobs.append(("seq", child, indent + width, 0))
         else:
             lines.append(f"{pad}- []")
     else:
@@ -1309,6 +1374,7 @@ def format_document(
     sort_keys: bool = False,
     prepare: Prepare | None = None,
     minify: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """Format ``text`` from ``source`` into ``target``.
 
@@ -1321,6 +1387,8 @@ def format_document(
     the loaded JSON or YAML value before it is written. XML and HTML do not
     load to a value, so they raise ``ValueError`` with ``prepare``.
     ``minify`` is for JSON to JSON only; any other pair raises ``ValueError``.
+    ``indent`` is what every writer adds per level (see the module
+    docstring); Minify ignores it.
     """
     source_kind = _normalize_format(source)
     target_kind = _normalize_format(target)
@@ -1331,20 +1399,24 @@ def format_document(
     if prepare is not None:
         _value_format(source)
     if source_kind == "xml":
-        return format_xml(text)
+        return format_xml(text, indent=indent)
     if source_kind == "html":
-        return format_html(text)
+        return format_html(text, indent=indent)
     if source_kind == "json" and target_kind == "json":
-        return format_json(text, sort_keys=sort_keys, prepare=prepare, minify=minify)
+        return format_json(
+            text, sort_keys=sort_keys, prepare=prepare, minify=minify, indent=indent
+        )
     if source_kind == "yaml" and target_kind == "yaml":
-        return format_yaml(text, sort_keys=sort_keys, prepare=prepare)
+        return format_yaml(text, sort_keys=sort_keys, prepare=prepare, indent=indent)
     if source_kind == "json":
         value = json.loads(format_json(text, sort_keys=sort_keys))
-        return _dump_yaml_value(_apply(prepare, value))
+        return _dump_yaml_value(_apply(prepare, value), indent)
     value = yaml_json_value(text, prepare=prepare)
     opened = _yaml_limits(text)
     try:
-        return _dump_json(_ordered(value, sort_keys), default=_not_json_value)
+        return _dump_json(
+            _ordered(value, sort_keys), default=_not_json_value, indent=indent
+        )
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
 
@@ -1502,16 +1574,22 @@ def _dump_json(
     sort_keys: bool = False,
     default: Callable[[object], object] | None = None,
     minify: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> str:
     """``sort_keys`` is for JSON input, whose keys are all strings.
 
-    ``minify`` writes :func:`compact_json`, which has no trailing newline.
+    ``minify`` writes :func:`compact_json`, which has no trailing newline,
+    and ignores ``indent``.
     """
     if minify:
         return compact_json(value, sort_keys=sort_keys)
     return (
         json.dumps(
-            value, indent=2, ensure_ascii=False, sort_keys=sort_keys, default=default
+            value,
+            indent=indent,
+            ensure_ascii=False,
+            sort_keys=sort_keys,
+            default=default,
         )
         + "\n"
     )
@@ -1539,12 +1617,12 @@ class SelfReferenceError(NotJSONValueError):
     """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
 
 
-def _dump_yaml_value(value: object) -> str:
+def _dump_yaml_value(value: object, indent: str = DEFAULT_INDENT) -> str:
     """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
-        dumped = _dump_yaml(value)
+        dumped = _dump_yaml(value, indent)
     except RecursionError:
-        return _dump_block(value)
+        return _dump_block(value, _yaml_indent_width(indent))
     if dumped and not dumped.endswith("\n"):
         return dumped + "\n"
     return dumped

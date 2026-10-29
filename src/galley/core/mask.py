@@ -37,7 +37,7 @@ from typing import Literal
 
 from galley.core.errors import MAX_DEPTH
 from galley.core.fake import fake_value
-from galley.core.format import format_document
+from galley.core.format import DEFAULT_INDENT, format_document
 from galley.core.formats import format_named
 
 MASK = "•••"
@@ -405,17 +405,23 @@ def mask_document(
     rules: MaskRules | None = None,
     *,
     sort_keys: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> MaskedDocument:
     """Format ``text`` from ``source`` into ``target`` with values masked.
 
     This is ``format_document`` with ``mask_tree`` as its ``prepare`` step,
     so the text passes the same checks and raises the same errors, and
-    ``sort_keys`` orders the masked output the same way. A format that does
-    not load to a value, such as XML, can't be masked and raises
-    ``MaskError``, so it never shows unmasked.
+    ``sort_keys`` and ``indent`` write the masked output the same way. A
+    format that does not load to a value, such as XML, can't be masked and
+    raises ``MaskError``, so it never shows unmasked.
     """
     return _rewrite_document(
-        text, source, target, lambda value: mask_tree(value, rules), sort_keys
+        text,
+        source,
+        target,
+        lambda value: mask_tree(value, rules),
+        sort_keys,
+        indent,
     )
 
 
@@ -425,6 +431,7 @@ def _rewrite_document(
     target: str,
     rewrite: Callable[[object], MaskResult],
     sort_keys: bool = False,
+    indent: str = DEFAULT_INDENT,
 ) -> MaskedDocument:
     """Format ``text`` with ``rewrite`` as ``format_document``'s ``prepare`` step.
 
@@ -442,7 +449,7 @@ def _rewrite_document(
         return result.value
 
     text_out = format_document(
-        text, source, target, sort_keys=sort_keys, prepare=prepare
+        text, source, target, sort_keys=sort_keys, prepare=prepare, indent=indent
     )
     if not counts:
         raise MaskError("the document was not masked")

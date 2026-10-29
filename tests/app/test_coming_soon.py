@@ -35,7 +35,6 @@ _NOT_YET_FIX = (
 )
 _NOT_YET_MENU_NAMES = (
     "Find and Replace…",
-    "Outdent",
     "Output Options",
 )
 _RELEASE_WORKFLOW = (
@@ -187,12 +186,12 @@ def test_release_check_message_is_exact_and_keeps_menu_order() -> None:
 
 
 def test_not_yet_release_check_message_is_exact_and_keeps_order() -> None:
-    message = not_yet_failure(("Escape as String", "Outdent"))
-    assert message == _not_yet_text("Escape as String, Outdent")
+    message = not_yet_failure(("Escape as String", "Output Options"))
+    assert message == _not_yet_text("Escape as String, Output Options")
     assert message is not None
     assert message.splitlines() == [
         'Release blocked: these actions still show "Not yet": '
-        "Escape as String, Outdent.",
+        "Escape as String, Output Options.",
         _NOT_YET_FIX,
     ]
     assert not_yet_failure(()) is None
@@ -327,7 +326,29 @@ def _coming_soon_tip(button: QWidget) -> str:
     return COMING_SOON
 
 
-def test_unbuilt_buttons_show_coming_soon(qtbot) -> None:
+def test_no_toolbar_button_is_coming_soon(qtbot) -> None:
+    """Indent was the last toolbar button on the Coming soon list."""
+    window = _show(qtbot)
+    unbuilt = [
+        button
+        for button in window.findChildren(QToolButton)
+        if isinstance(button.defaultAction(), QAction)
+        and is_unbuilt(button.defaultAction())
+    ]
+    assert unbuilt == []
+    assert not [
+        widget
+        for widget in window.findChildren(QWidget)
+        if widget.property("comingSoonHost") is True
+    ]
+
+
+def test_unbuilt_buttons_show_coming_soon(monkeypatch, qtbot) -> None:
+    # No toolbar button is unbuilt now, and Link Scrolling has no toolbar
+    # button, so Indent goes back on the list to keep the face covered.
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS", (*UNBUILT_ACTIONS, "Indent")
+    )
     window = _show(qtbot)
     buttons: list[QWidget] = [
         button
@@ -482,41 +503,46 @@ def test_expand_and_collapse_all_shipped(qtbot) -> None:
     assert message is not None
     assert "Expand" not in message
     assert "Collapse" not in message
-    assert "Indent" in message
+    assert "Link Scrolling" in message
 
 
-def test_indent_size_picker_is_coming_soon_until_indent_ships(qtbot) -> None:
+def test_indent_and_outdent_shipped(qtbot) -> None:
+    """Indent and Outdent are built, so the release check drops both."""
+    window = _show(qtbot)
+    actions = window._actions
+    assert "Indent" not in UNBUILT_ACTIONS
+    assert _ACTION_ATTRS["Indent"] == ("indent",)
+    pending = {
+        id(action) for action in (*actions._stub_actions(), *actions._not_yet_actions())
+    }
+    for action in (actions.indent, actions.outdent):
+        assert not is_unbuilt(action)
+        assert id(action) not in pending
+        assert action.toolTip() != COMING_SOON
+    coming = release_failure()
+    not_yet = not_yet_failure()
+    assert coming is not None
+    assert not_yet is not None
+    for message in (coming, not_yet):
+        assert "Indent" not in message
+        assert "Outdent" not in message
+
+
+def test_indent_size_picker_is_enabled_once_indent_ships(qtbot) -> None:
     window = _show(qtbot)
     picker = window.findChild(QComboBox, "indentSize")
     assert isinstance(picker, QComboBox)
     assert picker.isVisible()
-    assert not picker.isEnabled()
-    assert picker.toolTip() == COMING_SOON
-    assert picker.accessibleDescription() == COMING_SOON
-    assert picker.focusPolicy() == Qt.FocusPolicy.NoFocus
-    host = picker.parentWidget()
-    assert isinstance(host, QWidget)
-    assert host.property("comingSoonHost") is True
-    assert host.isEnabled()
-    assert host.toolTip() == COMING_SOON
-    submenu = window.findChild(QMenu, "indentSizeMenu")
-    assert isinstance(submenu, QMenu)
-    assert not submenu.menuAction().isEnabled()
-    assert submenu.menuAction().toolTip() == COMING_SOON
-
-
-def test_indent_size_picker_turns_on_with_indent(monkeypatch, qtbot) -> None:
-    without_indent = tuple(name for name in UNBUILT_ACTIONS if name != "Indent")
-    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", without_indent)
-    window = _show(qtbot)
-    picker = window.findChild(QComboBox, "indentSize")
-    assert isinstance(picker, QComboBox)
     assert picker.isEnabled()
     assert picker.toolTip() == "Indent size"
     assert picker.accessibleDescription() == ""
+    host = picker.parentWidget()
+    assert isinstance(host, QWidget)
+    assert host.property("comingSoonHost") is not True
     submenu = window.findChild(QMenu, "indentSizeMenu")
     assert isinstance(submenu, QMenu)
     assert submenu.menuAction().isEnabled()
+    assert submenu.menuAction().toolTip() != COMING_SOON
 
 
 def test_release_check_lists_output_options_last_under_not_yet() -> None:

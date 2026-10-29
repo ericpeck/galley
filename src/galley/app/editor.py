@@ -1,7 +1,7 @@
 """Code editor with a line-number gutter and syntax colors."""
 
 from bisect import bisect_left
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QFont,
     QFontMetrics,
+    QFontMetricsF,
     QHelpEvent,
     QKeyEvent,
     QMouseEvent,
@@ -114,10 +115,17 @@ CHANGE_TINT_SIDES: Final[dict[ChangeKind, frozenset[CompareSide]]] = {
     "moved": frozenset({"left", "right"}),
 }
 
-# Spaces per indent level. The Tab key types spaces up to the next multiple
-# of this (#91 item 6). 2 matches the fixed "2 spaces" indent while the
-# indent picker is Coming soon.
-INDENT_WIDTH = 2
+# The indent unit until the window sets the picker's: two spaces. The Tab
+# key types spaces up to the next multiple of the unit's width (#91 item 6),
+# or one tab when the unit is a tab.
+DEFAULT_INDENT_UNIT = "  "
+# Outdent with a tab unit removes up to the editor's tab width in leading
+# spaces. Galley sets no tab width, and Qt's default is 80 px, not a number
+# of spaces, so it falls back to this.
+TAB_OUTDENT_SPACES = 4
+_QT_DEFAULT_TAB_STOP_PX = 80.0
+# QTextDocument.toRawText() puts this between blocks.
+_BLOCK_BREAK = "\u2029"
 
 # Display gates for very long lines, in characters of one block (#91).
 #
@@ -414,6 +422,7 @@ class CodeEditor(QPlainTextEdit):
         document = QTextDocument(self)
         document.setDocumentLayout(_FoldAwareLayout(document))
         self.setDocument(document)
+        self._indent_unit = DEFAULT_INDENT_UNIT
         self._adopting_palette = False
         self._markers: dict[str, dict[int, LineMarker]] = {}
         # Change spans as (first line, last line, kind), 1-based, for this
@@ -1133,12 +1142,21 @@ class CodeEditor(QPlainTextEdit):
             event.accept()
             return
         if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
-            # A selection over several lines is left alone until Indent
-            # ships, rather than replaced by spaces.
-            if not self._selection_spans_lines():
+            # Over several lines Tab indents them instead of replacing them.
+            if self._selection_spans_lines():
+                self.indent_lines()
+            else:
                 self._insert_indent()
             event.accept()
             return
+        shift_only = modifiers & ~Qt.KeyboardModifier.ShiftModifier
+        if key == Qt.Key.Key_Backtab and not shift_only:
+            # Shift+Tab outdents a selection over several lines. Otherwise it
+            # moves focus back, as it does everywhere else.
+            if self._selection_spans_lines():
+                self.outdent_lines()
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def _selection_spans_lines(self) -> bool:
@@ -1148,15 +1166,141 @@ class CodeEditor(QPlainTextEdit):
         return first != document.findBlock(cursor.selectionEnd())
 
     def _insert_indent(self) -> None:
-        """Replace the selection with spaces up to the next INDENT_WIDTH stop."""
+        """Replace the selection with spaces up to the unit's next stop.
+
+        A tab unit types one tab instead.
+        """
         cursor = self.textCursor()
         start = cursor.selectionStart()
         column = start - self.document().findBlock(start).position()
+        unit = self._indent_unit
+        if unit == "\t":
+            text = unit
+        else:
+            text = " " * (len(unit) - column % len(unit))
         cursor.beginEditBlock()
-        cursor.insertText(" " * (INDENT_WIDTH - column % INDENT_WIDTH))
+        cursor.insertText(text)
         cursor.endEditBlock()
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
+
+    def indent_unit(self) -> str:
+        """What Indent adds to a line: two or four spaces, or a tab."""
+        return self._indent_unit
+
+    def set_indent_unit(self, unit: str) -> None:
+        """Set the unit for Indent, Outdent and the Tab key."""
+        self._indent_unit = unit
+
+    def indent_lines(self) -> bool:
+        """Add one unit to the start of each selected line, or the caret's.
+
+        One undo step. Return False when nothing changed.
+        """
+        unit = self._indent_unit
+        return self._shift_lines(lambda line: (unit + line, len(unit)))
+
+    def outdent_lines(self) -> bool:
+        """Remove one unit from the start of each selected line, or the caret's.
+
+        A line loses one leading tab, or up to the unit's width in leading
+        spaces, whichever comes first. A line with neither stays as it is.
+        One undo step. Return False when no line changed.
+        """
+        unit = self._indent_unit
+        width = self._tab_width() if unit == "\t" else len(unit)
+
+        def outdented(line: str) -> tuple[str, int]:
+            if line.startswith("\t"):
+                return line[1:], -1
+            head = line[:width]
+            spaces = len(head) - len(head.lstrip(" "))
+            return line[spaces:], -spaces
+
+        return self._shift_lines(outdented)
+
+    def _tab_width(self) -> int:
+        """The editor's tab stop in spaces, or ``TAB_OUTDENT_SPACES`` if unset."""
+        distance = self.tabStopDistance()
+        space = QFontMetricsF(self.font()).horizontalAdvance(" ")
+        if distance == _QT_DEFAULT_TAB_STOP_PX or space <= 0:
+            return TAB_OUTDENT_SPACES
+        return max(1, round(distance / space))
+
+    def _shift_lines(self, change: Callable[[str], tuple[str, int]]) -> bool:
+        """Rewrite the selected lines with ``change`` as one edit.
+
+        ``change`` returns a line's new text and how far its start moved.
+        The new text is built in one pass and inserted once. A selection
+        that ends at the start of a line leaves that line alone, as in VS
+        Code, and the selection still covers the same lines afterward.
+        """
+        if self.isReadOnly():
+            return False
+        cursor = self.textCursor()
+        document = self.document()
+        first = document.findBlock(cursor.selectionStart())
+        last = document.findBlock(cursor.selectionEnd())
+        if (
+            cursor.hasSelection()
+            and last.blockNumber() > first.blockNumber()
+            and cursor.selectionEnd() == last.position()
+        ):
+            last = last.previous()
+        start = first.position()
+        end = last.position() + last.length() - 1
+        lines = document.toRawText()[start:end].split(_BLOCK_BREAK)
+        changed = [change(line) for line in lines]
+        if all(moved == 0 for _text, moved in changed):
+            return False
+        ends = [
+            self._moved_end(cursor.anchor(), first, changed, cursor),
+            self._moved_end(cursor.position(), first, changed, cursor),
+        ]
+        edit = QTextCursor(document)
+        edit.setPosition(start)
+        edit.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        edit.beginEditBlock()
+        edit.insertText("\n".join(text for text, _moved in changed))
+        edit.endEditBlock()
+        anchor_line, anchor_column = ends[0]
+        position_line, position_column = ends[1]
+        moved = QTextCursor(document)
+        moved.setPosition(
+            document.findBlockByNumber(anchor_line).position() + anchor_column
+        )
+        moved.setPosition(
+            document.findBlockByNumber(position_line).position() + position_column,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self.setTextCursor(moved)
+        self.ensureCursorVisible()
+        return True
+
+    def _moved_end(
+        self,
+        position: int,
+        first: QTextBlock,
+        changed: list[tuple[str, int]],
+        cursor: QTextCursor,
+    ) -> tuple[int, int]:
+        """The line and column of a selection end after ``changed`` lands.
+
+        A caret moves with its line's text. A selection end at column 0
+        stays there, so whole selected lines stay selected.
+        """
+        block = self.document().findBlock(position)
+        line = block.blockNumber()
+        column = position - block.position()
+        index = line - first.blockNumber()
+        if not 0 <= index < len(changed):
+            return line, column
+        moved = changed[index][1]
+        if moved > 0:
+            if column == 0 and cursor.hasSelection():
+                return line, 0
+            return line, column + moved
+        return line, column - min(column, -moved)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

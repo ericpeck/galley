@@ -8,8 +8,10 @@ and attributes are copied as typed, and no optional end tag is added.
 
 - A child that is a block-level element (``_BLOCK``), with only whitespace
   or nothing between it and its neighbors, goes on its own line, indented
-  two spaces per level. That whitespace is dropped. Inside ``head`` every
-  element counts as block-level, since nothing there renders.
+  one ``indent`` per level (two spaces unless the caller passes another).
+  That whitespace is dropped. Only the added indent changes with
+  ``indent``. Inside ``head`` every element counts as block-level, since
+  nothing there renders.
 - Everything between two such children is an inline run: text, inline
   elements, and comments. A run is copied as written. Only the whitespace
   at its two ends, next to a block edge, is dropped. A run that is a single
@@ -51,8 +53,6 @@ from galley.core.errors import (
     nesting_error,
     utf8_input_error,
 )
-
-INDENT = "  "
 
 # HTML's ASCII whitespace. A no-break space is text, and it renders.
 _SPACE = " \t\n\f\r"
@@ -237,8 +237,8 @@ _PI = 6
 _MARKED = 7
 
 
-def format_html(text: str | bytes) -> str:
-    """Return ``text`` formatted as HTML.
+def format_html(text: str | bytes, *, indent: str = "  ") -> str:
+    """Return ``text`` formatted as HTML, ``indent`` added per level.
 
     Raises ``HTMLStructureError`` listing every tag that does not nest, and
     ``InputError`` for invalid UTF-8 or nesting past ``MAX_DEPTH``.
@@ -247,7 +247,7 @@ def format_html(text: str | bytes) -> str:
     line_starts = _line_starts(source)
     root = _build_tree(source, line_starts, _events(source, line_starts))
     lines: list[str] = []
-    _render_children(source, root, 0, lines)
+    _render_children(source, root, 0, lines, indent)
     if not lines:
         return ""
     return "\n".join(lines) + "\n"
@@ -502,9 +502,9 @@ def _close(stack: list[_Element], start: int, end: int) -> None:
 
 
 def _render_children(
-    source: str, parent: _Element, depth: int, lines: list[str]
+    source: str, parent: _Element, depth: int, lines: list[str], unit: str
 ) -> None:
-    """Append the lines for ``parent``'s children, at ``depth``.
+    """Append the lines for ``parent``'s children, at ``depth`` ``unit`` deep.
 
     Work items are a child to lay out or a finished line, so nesting never
     recurses.
@@ -514,7 +514,7 @@ def _render_children(
     ]
     while work:
         level, item = work.pop()
-        indent = INDENT * level
+        indent = unit * level
         if isinstance(item, str):
             lines.append(indent + item)
             continue

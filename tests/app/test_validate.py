@@ -171,11 +171,11 @@ def test_validate_is_built_and_off_the_release_lists(qtbot) -> None:
     assert printed.getvalue() == (
         'Release blocked: these actions still show "Coming soon": '
         "Open Right Document…, Compare, Next Change, Previous Change, "
-        "Link Scrolling, Indent.\n"
+        "Link Scrolling.\n"
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
         "before tagging.\n"
         'Release blocked: these actions still show "Not yet": '
-        "Find and Replace…, Outdent, Output Options.\n"
+        "Find and Replace…, Output Options.\n"
         "Build them or remove them from _not_yet_actions() in actions.py "
         "before tagging.\n"
     )
