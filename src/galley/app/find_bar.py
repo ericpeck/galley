@@ -12,8 +12,10 @@ restores it. Esc then selects the last replacement.
 
 The search itself is :mod:`galley.core.find`. The bar keeps the editor's
 text and its key mask until the document changes, so typing a query only
-runs the search. A document over its #42 busy size waits ``FIND_DELAY_MS``
-after the last keystroke before it searches.
+runs the search. A bar with the replace row searches the raw text, which
+keeps no-break spaces, so its count is what Replace All replaces. A
+document over its #42 busy size waits ``FIND_DELAY_MS`` after the last
+keystroke before it searches.
 """
 
 from bisect import bisect_left, bisect_right
@@ -73,6 +75,7 @@ KEYS_ONLY_TIP = "Match only object keys, not values"
 # Keys only stays visible but greyed out for a format with no keys (#63).
 KEYS_ONLY_NOT_APPLICABLE = "Keys only doesn't apply to {label}"
 REPLACE_PLACEHOLDER = "Replace"
+REPLACE_FIELD_NAME = "Replace with"
 REPLACE = "Replace"
 REPLACE_ALL = "Replace All"
 # How long "Replaced N" shows after Replace All before the live count returns.
@@ -263,7 +266,8 @@ class FindBar(QWidget):
         self.replace_field = QLineEdit()
         self.replace_field.setObjectName(f"{name}ReplaceField")
         self.replace_field.setPlaceholderText(REPLACE_PLACEHOLDER)
-        self.replace_field.setAccessibleName(REPLACE_PLACEHOLDER)
+        self.replace_field.setAccessibleName(REPLACE_FIELD_NAME)
+        self.replace_field.returnPressed.connect(self._replace_on_return)
         self.replace_field.setFont(code_font())
         # As wide as the find field above it, so the two line up.
         self.replace_field.setFixedWidth(_FIELD_MIN_WIDTH)
@@ -431,9 +435,7 @@ class FindBar(QWidget):
         self._timer.stop()
         editor = self._editor
         document = editor.document()
-        # Raw text keeps no-break spaces, which toPlainText() turns into
-        # spaces.
-        text = document.toRawText().replace(_BLOCK_BREAK, "\n")
+        text, _astral = self._source_text()
         replaced = replace_all(
             text,
             self.field.text(),
@@ -709,6 +711,11 @@ class FindBar(QWidget):
         finally:
             self._editing = False
 
+    def _replace_on_return(self) -> None:
+        """Return in the replace field is Replace, while Replace is enabled."""
+        if self.replace_button.isEnabled():
+            self.replace_current()
+
     def _end_replaced(self) -> None:
         """Swap ``Replaced N`` for the live count."""
         self._replaced_timer.stop()
@@ -754,8 +761,19 @@ class FindBar(QWidget):
         editor.ensureCursorVisible()
 
     def _source_text(self) -> tuple[str, list[int]]:
+        """The text the search runs on, and its astral offsets.
+
+        With the replace row it is the raw text, block breaks as newlines.
+        toPlainText() would turn no-break spaces into spaces, so a query
+        with a space would count matches Replace All never writes back.
+        Both have the same length, so offsets don't move.
+        """
         if self._text is None:
-            self._text = self._editor.toPlainText()
+            if self._replace_option:
+                raw = self._editor.document().toRawText()
+                self._text = raw.replace(_BLOCK_BREAK, "\n")
+            else:
+                self._text = self._editor.toPlainText()
             self._astral = astral_offsets(self._text)
         return self._text, self._astral
 

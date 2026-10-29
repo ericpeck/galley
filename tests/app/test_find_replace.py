@@ -274,7 +274,7 @@ def test_the_buttons_are_labeled_exactly_with_no_icons(qtbot) -> None:
     assert bar.replace_all_button.accessibleName() == "Replace All"
     assert isinstance(bar.replace_field, QLineEdit)
     assert bar.replace_field.placeholderText() == "Replace"
-    assert bar.replace_field.accessibleName() == "Replace"
+    assert bar.replace_field.accessibleName() == "Replace with"
     assert bar.replace_field.font().family() == code_font().family()
 
 
@@ -366,6 +366,45 @@ def test_replace_replaces_the_current_match_and_selects_the_next(qtbot) -> None:
     bar.replace_button.click()
     assert editor.toPlainText() == "quantity quantity qty"
     assert bar.current_match() == (18, 21)
+
+
+def test_return_in_the_replace_field_replaces_only_while_replace_is_enabled(
+    qtbot,
+) -> None:
+    window, editor, _bar_ = _input_with(qtbot, "qty qty")
+    bar = _open_replace(qtbot, window, "qty", "n")
+    _focus(qtbot, bar.replace_field)
+    qtbot.keyClick(bar.replace_field, Qt.Key.Key_Return)
+    assert editor.toPlainText() == "n qty"
+    assert bar.current_match() == (2, 5)
+    qtbot.keyClick(
+        bar.replace_field, Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier
+    )
+    assert editor.toPlainText() == "n n"
+    assert not bar.replace_button.isEnabled()
+    qtbot.keyClick(bar.replace_field, Qt.Key.Key_Return)
+    assert editor.toPlainText() == "n n"
+    assert bar.replace_field.hasFocus()
+    # Greyed out by a running job too: Return does nothing.
+    editor.setPlainText("qty")
+    bar.search()
+    bar.set_replace_blocked(True)
+    qtbot.keyClick(bar.replace_field, Qt.Key.Key_Return)
+    assert editor.toPlainText() == "qty"
+
+
+def test_the_count_and_replace_all_skip_a_no_break_space(qtbot) -> None:
+    # "a b" twice: once with a space, once with a no-break space.
+    original = "a b, a\u00a0b"
+    window, editor, _bar_ = _input_with(qtbot, original)
+    bar = _open_replace(qtbot, window, "a b", "x")
+    assert bar.match_count() == 1
+    assert bar.current_match() == (0, 3)
+    assert bar.replace_all() == 1
+    assert bar.count_label_text() == replaced_text(1)
+    assert editor.document().toRawText() == "x, a\u00a0b"
+    editor.undo()
+    assert editor.document().toRawText() == original
 
 
 def test_replace_wraps_to_the_first_match(qtbot) -> None:
