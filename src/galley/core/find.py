@@ -9,6 +9,9 @@ character into a newline. The mask is as long as the text, so a match found
 in it is at the same offset in the text. A query never holds a newline, so
 no match can cross from one key into the next.
 
+``replace_all`` replaces every match of a literal query in one pass, for
+Find and Replace on Input. It finds what ``find_starts`` finds.
+
 Offsets here count code points. ``utf16_offsets`` turns them into the UTF-16
 positions a Qt document uses.
 
@@ -18,7 +21,7 @@ This module does not import Qt.
 import logging
 import re
 from bisect import bisect_left
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -49,6 +52,53 @@ def find_starts(text: str, query: str, *, match_case: bool) -> list[int]:
     flags = 0 if match_case else re.IGNORECASE
     pattern = re.compile(re.escape(query), flags)
     return [match.start() for match in pattern.finditer(text)]
+
+
+class Replaced(NamedTuple):
+    """The text after a replace, and where each replacement is in it.
+
+    ``spans`` are UTF-16 ``(start, end)`` offsets in ``text``, in order.
+    """
+
+    text: str
+    spans: list[tuple[int, int]]
+
+
+def replace_all(
+    text: str, query: str, replacement: str, *, match_case: bool
+) -> Replaced:
+    """Replace each match of ``query`` with ``replacement``, as typed.
+
+    Matches are :func:`find_starts`: literal, left to right, without
+    overlaps. Match case off finds any case but inserts ``replacement``
+    unchanged. The new text is built in one join.
+    """
+    starts = find_starts(text, query, match_case=match_case)
+    if not starts:
+        return Replaced(text, [])
+    length = len(query)
+    pieces: list[str] = []
+    last = 0
+    for start in starts:
+        pieces.append(text[last:start])
+        pieces.append(replacement)
+        last = start + length
+    pieces.append(text[last:])
+    new_text = "".join(pieces)
+    grow = len(replacement) - length
+    new_starts = [start + index * grow for index, start in enumerate(starts)]
+    new_ends = [start + len(replacement) for start in new_starts]
+    astral = astral_offsets(new_text)
+    return Replaced(
+        new_text,
+        list(
+            zip(
+                utf16_offsets(new_starts, astral),
+                utf16_offsets(new_ends, astral),
+                strict=True,
+            )
+        ),
+    )
 
 
 def key_spans(text: str, syntax: FindSyntax) -> list[tuple[int, int]]:

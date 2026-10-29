@@ -17,8 +17,8 @@ from galley.app.main import create_main_window
 CTRL_ALT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
 
 # Fold and Unfold keep ⌥⌘[ and ⌥⌘] on macOS, because ⇧⌘[ and ⇧⌘] switch
-# tabs there.
-MAC_CTRL_ALT = {"Fold", "Unfold"}
+# tabs there. Find and Replace is ⌥⌘F on macOS and Ctrl+H elsewhere.
+MAC_CTRL_ALT = {"Fold", "Unfold", "Find and Replace…"}
 
 # German layout: (physical key, character AltGr types on it).
 GERMAN_ALTGR = [

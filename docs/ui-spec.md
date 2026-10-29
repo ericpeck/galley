@@ -192,7 +192,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Format | ⌘↵ | Ctrl+Return |
 | Paste | ⌘V | Ctrl+V |
 | Find | ⌘F | Ctrl+F |
-| Find and Replace | ⌥⌘F | standard Replace |
+| Find and Replace | ⌥⌘F | Ctrl+H |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Escape / Unescape String | ⇧⌘E / ⌘K ⌘E | Ctrl+Shift+E / Ctrl+K, Ctrl+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
@@ -206,7 +206,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace uses Qt's standard Replace key (`QKeySequence.StandardKey.Replace`). No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W closes the window, and ⇧⌘W stays free.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace is ⌥⌘F on macOS (portable `Ctrl+Alt+F`) and Ctrl+H on Windows and Linux, set by platform rather than with `QKeySequence.StandardKey.Replace`, which is ⌘H (the system Hide) on macOS. No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W closes the window, and ⇧⌘W stays free.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions.
 
@@ -383,7 +383,7 @@ Architecture:
 
 Isolate behind a `platform` module for macOS and Windows:
 - **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. There is no Window menu. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is `QKeySequence.StandardKey.Replace`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is set by platform, not with `QKeySequence.StandardKey.Replace`: ⌥⌘F on macOS and Ctrl+H on Windows and Linux. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.

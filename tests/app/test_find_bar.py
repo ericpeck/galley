@@ -736,13 +736,12 @@ def test_selections_are_never_set_inside_another_set(qtbot, monkeypatch) -> None
 # Release check ------------------------------------------------------------
 
 
-def test_find_is_built_and_find_and_replace_is_still_not_yet(qtbot) -> None:
+def test_find_and_find_and_replace_are_built(qtbot) -> None:
     window = _window(qtbot)
     assert "Find" not in UNBUILT_ACTIONS
     message = release_failure()
     assert message is None or "Find" not in message
-    not_yet = not_yet_failure()
-    assert not_yet is not None and "Find and Replace…" in not_yet
+    assert not_yet_failure() is None
     find = _action(window, "Find…")
     assert find.isEnabled()
     assert find.toolTip() != "Coming soon"

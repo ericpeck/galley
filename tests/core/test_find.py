@@ -1,8 +1,12 @@
 """Plain-text find and Keys only (#52, #62), without Qt."""
 
+import inspect
 import json
+import sys
 
 import pytest
+from tests.core.order_lines import QUERY, REPLACE_BYTES, order_lines
+from tests.perf import time_runs
 
 from galley.core.find import (
     _yaml_keys,
@@ -10,6 +14,7 @@ from galley.core.find import (
     find_starts,
     key_mask,
     key_spans,
+    replace_all,
     utf16_offsets,
 )
 from galley.core.format import format_yaml
@@ -152,3 +157,75 @@ def test_utf16_offsets_count_astral_characters_twice() -> None:
     assert starts == [3]
     assert utf16_offsets(starts, astral) == [5]
     assert utf16_offsets([0, 1, 2, 4], astral) == [0, 2, 3, 6]
+
+
+# Replace (release check) ----------------------------------------------------
+
+
+def test_replace_all_takes_matches_left_to_right_without_overlaps() -> None:
+    replaced = replace_all("aaaa", "aa", "b", match_case=True)
+    assert replaced.text == "bb"
+    assert replaced.spans == [(0, 1), (1, 2)]
+    assert replace_all("aaa", "aa", "xy", match_case=True).text == "xya"
+
+
+def test_replace_all_ignores_case_but_inserts_the_replacement_as_typed() -> None:
+    replaced = replace_all("Qty qty QTY", "qty", "Quantity", match_case=False)
+    assert replaced.text == "Quantity Quantity Quantity"
+    assert replaced.spans == [(0, 8), (9, 17), (18, 26)]
+    exact = replace_all("Qty qty QTY", "qty", "Quantity", match_case=True)
+    assert exact.text == "Qty Quantity QTY"
+    assert exact.spans == [(4, 12)]
+
+
+def test_replace_all_spans_are_utf16_with_an_astral_character_before_a_match() -> None:
+    replaced = replace_all("😀 ab ab", "ab", "x😀y", match_case=True)
+    assert replaced.text == "😀 x😀y x😀y"
+    # 😀 is two UTF-16 units, in front of the matches and inside each one.
+    assert replaced.spans == [(3, 7), (8, 12)]
+
+
+def test_replace_all_spans_are_utf16_with_an_astral_character_inside_a_match() -> None:
+    replaced = replace_all("a😀 b a😀", "a😀", "c", match_case=True)
+    assert replaced.text == "c b c"
+    assert replaced.spans == [(0, 1), (4, 5)]
+    longer = replace_all("a😀 b a😀", "a😀", "😀😀", match_case=True)
+    assert longer.text == "😀😀 b 😀😀"
+    assert longer.spans == [(0, 4), (7, 11)]
+
+
+def test_an_empty_replacement_deletes_each_match() -> None:
+    replaced = replace_all("a-b-c", "-", "", match_case=True)
+    assert replaced.text == "abc"
+    assert replaced.spans == [(1, 1), (2, 2)]
+
+
+@pytest.mark.parametrize("query", ["", "a\nb", "zzz"])
+def test_replace_all_with_nothing_to_replace_keeps_the_text(query: str) -> None:
+    replaced = replace_all("a\nb", query, "x", match_case=False)
+    assert replaced.text == "a\nb"
+    assert replaced.spans == []
+
+
+def test_replace_all_is_plain_text_with_nothing_regex_shaped() -> None:
+    assert replace_all("a.b axb", "a.b", "[$1]", match_case=True).text == "[$1] axb"
+    parameters = list(inspect.signature(replace_all).parameters)
+    assert parameters == ["text", "query", "replacement", "match_case"]
+
+
+@pytest.mark.perf
+def test_replace_all_on_2_4_mb_is_timed() -> None:
+    """Timing only, no budget (Isaac): the core function on its own."""
+    text = order_lines()
+    size = len(text.encode("utf-8"))
+    assert REPLACE_BYTES <= size < 2_500_000
+    replaced = replace_all(text, QUERY, "quantity", match_case=True)
+    assert len(replaced.spans) > 90_000
+    timing = time_runs(lambda: replace_all(text, QUERY, "quantity", match_case=True))
+    samples = ", ".join(f"{sample * 1000:.1f}" for sample in timing.samples)
+    print(
+        f"perf: test_replace_all_on_2_4_mb_is_timed [core replace_all, {size:,} B, "
+        f"{len(replaced.spans):,} matches] median {timing.median * 1000:.1f} ms "
+        f"({sys.platform}; timing only, no budget) ({samples})",
+        flush=True,
+    )

@@ -34,7 +34,13 @@ _RELEASE_FIX = (
 _NOT_YET_FIX = (
     "Build them or remove them from _not_yet_actions() in actions.py before tagging."
 )
-_NOT_YET_MENU_NAMES = ("Find and Replace…",)
+# Nothing is Not yet now. Tests of a non-empty Not yet list move Compare
+# off Coming soon and onto Not yet.
+_NOT_YET_EXAMPLE = "Compare"
+_NOT_YET_MENU_NAMES = (_NOT_YET_EXAMPLE,)
+_COMING_SOON_WITHOUT_EXAMPLE = tuple(
+    name for name in UNBUILT_ACTIONS if name != _NOT_YET_EXAMPLE
+)
 _RELEASE_WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
 )
@@ -165,6 +171,17 @@ def _not_yet_text(names: str) -> str:
     )
 
 
+def _compare_not_yet(monkeypatch) -> None:
+    """Move Compare from Coming soon to Not yet."""
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS", _COMING_SOON_WITHOUT_EXAMPLE
+    )
+    monkeypatch.setattr(
+        "galley.app.actions.ShellActions._not_yet_actions",
+        lambda self: [self.compare],
+    )
+
+
 def _clear_not_yet(monkeypatch) -> None:
     monkeypatch.setattr(
         "galley.app.actions.ShellActions._not_yet_actions",
@@ -188,12 +205,12 @@ def test_release_check_message_is_exact_and_keeps_menu_order() -> None:
 
 
 def test_not_yet_release_check_message_is_exact_and_keeps_order() -> None:
-    message = not_yet_failure(("Escape as String", "Find and Replace…"))
-    assert message == _not_yet_text("Escape as String, Find and Replace…")
+    message = not_yet_failure(("Escape as String", "Compare"))
+    assert message == _not_yet_text("Escape as String, Compare")
     assert message is not None
     assert message.splitlines() == [
         'Release blocked: these actions still show "Not yet": '
-        "Escape as String, Find and Replace….",
+        "Escape as String, Compare.",
         _NOT_YET_FIX,
     ]
     assert not_yet_failure(()) is None
@@ -227,6 +244,7 @@ def test_release_check_fails_when_only_coming_soon_remains(monkeypatch, capsys) 
 def test_release_check_fails_when_only_not_yet_remains(
     monkeypatch, qtbot, capsys
 ) -> None:
+    _compare_not_yet(monkeypatch)
     monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", ())
     window = _show(qtbot)
     names = _not_yet_menu_order(window)
@@ -241,11 +259,12 @@ def test_release_check_fails_when_only_not_yet_remains(
     assert "Coming soon" not in captured.out
 
 
-def test_release_check_fails_when_both_lists_remain(qtbot, capsys) -> None:
+def test_release_check_fails_when_both_lists_remain(monkeypatch, qtbot, capsys) -> None:
+    _compare_not_yet(monkeypatch)
     window = _show(qtbot)
     coming = _menu_order(window)
     not_yet = _not_yet_menu_order(window)
-    assert coming == list(UNBUILT_ACTIONS)
+    assert coming == list(_COMING_SOON_WITHOUT_EXAMPLE)
     assert not_yet == list(_NOT_YET_MENU_NAMES)
     assert coming
     assert not_yet
@@ -478,7 +497,7 @@ def test_every_stub_action_is_covered_by_an_unbuilt_entry(qtbot) -> None:
     assert message == _release_text(", ".join(UNBUILT_ACTIONS))
     assert message is not None
     not_yet = {id(action) for action in actions._not_yet_actions()}
-    assert not_yet
+    assert not not_yet
     assert not_yet.isdisjoint(covered)
     assert {id(action) for action in actions.stubs()} == not_yet
 
@@ -526,9 +545,9 @@ def test_indent_and_outdent_shipped(qtbot) -> None:
         assert id(action) not in pending
         assert action.toolTip() != COMING_SOON
     coming = release_failure()
-    not_yet = not_yet_failure()
+    not_yet = not_yet_failure() or ""
     assert coming is not None
-    assert not_yet is not None
+    assert not_yet == ""
     for message in (coming, not_yet):
         assert "Indent" not in message
         assert "Outdent" not in message
@@ -551,13 +570,12 @@ def test_indent_size_picker_is_enabled_once_indent_ships(qtbot) -> None:
     assert submenu.menuAction().toolTip() != COMING_SOON
 
 
-def test_release_check_lists_only_find_and_replace_under_not_yet() -> None:
+def test_release_check_lists_nothing_under_not_yet() -> None:
     coming = release_failure()
-    not_yet = not_yet_failure()
     assert coming is not None
-    assert not_yet == _not_yet_text("Find and Replace…")
+    assert not_yet_failure() is None
     assert "Output Options" not in coming
-    assert "Output Options" not in not_yet
+    assert "Find and Replace" not in coming
 
 
 def test_release_check_no_longer_lists_preferences() -> None:
@@ -565,9 +583,9 @@ def test_release_check_no_longer_lists_preferences() -> None:
     assert "Preferences" not in UNBUILT_ACTIONS
     assert "Preferences" not in _ACTION_ATTRS
     coming = release_failure()
-    not_yet = not_yet_failure()
+    not_yet = not_yet_failure() or ""
     assert coming is not None
-    assert not_yet is not None
+    assert not_yet == ""
     assert "Preferences" not in coming
     assert "Preferences" not in not_yet
 
@@ -577,9 +595,9 @@ def test_release_check_no_longer_lists_guides() -> None:
     assert "Guides" not in UNBUILT_ACTIONS
     assert "Guides" not in _ACTION_ATTRS
     coming = release_failure()
-    not_yet = not_yet_failure()
+    not_yet = not_yet_failure() or ""
     assert coming is not None
-    assert not_yet is not None
+    assert not_yet == ""
     assert "Guides" not in coming
     assert "Guides" not in not_yet
 
@@ -589,9 +607,9 @@ def test_release_check_no_longer_lists_pop_out() -> None:
     assert "Pop out" not in UNBUILT_ACTIONS
     assert "Pop out" not in _ACTION_ATTRS
     coming = release_failure()
-    not_yet = not_yet_failure()
+    not_yet = not_yet_failure() or ""
     assert coming is not None
-    assert not_yet is not None
+    assert not_yet == ""
     for name in ("Pop out", "Show window", "Bring back"):
         assert name not in coming
         assert name not in not_yet
@@ -602,9 +620,9 @@ def test_release_check_no_longer_lists_tabs() -> None:
     assert "Tabs" not in UNBUILT_ACTIONS
     assert "Tabs" not in _ACTION_ATTRS
     coming = release_failure()
-    not_yet = not_yet_failure()
+    not_yet = not_yet_failure() or ""
     assert coming is not None
-    assert not_yet is not None
+    assert not_yet == ""
     for name in (
         "Tabs",
         "Rename",

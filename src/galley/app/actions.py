@@ -22,6 +22,7 @@ from galley.app.shortcuts import (
     COLLAPSE_ALL,
     ESCAPE_AS_STRING,
     EXPAND_ALL,
+    FIND_AND_REPLACE,
     FOLD,
     FORMAT,
     INDENT,
@@ -346,10 +347,9 @@ class ShellActions:
         self.find_previous = _action(
             parent, "Find Previous", standard=QKeySequence.StandardKey.FindPrevious
         )
+        # Opens Input's find bar with the replace row.
         self.find_replace = _action(
-            parent,
-            "Find and Replace…",
-            standard=QKeySequence.StandardKey.Replace,
+            parent, "Find and Replace…", shortcut=FIND_AND_REPLACE
         )
         self.escape_string = _action(
             parent, "Escape as String", shortcut=ESCAPE_AS_STRING
@@ -549,11 +549,9 @@ class ShellActions:
 
         Menu order: menu bar, then the toolbar. Delete a command here when
         it ships. The release check prints each menu label and fails while
-        this list is non-empty.
+        this list is non-empty. An empty list prints nothing.
         """
-        return [
-            self.find_replace,
-        ]
+        return []
 
 
 def _qapplication() -> QApplication:

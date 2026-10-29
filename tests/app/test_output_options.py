@@ -618,9 +618,7 @@ def test_output_options_is_off_the_not_yet_list(qtbot) -> None:
     actions = window._actions
     assert actions.output_options not in actions._not_yet_actions()
     assert actions.output_options not in actions.stubs()
-    message = not_yet_failure()
-    assert message is not None
-    assert "Output Options" not in message
+    assert not_yet_failure() is None
     printed = io.StringIO()
     with redirect_stdout(printed):
         assert main() == 1
@@ -629,9 +627,5 @@ def test_output_options_is_off_the_not_yet_list(qtbot) -> None:
         "Open Right Document…, Compare, Next Change, Previous Change, "
         "Link Scrolling.\n"
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
-        "before tagging.\n"
-        'Release blocked: these actions still show "Not yet": '
-        "Find and Replace….\n"
-        "Build them or remove them from _not_yet_actions() in actions.py "
         "before tagging.\n"
     )
