@@ -166,7 +166,8 @@ Removed. Galley v1 has no pop-out windows; both panes stay in the main window.
 
 ### 5.10 Search (find bar)
 - **Output find** (4a): field with search icon, `2 of 3`, prev/next arrows, scope segmented toggle `Keys` / `Values` / `Path`, close `×`. Search only, no Replace. Path scope uses dotted form with zero-based indexes (`order.items[2].price`), jumps to the match, and opens folded parents. Current match: `selection` fill with accent outline.
-- **Input find and replace** (4b): plain text search; toggles inside the field: Regex `.*`, Match case `Aa`, Whole word `ab` (underlined); count, prev/next, close. Second row: replace field, `Replace`, `Replace All`. No Keys/Values/Path scope (raw input may not parse).
+- **Input find and replace** (4b): plain text search; count, prev/next, Match case, close. Second row: replace field, `Replace`, `Replace All`. No Keys/Values/Path scope (raw input may not parse).
+- **Regex and Whole word** (both bars, as built): two checkable text buttons right of the find field, `Regex` and `Whole word`, no icons. When on, they show the Output Options link's pressed fill and edge. Accessible names `Use regular expression` and `Match whole word`; tooltips add ⌥⌘R / ⌥⌘W (Alt+R / Alt+W on Windows and Linux), which work only while a find bar has focus. Both bars share their state for the session; it is not saved. Tab order: find field, Regex, Whole word, replace field, Replace, Replace All. The search runs in its own process with a 2 s limit. An invalid pattern reads `Invalid pattern` with the red field border, no highlights, and the engine's error (`Col N: …`) as the field's tooltip and spoken text. A search past the limit reads `Search timed out` the same way, and screen readers hear `Search timed out. Try a simpler pattern.` Neither opens a dialog or moves focus. With Regex on, a replacement can put in `$0` to `$9`; `$$` is `$`, and `\n` and `\1` stay as typed. A `$N` the pattern has no group for reads `Invalid replacement` with the red border on the replace field, whose tooltip and spoken text say `The pattern has no group N.`; the highlights stay and Replace and Replace All grey out.
 - During a large write (6d): find works as plain text; count reads `1 so far`; `Path` toggle greyed out with tooltip `Available when formatting finishes`.
 
 ### 5.11 Dialogs (modal, window-modal sheet-style centered over the window with scrim)
@@ -193,6 +194,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Paste | ⌘V | Ctrl+V |
 | Find | ⌘F | Ctrl+F |
 | Find and Replace | ⌥⌘F | Ctrl+H |
+| Regex / Whole word (find bar focused) | ⌥⌘R / ⌥⌘W | Alt+R / Alt+W |
 | Undo / Redo | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Y |
 | Escape / Unescape String | ⇧⌘E / ⌘K ⌘E | Ctrl+Shift+E / Ctrl+K, Ctrl+E |
 | Bigger / Smaller / Actual | ⌘+ / ⌘− / ⌘0 | Ctrl+ / Ctrl− / Ctrl+0 |
@@ -206,7 +208,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Find next / prev | ↵ / ⇧↵ in field | same |
 | Close find / popover / dialog | Esc | Esc |
 
-Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace is ⌥⌘F on macOS (portable `Ctrl+Alt+F`) and Ctrl+H on Windows and Linux, set by platform rather than with `QKeySequence.StandardKey.Replace`, which is ⌘H (the system Hide) on macOS. No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W closes the window, and ⇧⌘W stays free.
+Format on Windows is Ctrl+Return (portable text `Ctrl+Return`, the main Return key). Find and Replace is ⌥⌘F on macOS (portable `Ctrl+Alt+F`) and Ctrl+H on Windows and Linux, set by platform rather than with `QKeySequence.StandardKey.Replace`, which is ⌘H (the system Hide) on macOS. The find bars' Regex and Whole word are ⌥⌘R and ⌥⌘W on macOS (portable `Ctrl+Alt+R` / `Ctrl+Alt+W`) and Alt+R and Alt+W on Windows and Linux, and work only while a find bar has focus. No shortcut uses Ctrl+Alt on Windows or Linux, because Windows treats AltGr as Ctrl+Alt and layouts such as German type `[`, `]`, `@` and `€` with AltGr (#95). Word Wrap is ⌥Z on macOS and Alt+Z on Windows, as in VS Code. Unescape String is ⌘K ⌘E on macOS and Ctrl+K, Ctrl+E on Windows. Stack Panes is ⌘\ on macOS and Ctrl+\ on Windows, with ⇧⌘L / Ctrl+Shift+L as a second key because `\` needs AltGr on German layouts; menus show the first. Fold and Unfold are Ctrl+Shift+[ and Ctrl+Shift+] on Windows, as in VS Code; macOS keeps ⌥⌘[ and ⌥⌘], because ⇧⌘[ and ⇧⌘] switch tabs there. Next Problem and Previous Problem (View menu) are F8 and Shift+F8 everywhere and wrap around; on macOS F8 is Play/Pause unless Fn is held, so the menu shows ⌘' and ⇧⌘' and F8 / ⇧F8 stay as second keys (#78). All are swappable in the platform layer (§12). ⌘W / Ctrl+W closes the window, and ⇧⌘W stays free.
 
 Focus order in main window: toolbar → Input tab strip → Input editor → Input footer → splitter rail → Output tab strip → Output editor → Output footer → status bar actions.
 
@@ -234,7 +236,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Find bar on Input: `qty`, Match case + Whole word on (Regex off), `2 of 3`; replace row `quantity`, `Replace`, `Replace All`. Matches highlighted in the one-line input; current match `selection` fill with accent outline.
 - Output shows breadcrumb `root`.
 - Replace replaces current match and advances; Replace All is one undo step.
-- Invalid regex: show inline error under the field with icon + text (proposal).
+- Invalid regex: `Invalid pattern` in the count label, red field border, and the engine's error as the field's tooltip (as built; see §5.10).
 - Keyboard: ⌥⌘F opens with replace row; Tab moves find → replace → buttons.
 
 ### 5a, 5b — Pop-out windows (ref: 5a, 5b)
@@ -383,7 +385,7 @@ Architecture:
 
 Isolate behind a `platform` module for macOS and Windows:
 - **Menus**: a global menu bar on macOS, an in-window menu bar on Windows, same action objects. App menu `Galley` (mocks showed `Formatter`). About and Quit use `QAction.MenuRole`. There is no Window menu. The editor right-click menu is `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`, and Output's adds `Copy As ▸` (§5.4).
-- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is set by platform, not with `QKeySequence.StandardKey.Replace`: ⌥⌘F on macOS and Ctrl+H on Windows and Linux. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
+- **Shortcuts**: define actions with `QKeySequence.StandardKey` where one exists. Find and Replace is set by platform, not with `QKeySequence.StandardKey.Replace`: ⌥⌘F on macOS and Ctrl+H on Windows and Linux. Regex and Whole word are ⌥⌘R / ⌥⌘W on macOS and Alt+R / Alt+W on Windows and Linux, set by platform in `shortcuts.py`. Custom bindings are the §6 table. Display hints (`⌘↵` vs `Ctrl+Return`, `⌘V` vs `Ctrl+V`) come from this layer. Empty-state already shows both paste hints. Word Wrap is ⌥Z on macOS and Alt+Z on Windows. No shortcut uses Ctrl+Alt on Windows or Linux. Format on Windows is Ctrl+Return.
 - **Window chrome**: title bar, traffic lights vs. Windows caption buttons, full-screen action (`^⌘F` vs F11), unified-title look. Keep the Broadsheet surfaces identical across platforms.
 - **Defaults**: line endings default (LF; popover notes CRLF is the Windows default — whether default flips on Windows is open).
 - **File dialogs, drag-and-drop, second-display placement** via Qt defaults per platform.

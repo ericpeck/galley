@@ -75,6 +75,35 @@ def options_link_style() -> str:
     )
 
 
+def find_toggle_style() -> str:
+    """A find bar toggle such as Regex: a text button that shows pressed
+    while on, with the Options link's fill inside its mid edge.
+
+    The focus ring is the pane's, baked from :func:`segment_colors`, so it
+    clears 3:1 where the highlight role does not.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    focus = segment_colors(palette).focus.name()
+    return f"""
+        QPushButton {{
+            background: transparent;
+            color: palette(window-text);
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 2px 7px;
+        }}
+        QPushButton:checked {{
+            background: palette(alternate-base);
+            border: 1px solid palette(mid);
+        }}
+        QPushButton:focus {{
+            border: 2px solid {focus};
+            padding: 1px 6px;
+        }}
+        """
+
+
 def segment_style() -> str:
     """Segmented choices, such as the Output Options Indent row.
 
@@ -227,7 +256,12 @@ def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
     any stylesheet one of these produced, because re-parsing the old text
     would keep the old colors.
     """
-    return (_menu_style_for, _pane_style_for, _segment_style_for)
+    return (
+        _menu_style_for,
+        _pane_style_for,
+        _segment_style_for,
+        _find_toggle_style_for,
+    )
 
 
 def _menu_style_for(_widget: QWidget) -> str:
@@ -240,3 +274,7 @@ def _pane_style_for(widget: QWidget) -> str:
 
 def _segment_style_for(_widget: QWidget) -> str:
     return segment_style()
+
+
+def _find_toggle_style_for(_widget: QWidget) -> str:
+    return find_toggle_style()

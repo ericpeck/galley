@@ -633,6 +633,8 @@ def test_every_control_has_a_name_and_tab_reaches_it(qtbot) -> None:
     _action(window, "Find…").trigger()
     expected = [
         (bar.field, "Find"),
+        (bar.regex_button, "Use regular expression"),
+        (bar.whole_word_button, "Match whole word"),
         (bar.previous_button, "Previous match"),
         (bar.next_button, "Next match"),
         (bar.match_case, "Match case"),

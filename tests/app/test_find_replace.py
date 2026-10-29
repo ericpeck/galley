@@ -1,6 +1,6 @@
 """Find and Replace on Input (release check, Chief's brief; ui-spec 4b).
 
-Regex and Whole word come in a later PR, so nothing here tests them.
+Regex and Whole word are in test_find_regex.py.
 """
 
 import io
@@ -284,6 +284,8 @@ def test_tab_moves_find_replace_buttons_then_the_existing_controls(qtbot) -> Non
     qtbot.keyClicks(bar.field, "qty")
     expected = [
         bar.field,
+        bar.regex_button,
+        bar.whole_word_button,
         bar.replace_field,
         bar.replace_button,
         bar.replace_all_button,

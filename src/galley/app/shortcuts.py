@@ -36,6 +36,11 @@ which is ⌘H on macOS, the system Hide. macOS uses ⌥⌘F (portable
 ``Ctrl+Alt+F``), as the Edit menu shows. Windows and Linux use ``Ctrl+H``,
 which keeps Ctrl+Alt off them.
 
+The find bars' Regex and Whole word toggles work only while a find bar has
+focus. macOS uses ⌥⌘R and ⌥⌘W (portable ``Ctrl+Alt+R`` and ``Ctrl+Alt+W``).
+Windows and Linux use ``Alt+R`` and ``Alt+W``, which keeps Ctrl+Alt off
+them. No menu title has a mnemonic, so Alt+R and Alt+W open no menu.
+
 Next Problem is F8 and Previous Problem Shift+F8 on every platform (Bill's
 #78 spec). On macOS F8 is Play/Pause unless Fn is held, so macOS lists ⌘'
 and ⇧⌘' first, which the menu shows, and keeps F8 and ⇧F8 as second keys.
@@ -67,6 +72,9 @@ EXPAND_ALL = QKeySequence("Ctrl+K, Ctrl+J", _PORTABLE)
 FIND_AND_REPLACE = QKeySequence(
     "Ctrl+Alt+F" if sys.platform == "darwin" else "Ctrl+H", _PORTABLE
 )
+_FIND_TOGGLE_MODIFIERS = "Ctrl+Alt+" if sys.platform == "darwin" else "Alt+"
+TOGGLE_REGEX = QKeySequence(_FIND_TOGGLE_MODIFIERS + "R", _PORTABLE)
+TOGGLE_WHOLE_WORD = QKeySequence(_FIND_TOGGLE_MODIFIERS + "W", _PORTABLE)
 # The first key of each list is the one the menu shows.
 _PROBLEM_KEYS = ("Ctrl+'", "F8") if sys.platform == "darwin" else ("F8",)
 NEXT_PROBLEM = tuple(QKeySequence(key, _PORTABLE) for key in _PROBLEM_KEYS)
