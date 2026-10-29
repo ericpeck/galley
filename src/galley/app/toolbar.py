@@ -8,12 +8,13 @@ the Input format shows that reason, such as "Not available for XML", as
 its tooltip and accessible description. If the row is still too narrow, trailing
 controls move into the » menu and keep the same actions. The indent size
 picker becomes an Indent size submenu there. Format stays at the right
-edge, outside that menu.
+edge, outside that menu. While Output is YAML, the picker and the submenu
+grey out Tab with its reason and keep showing the choice.
 """
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -23,6 +24,7 @@ from PySide6.QtGui import (
     QPalette,
     QResizeEvent,
     QShowEvent,
+    QStandardItemModel,
 )
 from PySide6.QtWidgets import (
     QComboBox,
@@ -48,6 +50,7 @@ from galley.app.actions import (
     ready_description,
 )
 from galley.app.icons import toolbar_icon
+from galley.app.indent import INDENT_CHOICES, TAB_CHOICE
 from galley.app.style import menu_style
 
 _ICON_ONLY = frozenset({"Outdent", "Indent", "Expand all", "Collapse all"})
@@ -59,7 +62,6 @@ _OVERFLOW_TEXT = "»"
 _MENU_INDICATOR_STYLE = (
     "QToolButton::menu-indicator { image: none; width: 0px; height: 0px; }"
 )
-_INDENT_CHOICES = ("2 spaces", "4 spaces", "Tab")
 
 
 @dataclass
@@ -74,7 +76,12 @@ class _Control:
 
 
 class MainToolbar(QWidget):
-    """One toolbar row: secondary actions, then Format pinned on the right."""
+    """One toolbar row: secondary actions, then Format pinned on the right.
+
+    ``indent_choice_changed(str)`` reports a new indent size choice.
+    """
+
+    indent_choice_changed = Signal(str)
 
     def __init__(
         self,
@@ -119,15 +126,11 @@ class MainToolbar(QWidget):
         indent.setObjectName("indentSize")
         indent.setAccessibleName("Indent size")
         indent.setToolTip("Indent size")
-        indent.addItems(list(_INDENT_CHOICES))
+        indent.addItems(list(INDENT_CHOICES))
         self._indent = indent
         self._indent_menu = self._build_indent_menu()
-        # Nothing reads the picker until Indent ships (#91). It follows the
-        # Indent entry of UNBUILT_ACTIONS, like the Indent button.
-        self._indent_host = coming_soon_wrapper(indent, actions.indent)
-        if is_unbuilt(actions.indent):
-            self._indent_menu.menuAction().setEnabled(False)
-            self._indent_menu.menuAction().setToolTip(COMING_SOON)
+        self._indent_host = indent
+        indent.currentTextChanged.connect(self.indent_choice_changed)
 
         tray = _UndoRedoTray()
         tray_row = QHBoxLayout(tray)
@@ -318,9 +321,11 @@ class MainToolbar(QWidget):
         menu = QMenu("Indent size", self)
         menu.setObjectName("indentSizeMenu")
         menu.setStyleSheet(menu_style())
+        # Tab's reason shows while it is greyed out for YAML.
+        menu.setToolTipsVisible(True)
         group = QActionGroup(menu)
         group.setExclusive(True)
-        for label in _INDENT_CHOICES:
+        for label in INDENT_CHOICES:
             choice = menu.addAction(label)
             choice.setCheckable(True)
             group.addAction(choice)
@@ -334,6 +339,30 @@ class MainToolbar(QWidget):
 
     def _choose_indent(self, text: str) -> None:
         self._indent.setCurrentText(text)
+
+    def indent_choice(self) -> str:
+        """The indent size picker's choice, such as ``2 spaces``."""
+        return self._indent.currentText()
+
+    def set_indent_choice(self, text: str) -> None:
+        """Show ``text`` in the picker and the submenu, as a click would."""
+        self._indent.setCurrentText(text)
+
+    def set_tab_unavailable(self, reason: str) -> None:
+        """Grey out Tab in the picker and the submenu with ``reason``, or "".
+
+        The current choice stays as it is, so a chosen Tab keeps showing.
+        """
+        model = self._indent.model()
+        assert isinstance(model, QStandardItemModel)
+        item = model.item(self._indent.findText(TAB_CHOICE))
+        item.setEnabled(not reason)
+        item.setToolTip(reason)
+        for action in self._indent_menu.actions():
+            if action.text() == TAB_CHOICE:
+                action.setEnabled(not reason)
+                action.setToolTip(reason or TAB_CHOICE)
+                action.setStatusTip(reason)
 
     def _sync_indent_checks(self, text: str) -> None:
         for action in self._indent_menu.actions():

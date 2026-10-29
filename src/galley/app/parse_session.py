@@ -39,6 +39,7 @@ from galley.app.problem_text import (
     display_input_error,
     display_problem,
 )
+from galley.core.format import DEFAULT_INDENT
 from galley.core.mask import CopyAsMode
 from galley.core.worker import (
     WRITE_CHUNK_SIZE,
@@ -317,6 +318,7 @@ class ParseSession(QObject):
         sort_keys: bool = False,
         minify: bool = False,
         validate: bool = False,
+        indent: str = DEFAULT_INDENT,
     ) -> None:
         """Send one job. A second submit while a job is active is ignored."""
         if self._shut_down or self._active is not None:
@@ -344,6 +346,7 @@ class ParseSession(QObject):
             sort_keys=sort_keys,
             minify=minify,
             validate=validate,
+            indent=indent,
         )
         active = _Active(job.job_id, destination)
         active.temp_path = temp_path

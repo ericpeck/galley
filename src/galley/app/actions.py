@@ -24,7 +24,9 @@ from galley.app.shortcuts import (
     EXPAND_ALL,
     FOLD,
     FORMAT,
+    INDENT,
     NEXT_PROBLEM,
+    OUTDENT,
     PREVIOUS_PROBLEM,
     SHOW_PROBLEMS,
     SHOW_WHITESPACE,
@@ -34,6 +36,7 @@ from galley.app.shortcuts import (
     UNFOLD,
     WORD_WRAP,
     apply_standard,
+    native_chord_text,
 )
 from galley.core.mask import CopyAsMode
 
@@ -45,6 +48,9 @@ NOT_AVAILABLE = "Not available for {label}"
 MINIFY_TOOLTIP = "Remove all spaces and line breaks from the JSON"
 # Validate's tooltip and accessible description (Chief's brief).
 VALIDATE_TOOLTIP = "Check Input for errors without changing Output."
+# Indent's and Outdent's tooltips, with the shortcut (Chief's brief).
+INDENT_TOOLTIP = "Indent lines ({keys})"
+OUTDENT_TOOLTIP = "Outdent lines ({keys})"
 
 # Menu order: menu bar, then the toolbar.
 # Delete a name here to ship that command. Do not keep a second list.
@@ -54,7 +60,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Next Change",
     "Previous Change",
     "Link Scrolling",
-    "Indent",
 )
 
 # ShellActions attributes for each roadmap name. Shipping a command does
@@ -455,8 +460,11 @@ class ShellActions:
         self.appearance_dark = _action(parent, "Dark", checkable=True)
         self.appearance = self._exclusive_appearance(parent)
 
-        self.outdent = _action(parent, "Outdent")
-        self.indent = _action(parent, "Indent")
+        # Edit › Indent and Outdent act on the focused pane's lines.
+        self.indent = _action(parent, "Indent", shortcut=INDENT)
+        self.indent.setToolTip(INDENT_TOOLTIP.format(keys=native_chord_text(INDENT)))
+        self.outdent = _action(parent, "Outdent", shortcut=OUTDENT)
+        self.outdent.setToolTip(OUTDENT_TOOLTIP.format(keys=native_chord_text(OUTDENT)))
         # On: the next Format writes keys A–Z at every level. Output only.
         self.sort_keys = _action(parent, "Sort keys", checkable=True)
         self.sort_keys.setObjectName("sortKeys")
@@ -533,7 +541,6 @@ class ShellActions:
             self.next_change,
             self.previous_change,
             self.link_scrolling,
-            self.indent,
         ]
 
     def _not_yet_actions(self) -> list[QAction]:
@@ -545,7 +552,6 @@ class ShellActions:
         """
         return [
             self.find_replace,
-            self.outdent,
             self.output_options,
         ]
 

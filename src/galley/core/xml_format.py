@@ -7,8 +7,9 @@ offsets expat reports. Nothing is re-escaped, requoted, or expanded, and
 ``<a></a>`` stays as written.
 
 - An element whose children are only elements, comments, and PIs, with
-  whitespace between them, puts each child on its own line, indented two
-  spaces per level.
+  whitespace between them, puts each child on its own line, indented one
+  ``indent`` per level (two spaces unless the caller passes another).
+  Only that added indent changes with it.
 - Any other content (text, CDATA, an entity reference, or nothing at all)
   and any element with ``xml:space="preserve"`` copies its whole inner
   content byte for byte.
@@ -40,7 +41,6 @@ from galley.core.errors import (
 # 2.6.0 has the huge-token fix (CVE-2023-52425) and the billion-laughs
 # protection from 2.4.1.
 MIN_EXPAT_VERSION = (2, 6, 0)
-INDENT = b"  "
 
 _XML_SPACE = "http://www.w3.org/XML/1998/namespace space"
 _NON_SPACE = re.compile(rb"[^ \t\r\n]")
@@ -115,8 +115,8 @@ def expat_problem(found: tuple[int, int, int] | None = None) -> str | None:
     )
 
 
-def format_xml(text: str | bytes) -> str:
-    """Return ``text`` formatted as XML.
+def format_xml(text: str | bytes, *, indent: str = "  ") -> str:
+    """Return ``text`` formatted as XML, ``indent`` added per level.
 
     Raises ``XMLSyntaxError`` for XML that is not well formed or declares
     an entity, ``InputError`` for invalid UTF-8 or nesting past
@@ -125,7 +125,9 @@ def format_xml(text: str | bytes) -> str:
     _require_expat()
     data = _source_bytes(text)
     events = _parse(data)
-    return _render(data, events).decode("utf-8", "surrogatepass")
+    return _render(data, events, indent.encode("utf-8")).decode(
+        "utf-8", "surrogatepass"
+    )
 
 
 def validate_xml(text: str | bytes) -> None:
@@ -352,11 +354,11 @@ def _line_column(data: bytes, index: int) -> tuple[int, int]:
     return breaks + 1, column
 
 
-def _render(data: bytes, events: list[tuple[int, int]]) -> bytes:
+def _render(data: bytes, events: list[tuple[int, int]], indent: bytes) -> bytes:
     """Build Output from source slices. ``events`` came from ``_parse``."""
     first, after, root = _build_tree(data, events)
     lines = _top_level(data, events[:first])
-    _render_element(data, root, lines)
+    _render_element(data, root, lines, indent)
     lines.extend(_top_level(data, events[after:]))
     text = b"\n".join(lines) + b"\n"
     if b"\r" in text:
@@ -476,8 +478,10 @@ def _top_level(data: bytes, events: list[tuple[int, int]]) -> list[bytes]:
     return found
 
 
-def _render_element(data: bytes, root: _Element, lines: list[bytes]) -> None:
-    """Append the lines for ``root`` and everything inside it.
+def _render_element(
+    data: bytes, root: _Element, lines: list[bytes], unit: bytes
+) -> None:
+    """Append the lines for ``root`` and everything inside it, ``unit`` per level.
 
     Work items are an element or comment/PI with its depth, or an end tag
     with its depth, so nesting never recurses.
@@ -485,7 +489,7 @@ def _render_element(data: bytes, root: _Element, lines: list[bytes]) -> None:
     work: list[tuple[int, _Element | tuple[int, int] | bytes]] = [(0, root)]
     while work:
         depth, item = work.pop()
-        indent = INDENT * depth
+        indent = unit * depth
         if isinstance(item, bytes):
             lines.append(indent + item)
             continue
