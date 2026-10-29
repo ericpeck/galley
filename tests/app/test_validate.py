@@ -174,10 +174,6 @@ def test_validate_is_built_and_off_the_release_lists(qtbot) -> None:
         "Link Scrolling.\n"
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
         "before tagging.\n"
-        'Release blocked: these actions still show "Not yet": '
-        "Find and Replace….\n"
-        "Build them or remove them from _not_yet_actions() in actions.py "
-        "before tagging.\n"
     )
     host = _button(window).parentWidget()
     assert host is None or host.property("comingSoonHost") is not True

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galley.app.actions import UNBUILT_ACTIONS
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.main_window import (
@@ -47,6 +48,8 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "src" / "galley" / "app"
 _FOLD = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
 _PROBLEM = ["Ctrl+'", "F8"] if sys.platform == "darwin" else ["F8"]
 _PREVIOUS = ["Ctrl+Shift+'", "Shift+F8"] if sys.platform == "darwin" else ["Shift+F8"]
+# ⌘H is the system Hide on macOS, so Find and Replace is ⌥⌘F there.
+_FIND_AND_REPLACE = ["Ctrl+Alt+F"] if sys.platform == "darwin" else ["Ctrl+H"]
 CUSTOM_SHORTCUTS = {
     "Word Wrap": ["Alt+Z"],
     "Escape as String": ["Ctrl+Shift+E"],
@@ -62,7 +65,10 @@ CUSTOM_SHORTCUTS = {
     "Expand all": ["Ctrl+K, Ctrl+J"],
     "Next Problem": _PROBLEM,
     "Previous Problem": _PREVIOUS,
+    "Find and Replace…": _FIND_AND_REPLACE,
 }
+# Ctrl+H is Qt's standard Replace key on Windows: the same command.
+_SAME_COMMAND = {("Find and Replace…", "Replace")}
 
 STANDARD_SHORTCUTS = {
     "Undo": QKeySequence.StandardKey.Undo,
@@ -74,7 +80,6 @@ STANDARD_SHORTCUTS = {
     "Find…": QKeySequence.StandardKey.Find,
     "Find Next": QKeySequence.StandardKey.FindNext,
     "Find Previous": QKeySequence.StandardKey.FindPrevious,
-    "Find and Replace…": QKeySequence.StandardKey.Replace,
     "Open file…": QKeySequence.StandardKey.Open,
     "Bigger": QKeySequence.StandardKey.ZoomIn,
     "Smaller": QKeySequence.StandardKey.ZoomOut,
@@ -547,8 +552,9 @@ def test_custom_shortcuts_avoid_standard_keys_and_chord_prefixes(qtbot) -> None:
         for sequence in _action(window, text).shortcuts():
             ident = _sequence_id(sequence)
             for end in range(1, len(ident) + 1):
-                if ident[:end] in standard:
-                    clashes.append(f"{text}: {standard[ident[:end]]}")
+                name = standard.get(ident[:end])
+                if name is not None and (text, name) not in _SAME_COMMAND:
+                    clashes.append(f"{text}: {name}")
             for end in range(1, len(ident)):
                 if ident[:end] in whole:
                     clashes.append(f"{text}: prefix is {whole[ident[:end]]}")
@@ -642,9 +648,15 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
         assert base.name() == app_base.name()
 
 
-def test_stub_action_reports_not_yet(qtbot) -> None:
+def test_stub_action_reports_not_yet(qtbot, monkeypatch) -> None:
+    # Nothing is Not yet any more. A Compare item off the Coming soon list
+    # is the example: it stays a stub, so it reports Not yet.
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS",
+        tuple(name for name in UNBUILT_ACTIONS if name != "Compare"),
+    )
     window = _show(qtbot)
-    _action(window, "Find and Replace…").trigger()
+    _action(window, "Compare").trigger()
     assert NOT_YET_MESSAGE.lower().startswith("not yet")
     assert window.statusBar().currentMessage() == NOT_YET_MESSAGE
     output = window.findChild(CodeEditor, "outputEditor")
