@@ -25,7 +25,7 @@ _XML_DATA = Path(__file__).parent / "data" / "xml"
 _INVALID_JSON = (
     '{\n  "a": 1\n  "b": 2\n}\n',
     '{\n  "a": 1,\n}\n',
-    '[1, 2\n',
+    "[1, 2\n",
     '{\n  "a": 1,\n  "a": 2,\n  "b": {"c": 1, "c": 2}\n}\n',
     '{"a": "\\ud800"}',
     '{"a": "\ud800"}',

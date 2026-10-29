@@ -134,16 +134,6 @@ def _output_state(output: CodeEditor) -> tuple[object, ...]:
     )
 
 
-def _menu_actions(menu: QMenu) -> list[QAction]:
-    found: list[QAction] = []
-    for action in menu.actions():
-        found.append(action)
-        sub = action.menu()
-        if isinstance(sub, QMenu):
-            found.extend(_menu_actions(sub))
-    return found
-
-
 # --- Built, copy and keys ---------------------------------------------------
 
 
@@ -192,8 +182,9 @@ def test_label_tooltip_description_and_no_shortcut_or_menu_item(qtbot) -> None:
     assert button.accessibleDescription() == VALIDATE_TOOLTIP
     assert action.isEnabled()
     assert button.isEnabled()
-    for menu in window.menuBar().findChildren(QMenu):
-        assert action not in _menu_actions(menu), menu.title()
+    # Every menu and submenu. PySide 6.9 invalidates QAction.menu() wrappers.
+    for menu in window.findChildren(QMenu):
+        assert action not in menu.actions(), menu.objectName()
 
 
 def test_an_icon_only_validate_button_is_named_validate(qtbot) -> None:
@@ -277,12 +268,12 @@ def test_validate_is_greyed_out_for_html(qtbot) -> None:
 def test_valid_input_says_so_with_a_check_and_leaves_output(qtbot, label) -> None:
     window = _show(qtbot)
     source, output = _editors(window)
-    output.setPlainText("previous\n")
-    output.insertPlainText("typed")
-    before = _output_state(output)
     picker = _child(window, QComboBox, "outputFormat")
     _input_format(window).setCurrentText(label)
     picked = picker.currentText()
+    output.setPlainText("previous\n")
+    output.insertPlainText("typed")
+    before = _output_state(output)
     source.setPlainText(_VALID[label])
     source.document().clearUndoRedoStacks()
 
@@ -647,9 +638,9 @@ def _pick(qtbot, window, label: str) -> None:
     want_dark = label == "Dark"
     qtbot.waitUntil(
         lambda: (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness() < 128
-        )
-        == want_dark,
+            (QApplication.palette().color(QPalette.ColorRole.Window).lightness() < 128)
+            == want_dark
+        ),
         timeout=5000,
     )
     QApplication.processEvents()
