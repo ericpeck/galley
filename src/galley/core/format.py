@@ -20,6 +20,9 @@ changed. See :func:`sort_mapping_keys` for the ordering rule.
 ``minify=True`` writes JSON from JSON with :func:`compact_json` instead of
 indenting it. It runs the same checks and raises the same errors.
 
+:func:`validate_document` runs the same parse and checks and stops before
+anything is written.
+
 ``prepare`` rewrites the loaded value before it is written; masking uses
 it. It runs after the checks and before ``sort_keys``. With it set, a YAML
 document that has an alias loads with the pure-Python parser, because the
@@ -82,7 +85,7 @@ from galley.core.errors import (
 )
 from galley.core.formats import format_named, targets_for
 from galley.core.html_format import format_html
-from galley.core.xml_format import format_xml
+from galley.core.xml_format import format_xml, validate_xml
 
 # ruamel's loader and dumper recurse once per level, with several frames each.
 # Past this depth a document that is still within MAX_DEPTH would hit
@@ -236,11 +239,17 @@ def _wait_for_pure_retry_gate() -> None:
 
 
 def _pure_python_yaml(
-    text: str | bytes, *, sort_keys: bool = False, prepare: Prepare | None = None
+    text: str | bytes,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+    check_only: bool = False,
 ) -> str:
     """Re-parse with pure Python and return that result, success or error."""
     _wait_for_pure_retry_gate()
-    return _format_yaml_impl(text, pure=True, sort_keys=sort_keys, **_given(prepare))
+    return _format_yaml_impl(
+        text, pure=True, sort_keys=sort_keys, **_given(prepare), **_checking(check_only)
+    )
 
 
 def format_yaml(
@@ -265,14 +274,24 @@ def format_yaml(
     ``prepare`` runs on the loaded value before that. With ``prepare`` set,
     a document with an alias is parsed again with pure Python too.
     """
-    retry = functools.partial(_pure_python_yaml, sort_keys=sort_keys, **_given(prepare))
+    return _run_yaml(text, sort_keys=sort_keys, prepare=prepare)
+
+
+def _run_yaml(
+    text: str | bytes,
+    *,
+    sort_keys: bool = False,
+    prepare: Prepare | None = None,
+    check_only: bool = False,
+) -> str:
+    """:func:`format_yaml`. ``check_only`` returns "" before the dump."""
+    given = {**_given(prepare), **_checking(check_only)}
+    retry = functools.partial(_pure_python_yaml, sort_keys=sort_keys, **given)
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
         if _force_c_parser_error():
             return retry(text)
-        return _format_yaml_impl(
-            text, pure=False, sort_keys=sort_keys, **_given(prepare)
-        )
+        return _format_yaml_impl(text, pure=False, sort_keys=sort_keys, **given)
     reparse = True
     loaded: object = None
     try:
@@ -290,6 +309,8 @@ def format_yaml(
         return retry(text)
     if reparse:
         return retry(text)
+    if check_only:
+        return ""
     # Outside the retry, so a masking failure is not retried in pure Python.
     loaded = _apply(prepare, loaded)
     try:
@@ -304,17 +325,25 @@ def _format_yaml_impl(
     pure: bool,
     sort_keys: bool = False,
     prepare: Prepare | None = None,
+    check_only: bool = False,
 ) -> str:
-    """Parse and dump ``text`` with safe YAML, optionally forcing pure Python."""
+    """Parse and dump ``text`` with safe YAML, optionally forcing pure Python.
+
+    ``check_only`` returns "" once ``text`` has loaded, before the dump.
+    """
     opened = _yaml_limits(text, pure=pure)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
             parsed = _apply(prepare, _yaml_from_events(text, pure=pure))
+            if check_only:
+                return ""
             return _dump_block(_ordered(parsed, sort_keys))
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
     try:
         loaded = _apply(prepare, _load_parsed(text, opened, pure=pure))
+        if check_only:
+            return ""
         return _dump_parsed(_ordered(loaded, sort_keys), pure=pure)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
@@ -323,6 +352,11 @@ def _format_yaml_impl(
 def _given(prepare: Prepare | None) -> dict[str, Prepare]:
     """``prepare`` as a keyword only when set, so calls without it are unchanged."""
     return {} if prepare is None else {"prepare": prepare}
+
+
+def _checking(check_only: bool) -> dict[str, bool]:
+    """``check_only`` as a keyword only when set, like :func:`_given`."""
+    return {"check_only": True} if check_only else {}
 
 
 def _has_alias(tokens: list[object]) -> bool:
@@ -1313,6 +1347,32 @@ def format_document(
         return _dump_json(_ordered(value, sort_keys), default=_not_json_value)
     except RecursionError:
         raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
+
+
+def validate_document(text: str | bytes, source: str) -> None:
+    """Raise what ``format_document`` raises for ``text`` and write nothing.
+
+    Validate reads Input in its own format, so this is the parse and the
+    checks of ``format_document(text, source, source)``, stopped before the
+    output step. ``source`` is JSON, YAML or XML (case-insensitive). HTML
+    and other formats raise ``ValueError``.
+    """
+    kind = _normalize_format(source)
+    if kind == "json":
+        _check_json(text)
+    elif kind == "yaml":
+        _run_yaml(text, check_only=True)
+    elif kind == "xml":
+        validate_xml(text)
+    else:
+        raise ValueError(f"Validate reads JSON, YAML and XML, not {source.strip()}.")
+
+
+def _check_json(text: str | bytes) -> None:
+    """:func:`format_json`'s parse and checks, without the dump."""
+    source = _decode_json(text)
+    if _json_fast_value(source) is _CHARACTER_WALK:
+        _json_walked_value(source, _json_limits(source))
 
 
 def load_document(text: str | bytes, source: str) -> object:

@@ -459,7 +459,7 @@ def test_disabled_controls_look_disabled_in_light_and_dark(qtbot) -> None:
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
     assert paste.isEnabled()
-    coming_soon = [_tool_button(window, name) for name in ("Validate",)]
+    coming_soon = [_tool_button(window, name) for name in ("Indent",)]
     for button in coming_soon:
         assert not button.isEnabled()
 
@@ -508,27 +508,27 @@ def test_icon_only_coming_soon_buttons_draw_3_to_1(qtbot) -> None:
     """
     window = _window(qtbot)
     paste = _tool_button(window, "Paste")
-    validate = _tool_button(window, "Validate")
+    indent = _tool_button(window, "Indent")
     width = window.width()
     while (
-        validate.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
+        indent.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
         and width > window.minimumWidth()
     ):
         width -= 20
         window.resize(width, window.height())
         QApplication.processEvents()
-    assert validate.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-    assert validate.isVisible() and not validate.isEnabled()
+    assert indent.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert indent.isVisible() and not indent.isEnabled()
 
     for label in ("Light", "Dark"):
         _pick(qtbot, window, label)
         paste_ink, paste_bg = _label_ink(paste)
         paste_ratio = contrast_ratio(paste_ink, paste_bg)
-        ink, background = _label_ink(validate)
+        ink, background = _label_ink(indent)
         ratio = contrast_ratio(ink, background)
         assert DISABLED_TEXT_CONTRAST <= ratio < paste_ratio - 1.5, (
-            f"{label} icon-only Validate: {ratio:.2f}; "
-            + _render_details(validate, ink, background, paste_ink, paste_bg)
+            f"{label} icon-only Indent: {ratio:.2f}; "
+            + _render_details(indent, ink, background, paste_ink, paste_bg)
         )
 
 

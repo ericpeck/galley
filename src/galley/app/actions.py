@@ -43,6 +43,8 @@ COMING_SOON = "Coming soon"
 NOT_AVAILABLE = "Not available for {label}"
 # Minify's tooltip while Input is JSON (Bill).
 MINIFY_TOOLTIP = "Remove all spaces and line breaks from the JSON"
+# Validate's tooltip and accessible description (Chief's brief).
+VALIDATE_TOOLTIP = "Check Input for errors without changing Output."
 
 # Menu order: menu bar, then the toolbar.
 # Delete a name here to ship that command. Do not keep a second list.
@@ -53,7 +55,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Previous Change",
     "Link Scrolling",
     "Indent",
-    "Validate",
 )
 
 # ShellActions attributes for each roadmap name. Shipping a command does
@@ -227,6 +228,20 @@ def busy_tips(action: QAction) -> tuple[str, str]:
         tooltip if isinstance(tooltip, str) else "",
         description if isinstance(description, str) else "",
     )
+
+
+def set_ready_description(action: QAction, description: str) -> None:
+    """The accessible description ``action``'s toolbar button has when ready.
+
+    A busy or greyed-out button shows its own description instead.
+    """
+    action.setProperty("readyDescription", description)
+
+
+def ready_description(action: QAction) -> str:
+    """The description set with :func:`set_ready_description`, or ""."""
+    description = action.property("readyDescription")
+    return description if isinstance(description, str) else ""
 
 
 def not_available_reason(action: QAction) -> str:
@@ -452,7 +467,10 @@ class ShellActions:
         self.collapse_all = _action(parent, "Collapse all", shortcut=COLLAPSE_ALL)
         self.fold = _action(parent, "Fold", shortcut=FOLD)
         self.unfold = _action(parent, "Unfold", shortcut=UNFOLD)
+        # Checks Input with Format's checks. Output is never changed.
         self.validate = _action(parent, "Validate")
+        self.validate.setToolTip(VALIDATE_TOOLTIP)
+        set_ready_description(self.validate, VALIDATE_TOOLTIP)
         # Triggered by the Output pane's Options link; not in a menu or toolbar.
         self.output_options = _action(parent, "Output Options")
         self.format = _action(
@@ -516,7 +534,6 @@ class ShellActions:
             self.previous_change,
             self.link_scrolling,
             self.indent,
-            self.validate,
         ]
 
     def _not_yet_actions(self) -> list[QAction]:

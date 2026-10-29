@@ -210,6 +210,23 @@ MINIFY_ANYWAY = "Minify anyway"
 MINIFY_SIZE_DETAIL = (
     "Large documents can take a while to minify. You can cancel while it runs."
 )
+# Validate (Chief's brief). "Valid JSON." shows with a check mark for 4 s.
+VALID_MESSAGE = "Valid {label}."
+VALIDATE_STATUS_MS = OPENED_STATUS_MS
+VALIDATE_NOT_AVAILABLE = "Validate works on JSON, YAML and XML."
+VALIDATE_EMPTY = "Input is empty."
+# A Validate job's busy words, in Minify's pattern. The busy state is on
+# Validate, not Format.
+VALIDATING_MESSAGE = "Validating…"
+VALIDATE_CANCELLED_MESSAGE = "Validating canceled."
+VALIDATE_BUSY_TOOLTIP = "Validating… press Cancel to stop"
+VALIDATE_BUSY_DESCRIPTION = "Validate is running. Press Cancel to stop."
+# Format's size question in Validate's words.
+VALIDATE_SIZE_QUESTION = "Validate this {size} document?"
+VALIDATE_ANYWAY = "Validate anyway"
+VALIDATE_SIZE_DETAIL = (
+    "Large documents can take a while to validate. You can cancel while it runs."
+)
 
 # Final timings. The busy indicator waits 500 ms, the progress bar and
 # Cancel wait 2 s, and the status text counts up from 10 s.
@@ -307,11 +324,16 @@ class MainWindow(QMainWindow):
         self._minify_status_timer.setSingleShot(True)
         self._minify_status_timer.timeout.connect(self._clear_minify_status)
         self._minify_status = ""
+        self._validate_status_timer = QTimer(self)
+        self._validate_status_timer.setSingleShot(True)
+        self._validate_status_timer.timeout.connect(self._clear_validate_status)
+        self._validate_status = ""
         self._output_before_format = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_sorted = False
         self._format_minify = False
+        self._format_validate = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
         # The Copy As job on the worker, and what the status text needs.
@@ -722,6 +744,7 @@ class MainWindow(QMainWindow):
         actions.full_screen.toggled.connect(self._set_full_screen)
         actions.format.triggered.connect(self._format)
         actions.minify.triggered.connect(self._minify)
+        actions.validate.triggered.connect(self._validate)
         actions.convert_python.triggered.connect(self._convert_python)
         actions.escape_string.triggered.connect(self._escape_string)
         actions.unescape_string.triggered.connect(self._unescape_string)
@@ -848,7 +871,17 @@ class MainWindow(QMainWindow):
             return
         self._format_input(minify=True)
 
-    def _format_input(self, *, minify: bool = False) -> None:
+    def _validate(self) -> None:
+        """Check Input with Format's checks. Output is never changed.
+
+        It is a Format job with Format's checks, limits and worker, and it
+        always reads Input, whichever pane has focus.
+        """
+        if self._validate_reason():
+            return
+        self._format_input(validate=True)
+
+    def _format_input(self, *, minify: bool = False, validate: bool = False) -> None:
         if self._formatting or self._size_warning is not None:
             return
         if self._copy_as_job is not None:
@@ -868,14 +901,17 @@ class MainWindow(QMainWindow):
             )
             return
         if size >= _warning_bytes(source) and not self._size_warning_accepted:
-            self._open_size_warning(text, size, minify=minify)
+            self._open_size_warning(text, size, minify=minify, validate=validate)
             return
-        self._start_format(text, minify=minify)
+        self._start_format(text, minify=minify, validate=validate)
 
-    def _open_size_warning(self, text: str, size: int, *, minify: bool = False) -> None:
+    def _open_size_warning(
+        self, text: str, size: int, *, minify: bool = False, validate: bool = False
+    ) -> None:
         """Ask once, with a window-modal sheet, before a large format.
 
-        Minify asks the same question in its own words. One answer covers both.
+        Minify and Validate ask the same question in their own words. One
+        answer covers all three.
         """
         box = QMessageBox(self)
         box.setObjectName("sizeWarning")
@@ -886,13 +922,18 @@ class MainWindow(QMainWindow):
             box.setText(MINIFY_SIZE_QUESTION.format(size=si_size(size)))
             box.setInformativeText(MINIFY_SIZE_DETAIL)
             anyway_text = MINIFY_ANYWAY
+        elif validate:
+            box.setText(VALIDATE_SIZE_QUESTION.format(size=si_size(size)))
+            box.setInformativeText(VALIDATE_SIZE_DETAIL)
+            anyway_text = VALIDATE_ANYWAY
         else:
             box.setText(f"Format this {si_size(size)} document?")
             box.setInformativeText(SIZE_WARNING_DETAIL)
             anyway_text = "Format anyway"
         anyway = box.addButton(anyway_text, QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        # One default for both sheets, so Minify's can't drift from Format's.
+        # One default for every sheet, so Minify's and Validate's can't drift
+        # from Format's.
         box.setDefaultButton(anyway)
         box.setEscapeButton(cancel)
         self._size_warning = box
@@ -908,15 +949,21 @@ class MainWindow(QMainWindow):
                 return
             if minify and self._minify_reason():
                 return
-            self._start_format(text, minify=minify)
+            if validate and self._validate_reason():
+                return
+            self._start_format(text, minify=minify, validate=validate)
 
         box.finished.connect(_choose)
         box.open()
 
-    def _start_format(self, text: str, *, minify: bool = False) -> None:
+    def _start_format(
+        self, text: str, *, minify: bool = False, validate: bool = False
+    ) -> None:
         self._cancel_status_timer.stop()
         self._minify_status_timer.stop()
+        self._validate_status_timer.stop()
         self._format_minify = minify
+        self._format_validate = validate
         self._formatting = True
         self._format_started_s = _monotonic()
         self._reveal_timer.stop()
@@ -924,7 +971,13 @@ class MainWindow(QMainWindow):
         self._output_before_format = self._output_pane.editor.toPlainText()
         self._format_source = self._input_pane.format_name()
         # Minify writes JSON whatever Output shows; success switches it.
-        self._format_target = "JSON" if minify else self._output_pane.format_name()
+        # Validate reads Input in its own format and ignores Output's picker.
+        if minify:
+            self._format_target = "JSON"
+        elif validate:
+            self._format_target = self._format_source
+        else:
+            self._format_target = self._output_pane.format_name()
         busy, progress = _busy_progress_bytes(self._format_source, text)
         size = _utf8_size(text)
         self._size_forces_busy = size >= busy
@@ -937,8 +990,10 @@ class MainWindow(QMainWindow):
         self._session.start()
         # Sort keys is greyed out for XML but keeps its check for JSON and YAML.
         # Minify keeps Input's key order: Sort keys is for Format (Bill).
+        # Validate writes nothing to sort.
         self._format_sorted = (
             not minify
+            and not validate
             and self._actions.sort_keys.isChecked()
             and format_named(self._format_source).loads_to_value
         )
@@ -948,6 +1003,7 @@ class MainWindow(QMainWindow):
             self._format_target,
             sort_keys=self._format_sorted,
             minify=minify,
+            validate=validate,
         )
         self._accepted_job_id = self._session.active_job_id
         if self._accepted_job_id is None:
@@ -1093,9 +1149,13 @@ class MainWindow(QMainWindow):
         self._arm_reveal_timer()
 
     def _busy_message(self) -> str:
+        if self._format_validate:
+            return VALIDATING_MESSAGE
         return MINIFYING_MESSAGE if self._format_minify else FORMATTING_MESSAGE
 
     def _cancelled_message(self) -> str:
+        if self._format_validate:
+            return VALIDATE_CANCELLED_MESSAGE
         return MINIFY_CANCELLED_MESSAGE if self._format_minify else CANCELLED_MESSAGE
 
     def _arm_reveal_timer(self) -> None:
@@ -1128,6 +1188,9 @@ class MainWindow(QMainWindow):
         if self._session.finished_job_id != self._accepted_job_id:
             return
         self._set_editors_locked(False)
+        if self._format_validate:
+            self._show_valid()
+            return
         if self._format_minify:
             self._show_minified_as_json()
         output = self._output_pane.editor
@@ -1138,6 +1201,26 @@ class MainWindow(QMainWindow):
         self._finish_format(self._success_status())
         if self._format_minify:
             self._show_minify_status(MINIFIED_MESSAGE)
+
+    def _show_valid(self) -> None:
+        """Input passed Format's checks. Output is not touched (Chief's brief).
+
+        Problems rows and gutter markers clear, and the pane keeps its
+        open, minimized or closed setting, as after a Format.
+        """
+        label = format_named(self._format_source).label
+        text = VALID_MESSAGE.format(label=label)
+        self._clear_problems()
+        self._finish_format(text)
+        self._validate_status = text
+        self._status.set_valid_state(text)
+        self._status.announce(text)
+        self._validate_status_timer.start(VALIDATE_STATUS_MS)
+
+    def _clear_validate_status(self) -> None:
+        if self._formatting or self._status.state_text() != self._validate_status:
+            return
+        self._status.set_state("Ready")
 
     def _show_minified_as_json(self) -> None:
         """Output shows JSON for minified text (Bill)."""
@@ -1957,10 +2040,16 @@ class MainWindow(QMainWindow):
         if action.isEnabled() != available:
             action.setEnabled(available)
         button = self._format_button
-        # A Minify job is busy on Minify; Format stays idle and greyed out.
+        # A Minify or Validate job is busy on its own button; Format stays
+        # idle and greyed out.
         minifying = self._formatting and self._format_minify
-        formatting = self._formatting and not minifying
-        button.setEnabled(((has_input and not copying) or formatting) and not minifying)
+        validating = self._formatting and self._format_validate
+        formatting = self._formatting and not minifying and not validating
+        button.setEnabled(
+            ((has_input and not copying) or formatting)
+            and not minifying
+            and not validating
+        )
         if formatting:
             button.setText(FORMATTING_MESSAGE)
             button.setAccessibleName(FORMATTING_MESSAGE)
@@ -1991,6 +2080,13 @@ class MainWindow(QMainWindow):
             set_busy(actions.minify, MINIFY_BUSY_TOOLTIP, MINIFY_BUSY_DESCRIPTION)
         else:
             set_busy(actions.minify, "", "")
+        validate_reason = self._validate_reason(text)
+        actions.validate.setEnabled(available and not validate_reason)
+        set_not_available(actions.validate, validate_reason)
+        if validating:
+            set_busy(actions.validate, VALIDATE_BUSY_TOOLTIP, VALIDATE_BUSY_DESCRIPTION)
+        else:
+            set_busy(actions.validate, "", "")
         self._toolbar.sync_not_available()
         self._sync_open_actions()
         self._sync_fold_actions()
@@ -2089,6 +2185,15 @@ class MainWindow(QMainWindow):
         """Why Minify is greyed out, or "". It reads JSON only (Bill)."""
         fmt = format_named(self._input_pane.format_name())
         return "" if fmt.name == "json" else MINIFY_NOT_AVAILABLE
+
+    def _validate_reason(self, text: str | None = None) -> str:
+        """Why Validate is greyed out, or "". HTML and empty Input can't be."""
+        if text is None:
+            text = self._input_pane.editor.toPlainText()
+        if _is_blank(text):
+            return VALIDATE_EMPTY
+        fmt = format_named(self._input_pane.format_name())
+        return "" if fmt.name in ("json", "yaml", "xml") else VALIDATE_NOT_AVAILABLE
 
     def _follow_input_format(self) -> None:
         """Offer in Output only what the Input format writes (B1 on #63).

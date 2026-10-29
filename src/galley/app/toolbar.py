@@ -45,6 +45,7 @@ from galley.app.actions import (
     coming_soon_wrapper,
     is_unbuilt,
     not_available_reason,
+    ready_description,
 )
 from galley.app.icons import toolbar_icon
 from galley.app.style import menu_style
@@ -422,9 +423,10 @@ def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
         button.setCursor(Qt.CursorShape.BusyCursor)
         button.setProperty("busyShown", True)
         return
+    ready = ready_description(action)
     if button.property("busyShown"):
         button.unsetCursor()
-        button.setAccessibleDescription("")
+        button.setAccessibleDescription(ready)
         button.setProperty("busyShown", False)
     reason = not_available_reason(action)
     if reason:
@@ -433,8 +435,10 @@ def _present(button: QToolButton, action: QAction, *, icon_only: bool) -> None:
         button.setProperty("notAvailableShown", True)
     elif button.property("notAvailableShown"):
         # Only a reason set here is cleared. Coming soon keeps its own.
-        button.setAccessibleDescription("")
+        button.setAccessibleDescription(ready)
         button.setProperty("notAvailableShown", False)
+    elif ready:
+        button.setAccessibleDescription(ready)
 
 
 def _present_style(button: QToolButton, action: QAction, *, icon_only: bool) -> None:

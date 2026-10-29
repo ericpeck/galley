@@ -204,8 +204,8 @@ def test_coming_soon_and_fold_commands_keep_their_own_state(qtbot) -> None:
     window = _show(qtbot)
     _choose(_pane(window, "input"), "XML")
     actions = window._actions
-    assert actions.validate.toolTip() == COMING_SOON
-    assert not actions.validate.isEnabled()
+    assert actions.indent.toolTip() == COMING_SOON
+    assert not actions.indent.isEnabled()
     for action in (actions.expand_all, actions.collapse_all):
         assert not action.isEnabled()
         assert action.toolTip().endswith("nothing to fold")

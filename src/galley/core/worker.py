@@ -34,7 +34,7 @@ from galley.core.diff import (
 )
 from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
-from galley.core.format import format_document
+from galley.core.format import format_document, validate_document
 from galley.core.formats import format_named
 from galley.core.mask import (
     MASK,
@@ -80,6 +80,9 @@ class FormatJob:
     before. With rules set, matched values are replaced with ``"•••"``, and
     ``sort_keys`` orders the masked output the same way. ``minify`` writes
     JSON to JSON as compact JSON, with Format's checks; it takes no ``mask``.
+    ``validate`` runs Format's checks on ``text`` in ``source`` and writes
+    nothing: success sends empty text. ``target`` and ``sort_keys`` are
+    ignored, and it takes no ``mask``.
     """
 
     job_id: int
@@ -94,6 +97,7 @@ class FormatJob:
     sort_keys: bool = False
     mask: MaskRules | None = None
     minify: bool = False
+    validate: bool = False
 
 
 @dataclass(frozen=True)
@@ -306,8 +310,8 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
     except Exception as exc:
         event_queue.put(_job_failure(job, exc, None))
         return
-    # Minified JSON is one line, so it has nothing to fold.
-    folds = b"" if job.minify else _scan_folds(text, job.target)
+    # Minified JSON is one line, and Validate writes nothing to fold.
+    folds = b"" if job.minify or job.validate else _scan_folds(text, job.target)
     payload = text.encode("utf-8")
     if job.destination is None and job.temp_path is None:
         event_queue.put(SuccessEvent(job.job_id, text, None, folds, masked_count))
@@ -326,6 +330,9 @@ def _execute(job: FormatJob, event_queue: Queue) -> None:
 
 def _format_text(job: FormatJob) -> tuple[str, int | None]:
     """The job's output text, and its masked count when ``mask`` is set."""
+    if job.validate:
+        validate_document(job.text, job.source)
+        return "", None
     if job.mask is None:
         text = format_document(
             job.text,

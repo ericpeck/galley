@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from galley.app.actions import COMING_SOON, is_unbuilt
+from galley.app.actions import COMING_SOON, is_unbuilt, not_available_reason
 from galley.app.appearance import set_application_palette
 from galley.app.main import create_main_window
 
@@ -111,7 +111,12 @@ def test_format_stays_visible_and_labels_are_not_elided(qtbot, width: int) -> No
                 assert tool.toolTip() == label
             else:
                 assert tool.accessibleName() == action.text()
-                if action.text() not in _PERMANENT_ICON:
+                # A greyed-out button shows why, such as Validate's
+                # "Input is empty." on the empty window.
+                reason = not_available_reason(action)
+                if reason:
+                    assert tool.toolTip() == reason
+                elif action.text() not in _PERMANENT_ICON:
                     assert tool.toolTip() == action.text()
         else:
             assert not _text_is_squeezed(tool)
@@ -201,10 +206,7 @@ def test_overflow_menu_triggers_the_same_actions(qtbot) -> None:
         assert all(item is not action for item in menu.actions())
 
 
-_UNBUILT_ICON_NAMES = (
-    "Indent",
-    "Validate",
-)
+_UNBUILT_ICON_NAMES = ("Indent",)
 
 
 def _shrink(qtbot, window, toolbar: QWidget, ready, start: int = 1024) -> int:

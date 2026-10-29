@@ -10,6 +10,7 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 
 - **Format and convert.** Pick the Input format and the Output format, then press Format. JSON to JSON, YAML to YAML, JSON to YAML and YAML to JSON all work. Input is never changed, and each result lands in Output as one undo step.
 - **Minify JSON.** Press Minify to write Input's JSON to Output with no spaces or line breaks. Key order is kept, and Input is never changed.
+- **Validate.** Press Validate to check Input for errors. Problems lists each one, and Output is never changed.
 - **Point at the problem.** Errors open the Problems pane, with one row per error and a marker in the gutter on the line to fix. The messages are plain sentences, such as "Remove the repeated key "status" on line 5." Repeated JSON keys are reported as errors, where most parsers silently keep only the last value.
 - **Fold big documents.** Collapse objects and arrays in Output from the gutter, the View menu, or the keyboard. A folded line shows a summary such as `{ … }, 3 keys`. Collapse all and Expand all work across the whole document, and copying always gives the full text.
 - **Convert from Python.** Paste a Python literal (a dict or list with `True`, `None`, tuples and so on) and get JSON or YAML. Galley reads it with Python's `ast` module. It never runs the text.
@@ -57,14 +58,14 @@ These features are being built now, and most are already in review. They aren't 
 - **Copy As and masking.** Copy Output as the original, with sensitive values masked as `•••`, or with random fake values. Sensitive values are found by key name (password, token, email and so on) and by value (emails, phone numbers). A View menu toggle to mask Output itself comes next ([#66](https://github.com/ericpeck/galley/issues/66)).
 - **Compare two documents.** Put two JSON or YAML documents side by side and list every added, removed, changed and moved value ([#65](https://github.com/ericpeck/galley/issues/65)).
 - **HTML and XML.** Format HTML and XML documents, with a locked-down parser that never fetches anything ([#63](https://github.com/ericpeck/galley/issues/63)).
-- **Interface fixes from the UI audit.** The Tab key types spaces, the tab strip fits narrow windows, a large Convert from Python is refused instead of freezing the window, and Output is marked Stale after Input changes ([#91](https://github.com/ericpeck/galley/issues/91)).
+- **Interface fixes from the UI audit.** The Tab key types spaces, the pane headers fit narrow windows, a large Convert from Python is refused instead of freezing the window, and Output is marked Stale after Input changes ([#91](https://github.com/ericpeck/galley/issues/91)).
 
 ## Planned
 
 Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain. Not started yet:
 
 - Find and Replace
-- Validate and indent size
+- Indent and indent size
 - Windows builds
 
 Specs for each feature live in their [GitHub issues](https://github.com/ericpeck/galley/issues).

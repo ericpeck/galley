@@ -3,6 +3,8 @@
 Left to right:
 
 - **spinner:** the busy spinner, which sits before the state text.
+- **check:** a check mark before a "Valid JSON." state, in the state
+  text's color. Any other state hides it.
 - **state:** the status message. A problem count opens the Problems pane.
   Text too long for the slot is elided, with the full text in its tooltip.
 - **counts:** a short tally such as ``5 differences``.
@@ -22,6 +24,7 @@ from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent, QFont
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QStatusBar, QWidget
 
 from galley.app.fonts import ui_font
+from galley.app.icons import toolbar_icon
 from galley.app.status_message import StatusMessage
 from galley.app.style import muted_text_style, progress_style, status_bar_style
 from galley.core.formats import FORMAT_LABELS
@@ -29,6 +32,7 @@ from galley.core.formats import FORMAT_LABELS
 SPINNER_WIDTH_PX = 80
 PROGRESS_WIDTH_PX = 160
 STATUS_FONT_PX = 13
+CHECK_ICON_PX = 16
 SPINNER_ACCESSIBLE_NAME = "Formatting"
 PROGRESS_ACCESSIBLE_NAME = "Formatting progress"
 
@@ -91,6 +95,12 @@ class StatusBar(QStatusBar):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Before the stylesheet, whose change event redraws the check mark.
+        # The words say it too, so the check mark is not the only cue.
+        self._check = QLabel()
+        self._check.setObjectName("statusIcon")
+        self._check.setContentsMargins(8, 0, 0, 0)
+        self._check.hide()
         self.setStyleSheet(status_bar_style())
         self.setSizeGripEnabled(True)
         font = ui_font()
@@ -115,6 +125,7 @@ class StatusBar(QStatusBar):
         self._direction = _text_slot("directionLabel", font, INFO_RESERVE)
         self._announcement = ""
         self.addWidget(self._spinner)
+        self.addWidget(self._check)
         self.addWidget(self._message, 1)
         self.addWidget(self._counts)
         self.addWidget(self._progress)
@@ -130,11 +141,40 @@ class StatusBar(QStatusBar):
 
         ``detail`` goes in the tooltip and accessible description only.
         """
+        self._check.hide()
         self._message.show_text(text, detail)
+
+    def set_valid_state(self, text: str) -> None:
+        """Show ``text``, such as ``Valid JSON.``, after a check mark."""
+        self._message.show_text(text)
+        self._draw_check()
+        self._check.show()
+
+    def check_shown(self) -> bool:
+        """True while the state text has a check mark."""
+        return not self._check.isHidden()
 
     def set_problem_count(self, count: int) -> None:
         """Show ``N problems`` in the state slot and accept a click."""
+        self._check.hide()
         self._message.show_problem_count(count)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if (
+            event.type()
+            in (
+                QEvent.Type.PaletteChange,
+                QEvent.Type.ApplicationPaletteChange,
+            )
+            and self.check_shown()
+        ):
+            self._draw_check()
+
+    def _draw_check(self) -> None:
+        """Draw Validate's glyph in the state text's palette role."""
+        icon = toolbar_icon("Validate")
+        self._check.setPixmap(icon.pixmap(CHECK_ICON_PX, CHECK_ICON_PX))
 
     def announce(self, text: str) -> None:
         """Ask screen readers to read ``text`` now, from the state slot."""
