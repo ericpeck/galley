@@ -19,7 +19,6 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLayout, QWidget
 from galley.app.copy_as import COPY_AS_LABELS
 from galley.app.shortcuts import (
     ACTUAL_SIZE,
-    CLOSE_OTHERS,
     COLLAPSE_ALL,
     ESCAPE_AS_STRING,
     EXPAND_ALL,
@@ -43,7 +42,7 @@ COMING_SOON = "Coming soon"
 # tooltip and status tip (B2 on #63), for example "Not available for XML".
 NOT_AVAILABLE = "Not available for {label}"
 
-# Menu order: menu bar, then the toolbar, then the tab menu.
+# Menu order: menu bar, then the toolbar.
 # Delete a name here to ship that command. Do not keep a second list.
 UNBUILT_ACTIONS: tuple[str, ...] = (
     "Open Right Document…",
@@ -54,7 +53,6 @@ UNBUILT_ACTIONS: tuple[str, ...] = (
     "Indent",
     "Minify",
     "Validate",
-    "Tabs",
 )
 
 # ShellActions attributes for each roadmap name. Shipping a command does
@@ -73,14 +71,6 @@ _ACTION_ATTRS: dict[str, tuple[str, ...]] = {
     # Collapse all shares this entry, so the release line stays "Expand".
     "Expand": ("expand_all", "collapse_all"),
     "Validate": ("validate",),
-    "Tabs": (
-        "rename",
-        "duplicate",
-        "close_tab",
-        "close_others",
-        "close_tabs_right",
-        "new_tab",
-    ),
 }
 
 
@@ -272,6 +262,13 @@ class ShellActions:
             standard=QKeySequence.StandardKey.Quit,
             role=QAction.MenuRole.QuitRole,
         )
+        # ⌘W / Ctrl+W. It is in no menu; the window holds it so the keys work.
+        self.close_window = _action(
+            parent,
+            "Close Window",
+            standard=QKeySequence.StandardKey.Close,
+            role=QAction.MenuRole.NoRole,
+        )
         self.open_file = _action(
             parent,
             "Open file…",
@@ -422,15 +419,6 @@ class ShellActions:
         self.appearance_dark = _action(parent, "Dark", checkable=True)
         self.appearance = self._exclusive_appearance(parent)
 
-        self.rename = _action(parent, "Rename")
-        self.duplicate = _action(parent, "Duplicate")
-        self.close_tab = _action(
-            parent, "Close", standard=QKeySequence.StandardKey.Close
-        )
-        self.close_others = _action(parent, "Close others", shortcut=CLOSE_OTHERS)
-        self.close_tabs_right = _action(parent, "Close tabs to the right")
-        self.new_tab = _action(parent, "New tab")
-
         self.outdent = _action(parent, "Outdent")
         self.indent = _action(parent, "Indent")
         # On: the next Format writes keys A–Z at every level. Output only.
@@ -504,12 +492,6 @@ class ShellActions:
             self.next_change,
             self.previous_change,
             self.link_scrolling,
-            self.rename,
-            self.duplicate,
-            self.close_tab,
-            self.close_others,
-            self.close_tabs_right,
-            self.new_tab,
             self.indent,
             self.minify,
             self.validate,

@@ -114,7 +114,10 @@ def test_the_input_and_output_roles_keep_their_names_and_controls(qtbot) -> None
     assert source.objectName() == "inputPane"
     assert source.editor.objectName() == "inputEditor"
     assert source.format_combo.objectName() == "inputFormat"
-    assert source.title == "Input 1"
+    assert source.title == "Input"
+    assert source.editor.accessibleName() == "Input editor"
+    assert source._tab_title.text() == "Input"
+    assert source._tab_title.accessibleName() == "Input"
     assert _format_caption(source).text() == "Input as"
     assert source.count_label.text() == "Empty"
     assert source.findChild(QWidget, "emptyInput") is source.empty_overlay
@@ -127,7 +130,10 @@ def test_the_input_and_output_roles_keep_their_names_and_controls(qtbot) -> None
     assert result.objectName() == "outputPane"
     assert result.editor.objectName() == "outputEditor"
     assert result.format_combo.objectName() == "outputFormat"
-    assert result.title == "Output 1"
+    assert result.title == "Output"
+    assert result.editor.accessibleName() == "Output editor"
+    assert result._tab_title.text() == "Output"
+    assert result._tab_title.accessibleName() == "Output"
     assert _format_caption(result).text() == "Output as"
     assert result.count_label.text() == ""
     assert result.findChild(QWidget, "emptyOutput") is result.empty_overlay

@@ -72,8 +72,8 @@ class StripShed(IntEnum):
 class PaneRole:
     """The two panes the main window shows today."""
 
-    INPUT = PaneSpec("input", "Input 1", "Input as", PaneKind.SOURCE)
-    OUTPUT = PaneSpec("output", "Output 1", "Output as", PaneKind.RESULT)
+    INPUT = PaneSpec("input", "Input", "Input as", PaneKind.SOURCE)
+    OUTPUT = PaneSpec("output", "Output", "Output as", PaneKind.RESULT)
 
 
 class PaneWidget(QWidget):
@@ -204,8 +204,6 @@ class PaneWidget(QWidget):
         )
         parts = [
             _text_width(self._tab_title, title or self.spec.title) + title_extra,
-            _hint_width(self.close_tab_button),
-            _hint_width(self.new_tab_button),
             _hint_width(self.format_combo),
         ]
         if shed < StripShed.CAPTION:
@@ -271,7 +269,7 @@ class PaneWidget(QWidget):
     def set_source(self, path: Path | None) -> None:
         """Remember where this pane's text came from.
 
-        A later tab title and tooltip read it. Nothing on screen shows it yet.
+        Nothing on screen shows it yet.
         """
         self.source_path = path
 
@@ -285,20 +283,6 @@ class PaneWidget(QWidget):
         tab_font.setBold(True)
         tab.setFont(tab_font)
 
-        self.close_tab_button = QPushButton("×")
-        self.close_tab_button.setAccessibleName("Close")
-        self.close_tab_button.setToolTip("Close")
-        self.close_tab_button.setFlat(True)
-        self.close_tab_button.setFixedWidth(24)
-        self.close_tab_button.setStyleSheet(muted_text_style())
-
-        self.new_tab_button = QPushButton("+")
-        self.new_tab_button.setAccessibleName("New tab")
-        self.new_tab_button.setToolTip("New tab")
-        self.new_tab_button.setFlat(True)
-        self.new_tab_button.setFixedWidth(24)
-        self.new_tab_button.setStyleSheet(muted_text_style())
-
         format_caption = QLabel(self.spec.format_label)
         format_caption.setObjectName(f"{self.spec.name}FormatCaption")
         format_caption.setStyleSheet(muted_text_style())
@@ -310,8 +294,6 @@ class PaneWidget(QWidget):
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(4)
         row.addWidget(tab)
-        row.addWidget(self.close_tab_button)
-        row.addWidget(self.new_tab_button)
         row.addStretch(1)
         row.addWidget(format_caption)
         row.addWidget(self.format_combo)

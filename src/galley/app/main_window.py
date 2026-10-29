@@ -524,15 +524,6 @@ class MainWindow(QMainWindow):
         help_menu = _add_menu(bar, "Help")
         help_menu.addAction(actions.about)
 
-        self._tab_menu = QMenu(self)
-        self._tab_menu.setObjectName("tabMenu")
-        self._tab_menu.addAction(actions.rename)
-        self._tab_menu.addAction(actions.duplicate)
-        self._tab_menu.addSeparator()
-        self._tab_menu.addAction(actions.close_tab)
-        self._tab_menu.addAction(actions.close_others)
-        self._tab_menu.addAction(actions.close_tabs_right)
-
         self._editor_menu = QMenu(self)
         self._editor_menu.setObjectName("editorMenu")
         self._editor_menu.addAction(actions.undo)
@@ -678,6 +669,9 @@ class MainWindow(QMainWindow):
         for stub in actions.stubs():
             stub.triggered.connect(self._not_yet)
         actions.quit.triggered.connect(QApplication.quit)
+        # The same close as the title bar button, so closeEvent still runs.
+        self.addAction(actions.close_window)
+        actions.close_window.triggered.connect(self.close)
         actions.undo.triggered.connect(self._undo)
         actions.redo.triggered.connect(self._redo)
         actions.cut.triggered.connect(self._cut)
@@ -783,9 +777,6 @@ class MainWindow(QMainWindow):
         open_button = self._input_pane.open_button
         if open_button is not None:
             coming_soon_wrapper(open_button, actions.open_file)
-        for pane in (self._input_pane, self._output_pane):
-            coming_soon_wrapper(pane.new_tab_button, actions.new_tab)
-            coming_soon_wrapper(pane.close_tab_button, actions.close_tab)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Esc cancels the running format or large Copy As from any editor."""
@@ -803,18 +794,9 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def _bind_pane(self, pane: PaneWidget) -> None:
-        pane.tab_strip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        pane.tab_strip.customContextMenuRequested.connect(self._show_tab_menu)
-        pane.new_tab_button.clicked.connect(self._actions.new_tab.trigger)
-        pane.close_tab_button.clicked.connect(self._actions.close_tab.trigger)
         viewport = pane.editor.viewport()
         viewport.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         viewport.customContextMenuRequested.connect(self._show_editor_menu)
-
-    def _show_tab_menu(self, pos: QPoint) -> None:
-        source = self.sender()
-        if isinstance(source, QWidget):
-            self._tab_menu.popup(source.mapToGlobal(pos))
 
     def _show_editor_menu(self, pos: QPoint) -> None:
         source = self.sender()

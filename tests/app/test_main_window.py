@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -49,7 +49,6 @@ _PROBLEM = ["Ctrl+'", "F8"] if sys.platform == "darwin" else ["F8"]
 _PREVIOUS = ["Ctrl+Shift+'", "Shift+F8"] if sys.platform == "darwin" else ["Shift+F8"]
 CUSTOM_SHORTCUTS = {
     "Word Wrap": ["Alt+Z"],
-    "Close others": ["Ctrl+K, Ctrl+Shift+W"],
     "Escape as String": ["Ctrl+Shift+E"],
     "Unescape String": ["Ctrl+K, Ctrl+E"],
     "Show Whitespace": ["Ctrl+Shift+8"],
@@ -77,10 +76,10 @@ STANDARD_SHORTCUTS = {
     "Find Previous": QKeySequence.StandardKey.FindPrevious,
     "Find and Replace…": QKeySequence.StandardKey.Replace,
     "Open file…": QKeySequence.StandardKey.Open,
-    "Close": QKeySequence.StandardKey.Close,
     "Bigger": QKeySequence.StandardKey.ZoomIn,
     "Smaller": QKeySequence.StandardKey.ZoomOut,
     "Enter Full Screen": QKeySequence.StandardKey.FullScreen,
+    "Close Window": QKeySequence.StandardKey.Close,
 }
 
 
@@ -230,14 +229,7 @@ def test_menu_bar_matches_spec(qtbot) -> None:
     ]
     assert _labels(_submenu(view, "Appearance")) == ["System", "Light", "Dark"]
     assert _labels(_menu(window, "Help")) == ["About Galley"]
-    assert _labels(window.findChild(QMenu, "tabMenu")) == [
-        "Rename",
-        "Duplicate",
-        "|",
-        "Close",
-        "Close others",
-        "Close tabs to the right",
-    ]
+    assert window.findChild(QMenu, "tabMenu") is None
 
 
 def _menu_bar_actions(window) -> list[QAction]:
@@ -389,23 +381,98 @@ def test_pop_out_is_removed(qtbot) -> None:
         assert "pop out" not in widget.accessibleName().lower(), widget.objectName()
 
 
-def test_tab_menu_has_no_dangling_separator(qtbot) -> None:
+_TAB_ATTRS = (
+    "rename",
+    "duplicate",
+    "close_tab",
+    "close_others",
+    "close_tabs_right",
+    "new_tab",
+)
+_TAB_LABELS = (
+    "Rename",
+    "Duplicate",
+    "Close",
+    "Close others",
+    "Close tabs to the right",
+    "New tab",
+)
+
+
+def test_tabs_are_removed(qtbot) -> None:
+    """Tabs aren't built for v1: no actions, tab menu, or strip menu."""
     window = _show(qtbot)
-    tab_menu = window.findChild(QMenu, "tabMenu")
-    assert isinstance(tab_menu, QMenu)
-    labels = _labels(tab_menu)
-    assert labels == [
-        "Rename",
-        "Duplicate",
-        "|",
-        "Close",
-        "Close others",
-        "Close tabs to the right",
-    ]
-    assert labels[0] != "|"
-    assert labels[-1] != "|"
-    pairs = zip(labels, labels[1:], strict=False)
-    assert not any(a == b == "|" for a, b in pairs)
+    for attr in _TAB_ATTRS:
+        assert not hasattr(window._actions, attr), attr
+    assert window.findChild(QMenu, "tabMenu") is None
+    assert not hasattr(window, "_tab_menu")
+    for action in window.findChildren(QAction):
+        assert action.text() not in _TAB_LABELS, action.text()
+    for name in ("input", "output"):
+        strip = window.findChild(QWidget, f"{name}TabStrip")
+        assert isinstance(strip, QWidget), name
+        assert strip.contextMenuPolicy() == Qt.ContextMenuPolicy.DefaultContextMenu
+        assert window.findChild(QPushButton, f"{name}CloseTab") is None
+        assert window.findChild(QPushButton, f"{name}NewTab") is None
+
+
+class _CloseSpy(QObject):
+    """Counts the window's close events, and turns them down while ``refuse``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closes = 0
+        self.refuse = False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Close:
+            self.closes += 1
+            if self.refuse:
+                event.ignore()
+                return True
+        return False
+
+
+@pytest.mark.parametrize("target", ["inputEditor", "outputEditor"])
+def test_ctrl_w_closes_the_window(qtbot, target) -> None:
+    """Ctrl+W (⌘W on macOS) closes the window the way its close button does.
+
+    The key sends the window a close event, so a close it turns down (as a
+    save prompt would on Cancel) leaves the window open.
+    """
+    window = _show(qtbot)
+    spy = _CloseSpy()
+    window.installEventFilter(spy)
+    focus = window.findChild(CodeEditor, target)
+    assert isinstance(focus, CodeEditor)
+    window.activateWindow()
+    focus.setFocus()
+    qtbot.waitUntil(focus.hasFocus, timeout=2000)
+
+    spy.refuse = True
+    qtbot.keyClick(focus, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    assert spy.closes == 1
+    assert window.isVisible()
+
+    spy.refuse = False
+    qtbot.keyClick(focus, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    assert spy.closes == 2
+    qtbot.waitUntil(lambda: not window.isVisible(), timeout=2000)
+
+
+def test_close_others_chord_stays_unbound(qtbot) -> None:
+    """With Tabs removed, nothing starts with the old Ctrl+K, Ctrl+Shift+W chord."""
+    window = _show(qtbot)
+    chord = _sequence_id(
+        QKeySequence("Ctrl+K, Ctrl+Shift+W", QKeySequence.SequenceFormat.PortableText)
+    )
+    bound: list[str] = []
+    for action in window.findChildren(QAction):
+        for sequence in action.shortcuts():
+            if _sequence_id(sequence)[: len(chord)] == chord:
+                rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+                bound.append(f"{rendered}: {action.text() or action.objectName()}")
+    assert bound == []
 
 
 def test_only_about_and_quit_move_to_the_macos_app_menu(qtbot) -> None:
@@ -457,9 +524,6 @@ def test_shortcuts_match_spec_and_do_not_collide(qtbot) -> None:
                 rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
                 duplicates.append(f"{rendered}: {previous} and {label}")
     assert duplicates == []
-    assert _portable(_action(window, "Word Wrap")) != _portable(
-        _action(window, "Close others")
-    )
 
 
 def test_custom_shortcuts_avoid_standard_keys_and_chord_prefixes(qtbot) -> None:
@@ -527,7 +591,7 @@ def test_empty_state(qtbot) -> None:
     output = window.findChild(CodeEditor, "outputEditor")
     assert status is not None and status.text() == "Ready"
     assert direction is not None and direction.text() == "JSON → JSON"
-    assert caption is not None and "Input 1" in caption.text()
+    assert caption is not None and caption.text() == "Editing <b>Input</b>"
     assert input_title is not None
     assert input_title.text().startswith(
         "Paste JSON, YAML, XML, or HTML, or drop a file here."
@@ -648,9 +712,9 @@ def test_focus_caption_follows_the_editor(qtbot) -> None:
     assert isinstance(output, CodeEditor)
     assert caption is not None
     output.setFocus()
-    qtbot.waitUntil(lambda: "Output 1" in caption.text())
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Output</b>")
     window.findChild(CodeEditor, "inputEditor").setFocus()
-    qtbot.waitUntil(lambda: "Input 1" in caption.text())
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Input</b>")
 
 
 def test_focus_caption_reads_the_pane_titles(qtbot, monkeypatch) -> None:

@@ -147,9 +147,9 @@ def test_caption_and_status_are_readable(qtbot) -> None:
     status = window.findChild(QLabel, "statusMessage")
     direction = window.findChild(QLabel, "directionLabel")
     assert caption is not None and status is not None and direction is not None
-    assert "Input 1" in caption.text()
+    assert caption.text() == "Editing <b>Input</b>"
     assert caption.minimumWidth() >= caption.fontMetrics().horizontalAdvance(
-        "Editing Input 1"
+        "Editing Input"
     )
     assert caption.font().pixelSize() == 11
     assert status.font().pixelSize() >= 12

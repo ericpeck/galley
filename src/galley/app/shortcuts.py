@@ -13,13 +13,12 @@ Ctrl+Alt is fine on macOS, where it is ⌘⌥ and there is no AltGr.
 
 Word Wrap is portable ``Alt+Z`` (⌥Z on macOS, Alt+Z on Windows), as in
 VS Code. Qt maps Alt to Option on macOS, so one sequence covers both.
-Close Others is the chord ``Ctrl+K, Ctrl+Shift+W`` (⌘K ⇧⌘W on macOS) and
-Unescape String is ``Ctrl+K, Ctrl+E`` (⌘K ⌘E). Unescape pairs with Escape as
-String, portable ``Ctrl+Shift+E`` (⇧⌘E). Show Problems is portable
-``Ctrl+Shift+M`` (⇧⌘M on macOS, Ctrl+Shift+M on Windows). Stack Panes is
-portable ``Ctrl+\\`` (⌘\\ on macOS, Ctrl+\\ on Windows), with ``Ctrl+Shift+L``
-(⇧⌘L) as a second key: ``\\`` needs AltGr on German layouts. The menu shows
-the first.
+Unescape String is the chord ``Ctrl+K, Ctrl+E`` (⌘K ⌘E on macOS). It
+pairs with Escape as String, portable ``Ctrl+Shift+E`` (⇧⌘E). Show Problems
+is portable ``Ctrl+Shift+M`` (⇧⌘M on macOS, Ctrl+Shift+M on Windows). Stack
+Panes is portable ``Ctrl+\\`` (⌘\\ on macOS, Ctrl+\\ on Windows), with
+``Ctrl+Shift+L`` (⇧⌘L) as a second key: ``\\`` needs AltGr on German
+layouts. The menu shows the first.
 
 Fold and Unfold differ by platform. On Windows and Linux they are
 ``Ctrl+Shift+[`` and ``Ctrl+Shift+]``, as in VS Code. macOS keeps ⌥⌘[ and
@@ -42,7 +41,6 @@ _PORTABLE = QKeySequence.SequenceFormat.PortableText
 _FOLD_MODIFIERS = "Ctrl+Alt+" if sys.platform == "darwin" else "Ctrl+Shift+"
 
 WORD_WRAP = QKeySequence("Alt+Z", _PORTABLE)
-CLOSE_OTHERS = QKeySequence("Ctrl+K, Ctrl+Shift+W", _PORTABLE)
 ESCAPE_AS_STRING = QKeySequence("Ctrl+Shift+E", _PORTABLE)
 UNESCAPE_STRING = QKeySequence("Ctrl+K, Ctrl+E", _PORTABLE)
 SHOW_WHITESPACE = QKeySequence("Ctrl+Shift+8", _PORTABLE)
