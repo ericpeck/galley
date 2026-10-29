@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -79,6 +79,7 @@ STANDARD_SHORTCUTS = {
     "Bigger": QKeySequence.StandardKey.ZoomIn,
     "Smaller": QKeySequence.StandardKey.ZoomOut,
     "Enter Full Screen": QKeySequence.StandardKey.FullScreen,
+    "Close Window": QKeySequence.StandardKey.Close,
 }
 
 
@@ -415,28 +416,60 @@ def test_tabs_are_removed(qtbot) -> None:
         assert window.findChild(QPushButton, f"{name}NewTab") is None
 
 
-def test_close_keys_are_unbound(qtbot) -> None:
-    """With Tabs removed, Ctrl+W and the Ctrl+K, Ctrl+Shift+W chord do nothing.
+class _CloseSpy(QObject):
+    """Counts the window's close events, and turns them down while ``refuse``."""
 
-    Nothing takes over Ctrl+W, so no action holds any Close binding Qt has
-    for this platform, and none starts with the old Close others chord.
+    def __init__(self) -> None:
+        super().__init__()
+        self.closes = 0
+        self.refuse = False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Close:
+            self.closes += 1
+            if self.refuse:
+                event.ignore()
+                return True
+        return False
+
+
+@pytest.mark.parametrize("target", ["inputEditor", "outputEditor"])
+def test_ctrl_w_closes_the_window(qtbot, target) -> None:
+    """Ctrl+W (⌘W on macOS) closes the window the way its close button does.
+
+    The key sends the window a close event, so a close it turns down (as a
+    save prompt would on Cancel) leaves the window open.
     """
     window = _show(qtbot)
-    unbound = [
-        sequence
-        for sequence in QKeySequence.keyBindings(QKeySequence.StandardKey.Close)
-        if not sequence.isEmpty()
-    ]
-    unbound.append(QKeySequence("Ctrl+W", QKeySequence.SequenceFormat.PortableText))
+    spy = _CloseSpy()
+    window.installEventFilter(spy)
+    focus = window.findChild(CodeEditor, target)
+    assert isinstance(focus, CodeEditor)
+    window.activateWindow()
+    focus.setFocus()
+    qtbot.waitUntil(focus.hasFocus, timeout=2000)
+
+    spy.refuse = True
+    qtbot.keyClick(focus, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    assert spy.closes == 1
+    assert window.isVisible()
+
+    spy.refuse = False
+    qtbot.keyClick(focus, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    assert spy.closes == 2
+    qtbot.waitUntil(lambda: not window.isVisible(), timeout=2000)
+
+
+def test_close_others_chord_stays_unbound(qtbot) -> None:
+    """With Tabs removed, nothing starts with the old Ctrl+K, Ctrl+Shift+W chord."""
+    window = _show(qtbot)
     chord = _sequence_id(
         QKeySequence("Ctrl+K, Ctrl+Shift+W", QKeySequence.SequenceFormat.PortableText)
     )
-    closing = {_sequence_id(sequence) for sequence in unbound}
     bound: list[str] = []
     for action in window.findChildren(QAction):
         for sequence in action.shortcuts():
-            ident = _sequence_id(sequence)
-            if ident in closing or ident[: len(chord)] == chord:
+            if _sequence_id(sequence)[: len(chord)] == chord:
                 rendered = sequence.toString(QKeySequence.SequenceFormat.PortableText)
                 bound.append(f"{rendered}: {action.text() or action.objectName()}")
     assert bound == []
@@ -558,7 +591,7 @@ def test_empty_state(qtbot) -> None:
     output = window.findChild(CodeEditor, "outputEditor")
     assert status is not None and status.text() == "Ready"
     assert direction is not None and direction.text() == "JSON → JSON"
-    assert caption is not None and "Input 1" in caption.text()
+    assert caption is not None and caption.text() == "Editing <b>Input</b>"
     assert input_title is not None
     assert input_title.text().startswith(
         "Paste JSON, YAML, XML, or HTML, or drop a file here."
@@ -679,9 +712,9 @@ def test_focus_caption_follows_the_editor(qtbot) -> None:
     assert isinstance(output, CodeEditor)
     assert caption is not None
     output.setFocus()
-    qtbot.waitUntil(lambda: "Output 1" in caption.text())
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Output</b>")
     window.findChild(CodeEditor, "inputEditor").setFocus()
-    qtbot.waitUntil(lambda: "Input 1" in caption.text())
+    qtbot.waitUntil(lambda: caption.text() == "Editing <b>Input</b>")
 
 
 def test_focus_caption_reads_the_pane_titles(qtbot, monkeypatch) -> None:
