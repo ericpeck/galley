@@ -117,7 +117,7 @@ def test_minify_is_built_and_off_the_release_lists(qtbot) -> None:
         "Build them or remove them from UNBUILT_ACTIONS in actions.py "
         "before tagging.\n"
         'Release blocked: these actions still show "Not yet": '
-        "Find and Replace…, Output Options.\n"
+        "Find and Replace….\n"
         "Build them or remove them from _not_yet_actions() in actions.py "
         "before tagging.\n"
     )
