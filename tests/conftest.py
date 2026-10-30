@@ -5,7 +5,7 @@ import gc
 import os
 import sys
 import weakref
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -136,9 +136,9 @@ def _fail_on_leftover_windows(
     from PySide6.QtWidgets import QApplication
     from shiboken6 import isValid
 
-    for window in list(made):
-        if isValid(window):
-            _close_and_delete(window)
+    # In a helper, so no local name here still holds a window at the
+    # gc.collect() below.
+    _close_and_delete(window for window in list(made) if isValid(window))
     QApplication.processEvents()
     # pytest keeps fixture values in funcargs until after every teardown,
     # and a fixture that returns a window would keep it alive here. The
@@ -162,10 +162,10 @@ def _fail_on_leftover_windows(
         )
 
 
-def _close_and_delete(window) -> None:
-    """Close the window if it is visible, then delete it now.
+def _close_and_delete(windows: Iterable) -> None:
+    """Close each window if it is visible, then delete it now.
 
-    Only this window's deleteLater() runs. Running every pending one also
+    Only these windows' deleteLater() calls run. Running every pending one also
     deleted widgets that earlier tests left behind, and macOS CI crashed in
     the gc.collect() after it (#174). Outside a running event loop,
     processEvents() alone leaves deleteLater() queued.
@@ -173,10 +173,11 @@ def _close_and_delete(window) -> None:
     from PySide6.QtCore import QEvent
     from PySide6.QtWidgets import QApplication
 
-    if window.isVisible():
-        window.close()
-    window.deleteLater()
-    QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
+    for window in windows:
+        if window.isVisible():
+            window.close()
+        window.deleteLater()
+        QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
 
 
 @pytest.fixture
