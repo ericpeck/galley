@@ -46,7 +46,7 @@ After that, Galley opens with a normal double-click.
 
 ## Minimum macOS and licenses
 
-`LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, rounded up to the oldest macOS CI launches on. With PySide6 6.9.3 that highest recorded minos is 12.0, and the disk-image job runs on macOS 14, so the declared floor is 14.0. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
+`LSMinimumSystemVersion` in the app is `14.0`. The floor is the highest minos any bundled binary records, raised to the oldest macOS the app was last tested on in CI. With PySide6 6.9.3 that highest recorded minos is 12.0, and CI last tested on macOS 14 (`macos-14`, until GitHub retired that runner on 2026-11-02), so the declared floor is 14.0. CI now runs on macOS 15, so 14.0 is supported but no longer tested in CI. PySide6 6.10 and newer bindings record the build SDK as minos, so do not bump PySide6 without re-checking those binaries.
 
 The **Verify bundle metadata** step fails when any Mach-O file records a minimum macOS higher than that floor. It runs `vtool -show-build` per architecture, uses `LC_VERSION_MIN_MACOSX` when a file has no `LC_BUILD_VERSION`, and on failure prints the count, each path, architecture, minos, and floor, then `pin dependencies lower or raise MINIMUM_MACOS in galley.spec`.
 
