@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - name: perf strict (macOS arm64)
-            os: macos-14
+            os: macos-15
             platform: macOS arm64
           - name: perf strict (Windows)
             os: windows-latest

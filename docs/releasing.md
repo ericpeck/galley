@@ -1,6 +1,6 @@
 # Releasing Galley for macOS
 
-The **Release macOS** workflow builds an unsigned Galley disk image for Apple Silicon. It runs on `macos-14`.
+The **Release macOS** workflow builds an unsigned Galley disk image for Apple Silicon. It runs on `macos-15`.
 
 The app has no Developer ID signature and is not notarized. No signing secrets are used. PyInstaller ad-hoc signs the bundle so Apple Silicon can start the binary. Gatekeeper still treats a copy downloaded from the internet as untrusted.
 
