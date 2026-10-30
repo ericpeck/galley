@@ -10,6 +10,9 @@ on:
     paths:
       - src/galley/core/format.py
       - tests/core/test_yaml_clib.py
+      - .github/workflows/yaml-compare-nightly.yml
+      - pyproject.toml
+      - uv.lock
 
 permissions:
   contents: read
