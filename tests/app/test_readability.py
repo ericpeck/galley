@@ -83,7 +83,12 @@ def test_ui_font_is_the_system_font_and_editors_stay_mono(qtbot) -> None:
             )
         else:
             assert not _is_serif(widget.font())
-    assert len(editors) == 2
+    # Compare's Right editor is the window's child too, hidden until used.
+    assert sorted(editor.objectName() for editor in editors) == [
+        "inputEditor",
+        "outputEditor",
+        "rightEditor",
+    ]
 
 
 def test_undo_enables_after_paste_and_follows_the_editor_stack(qtbot) -> None:
