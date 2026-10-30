@@ -1061,9 +1061,9 @@ def test_a_regex_replace_all_on_2_4_mb_is_timed(qtbot) -> None:
         )
 
     replace_all()
-    assert editor.toPlainText() == text.replace('"qty"', "qty")
+    assert_same_text(editor.toPlainText(), text.replace('"qty"', "qty"))
     editor.undo()
-    assert editor.toPlainText() == text
+    assert_same_text(editor.toPlainText(), text)
     timing = time_runs(replace_all, setup=reset)
     assert not editor.isReadOnly()
     _print_timing(

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from tests.core.mask_rows import pretty_json, text_of_size
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 
 import galley.app.main_window as main_window_module
 from galley.app.actions import (
@@ -625,4 +626,4 @@ def test_minify_on_2_4_mb_is_timed(qtbot) -> None:
         samples = ", ".join(f"{sample * 1000:.1f}" for sample in timing.samples)
         lines.append(f"  {label}: median {timing.median * 1000:.1f} ms ({samples})")
     print("\n".join(lines), flush=True)
-    assert output.toPlainText() == expected
+    assert_same_text(output.toPlainText(), expected)

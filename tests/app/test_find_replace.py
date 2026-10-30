@@ -13,6 +13,7 @@ from PySide6.QtGui import QAction, QKeySequence, QPalette, QTextCursor
 from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 from tests.core.order_lines import QUERY, REPLACE_BYTES, order_lines
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 
 import galley.app.main_window as main_window_module
 from galley.app.actions import main, not_yet_failure, release_failure
@@ -654,10 +655,10 @@ def test_replace_all_on_2_4_mb_input_is_timed(qtbot) -> None:
 
     bar.replace_all()
     assert bar.count_label_text() == replaced_text(matches)
-    assert editor.toPlainText() == text.replace(QUERY, "quantity")
+    assert_same_text(editor.toPlainText(), text.replace(QUERY, "quantity"))
     assert not editor.isReadOnly()
     editor.undo()
-    assert editor.toPlainText() == text
+    assert_same_text(editor.toPlainText(), text)
     timing = time_runs(bar.replace_all, setup=reset)
     assert not editor.isReadOnly()
     assert bar.count_label_text() == replaced_text(matches)

@@ -77,6 +77,10 @@ _CHILDREN_BEFORE = pytest.StashKey[frozenset[int]]()
 # pytest's base temp directory.
 _LOG_NAME = "bigcompare.log"
 _LOG_ENV = "GALLEY_BIGCOMPARE_LOG"
+# Set to 1 for a call-site audit: passing compares are logged too. It slows
+# the run, so it is off by default, CI included.
+_AUDIT_ENV = "GALLEY_BIGCOMPARE_AUDIT"
+_AUDIT_PLUGIN = "galley-bigcompare-audit"
 # How many tests the log lists under the worst regex worker times.
 _WORST_SHOWN = 10
 # How much of a test id the log shows.
@@ -86,9 +90,12 @@ _TEST_ID_SHOWN = 200
 class _RunNotes:
     """What this run logs, reset when a session starts."""
 
-    def __init__(self, log: str | None = None, root: str = ".") -> None:
+    def __init__(
+        self, log: str | None = None, root: str = ".", *, audit: bool = False
+    ) -> None:
         self.log = log
         self.root = root
+        self.audit = audit
         self.big_compares = 0
         # The worst elapsed_ms the regex worker reported in each test.
         self.worst_elapsed: dict[str, float] = {}
@@ -98,11 +105,12 @@ _NOTES = _RunNotes()
 
 
 def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str] | None:
-    """Log each ``==`` on a str or bytes over 64 KB, and explain a failed one.
+    """Explain a failed ``==`` on a str or bytes over 64 KB, and log it.
 
-    The log finds the asserts to move to ``assert_same_text``. pytest's own
-    difflib diff of two multi-MB texts can run for minutes, so a failed one
-    gets a one-line report instead. Smaller values keep pytest's diff.
+    pytest's own difflib diff of two multi-MB texts can run for minutes, so
+    a failed one gets a one-line report instead. Smaller values keep
+    pytest's diff. In an audit run pytest calls this for passing asserts
+    too, so the log lists every such compare to move to ``assert_same_text``.
     """
     from tests.text_compare import describe_difference
 
@@ -116,12 +124,18 @@ def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str]
     return [describe_difference(left, right)]
 
 
-def pytest_assertion_pass() -> None:
-    """Make pytest call ``pytest_assertrepr_compare`` for passing asserts.
+class _PassingCompares:
+    """Registered only for an audit run, to explain passing asserts too.
 
-    ``enable_assertion_pass_hook`` does that only while some plugin has this
-    hook. It does nothing itself.
+    With ``enable_assertion_pass_hook`` on, rewritten asserts build an
+    explanation for a passing assert, which calls the hook above, only
+    while some plugin has ``pytest_assertion_pass``. Without one, a passing
+    assert costs one extra check. The ini stays on, because pytest caches
+    rewritten asserts without regard to it.
     """
+
+    def pytest_assertion_pass(self) -> None:
+        """Does nothing. Being registered is what counts."""
 
 
 def _log_big_compare(left: str | bytes, right: str | bytes, *, same: bool) -> None:
@@ -208,7 +222,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
     pytest calls every ``pytest_assertrepr_compare`` and uses the first
     answer, so its own diff would still run after the hook above, for big
-    texts and, with the pass hook on, for every passing compare. It looks up
+    texts and, in an audit run, for every passing compare. It looks up
     ``util.assertrepr_compare`` at call time, so wrapping that skips it.
     Children already running belong to an outer session, such as one that
     runs pytester, and are not counted at the end.
@@ -241,10 +255,19 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     else:
         factory = getattr(session.config, "_tmp_path_factory", None)
         log = str(factory.getbasetemp() / _LOG_NAME) if factory else None
-    _NOTES = _RunNotes(log, str(root))
+    audit = os.environ.get(_AUDIT_ENV) == "1"
+    _NOTES = _RunNotes(log, str(root), audit=audit)
+    plugins = session.config.pluginmanager
+    if audit and not plugins.has_plugin(_AUDIT_PLUGIN):
+        plugins.register(_PassingCompares(), _AUDIT_PLUGIN)
     if log is not None:
         with open(log, "w", encoding="utf-8") as file:
             file.write("## Compares of texts over 64 KB\n\n")
+            if not audit:
+                file.write(
+                    "No big-compare audit in this run: only failed compares are "
+                    f"listed. Set {_AUDIT_ENV}=1 to list passing ones too.\n\n"
+                )
 
     session.stash[_CHILDREN_BEFORE] = frozenset(
         child.pid for child in multiprocessing.active_children() if child.pid
@@ -296,7 +319,12 @@ def _finish_log(session: pytest.Session) -> None:
     if reporter is None:
         return
     where = f", listed in {_NOTES.log}" if _NOTES.log is not None else ""
-    reporter.write_line(f"Compares of texts over 64 KB: {_NOTES.big_compares}{where}")
+    if _NOTES.audit:
+        count = f"Compares of texts over 64 KB: {_NOTES.big_compares}"
+        reporter.write_line(count + where)
+    elif _NOTES.big_compares:
+        count = f"Failed compares of texts over 64 KB: {_NOTES.big_compares}"
+        reporter.write_line(count + where)
     if worst:
         test, elapsed = worst[0]
         reporter.write_line(f"Worst regex worker elapsed_ms: {elapsed:,.2f} in {test}")

@@ -17,6 +17,7 @@ import ruamel.yaml.main as ruamel_main
 from ruamel.yaml import YAML
 from tests.core.mask_rows import pretty_json, text_of_size
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.core.format as format_module
@@ -345,7 +346,7 @@ def test_json_to_yaml_on_2_4_mb_is_within_budget(perf_budget) -> None:
     text = _json_to_yaml_fixture()
     assert_c_emitter_writes(json.loads(text))
     expected = format_module._dump_parsed(json.loads(text), pure=True)
-    assert format_document(text, "json", "yaml") == expected
+    assert_same_text(format_document(text, "json", "yaml"), expected)
     perf_budget.within(
         _JSON_TO_YAML_BUDGET_HERE_S,
         lambda: format_document(text, "json", "yaml"),
