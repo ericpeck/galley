@@ -11,6 +11,7 @@ Python 3.12 (`requires-python` in `pyproject.toml`). Use uv.
 - `uv run ruff format --check`
 - `uv run pytest` — `tests/conftest.py` sets `QT_QPA_PLATFORM=offscreen`. Deselects `perf` tests.
 - `uv run pytest -m perf` — wall-clock budgets only, in gate mode (fails past 3× a budget). `GALLEY_PERF_MODE=strict uv run pytest -m perf` fails past the budget itself. `uv run pytest -m perf -k <test>` reruns one.
+- `GALLEY_PERF_MODE=strict uv run pytest -m nightly_budget` — the nightly-only budgets (`nightly_budget` marker). Without strict they print their timing and never fail.
 - `uv run galley`
 - `uv run python -m galley.app.actions` — release check
 

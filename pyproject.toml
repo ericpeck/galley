@@ -66,4 +66,5 @@ faulthandler_timeout = 300
 faulthandler_exit_on_timeout = true
 markers = [
     "perf: wall-clock budget; deselected by default, run with -m perf (tests/perf.py)",
+    "nightly_budget: budget asserted only under GALLEY_PERF_MODE=strict (nightly on main); prints the timing otherwise",
 ]

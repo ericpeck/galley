@@ -65,8 +65,20 @@ jobs:
           set -o pipefail
           uv run pytest -m perf -rfEP 2>&1 | tee "${RUNNER_TEMP}/perf.log"
 
+      - name: Run nightly-only budgets (strict mode)
+        id: nightly
+        # Runs even when the perf step failed, so both results reach the issue.
+        if: success() || steps.perf.outcome == 'failure'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          GALLEY_PERF_MODE: strict
+          PYTHONUTF8: "1"
+        run: |
+          set -o pipefail
+          uv run pytest -m nightly_budget -rfEP 2>&1 | tee -a "${RUNNER_TEMP}/perf.log"
+
       - name: Open or update the missed-budget issue
-        if: failure() && steps.perf.outcome == 'failure'
+        if: failure() && (steps.perf.outcome == 'failure' || steps.nightly.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
