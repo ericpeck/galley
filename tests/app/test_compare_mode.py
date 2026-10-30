@@ -11,10 +11,13 @@ The worker itself is covered by ``test_compare_session.py`` and by the
 end-to-end tests at the bottom of this file.
 """
 
+import gc
 import sys
+import weakref
 
 import pytest
-from PySide6.QtCore import Qt
+import shiboken6
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -1136,6 +1139,108 @@ def test_compare_shortcut_toggles_compare_mode(qtbot, inline_compare) -> None:
     assert _action(window, "Compare").isChecked()
     qtbot.keyClick(_left(window), Qt.Key.Key_D, ctrl_shift)
     assert not _action(window, "Compare").isChecked()
+
+
+# --- The window owns Compare's widgets --------------------------------------
+
+
+def _compare_widgets(window) -> tuple[CodeEditor, FindBar, ChangesPane]:
+    compare = window._compare
+    return compare.right_editor(), compare._right_bar, compare.changes_pane()
+
+
+def test_a_window_that_never_compares_deletes_its_compare_widgets(qtbot) -> None:
+    """Deleting the window deletes Right, its find bar and Changes with it.
+
+    Without a parent they outlived the window in C++, held only by Compare,
+    and Python's gc ran their Qt destructors mid-collection, which could
+    crash. Most windows never turn Compare on.
+    """
+    window = create_main_window()
+    window.show()
+    qtbot.waitExposed(window)
+    _type_input(qtbot, window, _LEFT)
+    refs = [weakref.ref(widget) for widget in _compare_widgets(window)]
+    window.close()
+    window.deleteLater()
+    QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
+    del window
+
+    def _alive() -> list[str]:
+        return [
+            widget.objectName()
+            for ref in refs
+            if (widget := ref()) is not None and shiboken6.isValid(widget)
+        ]
+
+    # Gone in C++ already, so gc has no Qt object of theirs to delete.
+    assert _alive() == []
+    gc.collect()
+    assert _alive() == []
+
+
+def test_compare_widgets_stay_hidden_and_out_of_tab_until_compare(qtbot) -> None:
+    window = _show(qtbot)
+    widgets = _compare_widgets(window)
+    for widget in widgets:
+        assert widget.parentWidget() is window, widget.objectName()
+        assert widget.isHidden(), widget.objectName()
+        assert not widget.isVisible(), widget.objectName()
+    # Every stop Tab can reach, once round the window's focus chain.
+    start = _left(window)
+    stops: list[QWidget] = []
+    stop = _next_focus(start)
+    while stop is not start and stop not in stops:
+        stops.append(stop)
+        stop = _next_focus(stop)
+    assert stops
+    reached = [
+        stop.objectName()
+        for stop in stops
+        if any(_is_inside(stop, widget) for widget in widgets)
+    ]
+    assert reached == []
+
+
+def test_compare_places_its_widgets_and_leaving_puts_output_back(
+    qtbot, inline_compare
+) -> None:
+    window = _show(qtbot)
+    pane = window._output_pane
+    layout = pane.layout()
+    output_editor, output_bar = pane.editor, pane.find_bar
+    editor_at = layout.indexOf(output_editor)
+    bar_at = layout.indexOf(output_bar)
+    panel = window._problems_pane
+    right, bar, changes = _compare_widgets(window)
+
+    _compare(qtbot, window)
+    # Right and its find bar take Output's places in the Output pane.
+    assert (layout.indexOf(right), layout.indexOf(bar)) == (editor_at, bar_at)
+    assert layout.indexOf(output_editor) == layout.indexOf(output_bar) == -1
+    assert right.parentWidget() is pane
+    assert bar.parentWidget() is pane
+    assert right.isVisible()
+    _focus(qtbot, right)
+    _action(window, "Find…").trigger()
+    assert bar.is_open()
+    assert bar.isVisible()
+    # Changes is the results panel's second tab, current and shown.
+    assert _tab_titles(panel) == ["Problems", "Changes"]
+    assert panel.current_page() is changes
+    assert _is_inside(changes, panel)
+    assert changes.isVisible()
+
+    _action(window, "Compare").trigger()
+    assert not _action(window, "Compare").isChecked()
+    put_back = (layout.indexOf(output_editor), layout.indexOf(output_bar))
+    assert put_back == (editor_at, bar_at)
+    assert layout.indexOf(right) == layout.indexOf(bar) == -1
+    assert output_editor.isVisible()
+    assert _tab_titles(panel) == ["Problems"]
+    for widget in (right, bar, changes):
+        assert widget.isHidden(), widget.objectName()
+        assert _is_inside(widget, window), widget.objectName()
 
 
 # --- The real worker -------------------------------------------------------
