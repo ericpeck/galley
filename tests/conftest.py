@@ -157,7 +157,10 @@ def _fail_on_leftover_windows(
         pytest.fail(
             f"{request.node.nodeid} left {leftover} {noun} alive after it "
             f"ended. Something still refers to {it}, such as a module-level "
-            "name or a lambda connected to a signal that outlives the window.",
+            "name or a lambda connected to a signal that outlives the window.\n"
+            "Next: remove the reference that keeps the window alive, or mark a "
+            "known leak with `@pytest.mark.allow_window_leak` (see "
+            "`tests/conftest.py`).",
             pytrace=False,
         )
 
