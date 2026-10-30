@@ -210,6 +210,15 @@ class CompareMode(QObject):
         self._right_bar = FindBar(
             self._right, "right", regex_session=host.regex_session
         )
+        # The window owns them from the start, so Qt deletes them with it
+        # even when Compare never turns on. Without a parent they were left
+        # to Python's gc, which ran their Qt destructors mid-collection.
+        # Hidden until Compare places them, so they never show in the
+        # window's corner or take Tab. They join the focus chain in the
+        # order Compare's first placing used to add them.
+        for widget in (self._right_bar, self._right, self._changes):
+            widget.setParent(host.window)
+            widget.hide()
         self._share_toggles(host.left.find_bar, self._right_bar)
         self._placeholder = self._build_placeholder()
         self._right.textChanged.connect(self._sync_right_footer)
