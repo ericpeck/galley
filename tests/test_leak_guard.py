@@ -23,12 +23,14 @@ import weakref
 import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QWidget
+from shiboken6 import isValid
 
 from galley.app.main import create_main_window
 from galley.app.main_window import MainWindow
 
 _KEPT = []
 _CLOSED_BY = []
+_QUEUED = []
 
 
 class _Recorded(MainWindow):
@@ -106,6 +108,25 @@ def test_closed_by_qtbot(qtbot):
 
 def test_qtbot_closed_it_once_before_the_guard():
     assert _CLOSED_BY == ["_close_widgets"]
+
+
+def test_queues_a_delete():
+    widget = QWidget()
+    widget.deleteLater()
+    _QUEUED.append(widget)
+
+
+def test_makes_a_window_after_a_queued_delete():
+    window = create_main_window()
+    window.show()
+    window.close()
+
+
+def test_the_guard_left_the_other_tests_delete_queued():
+    widget = _QUEUED[0]
+    assert isValid(widget)
+    QApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete.value)
+    assert not isValid(widget)
 '''
 
 
@@ -152,6 +173,8 @@ def test_the_guard_fails_only_the_tests_that_leak(pytester, qapp) -> None:
         "test_allowed_to_leak",
         "test_closed_by_qtbot",
         "test_qtbot_closed_it_once_before_the_guard",
+        "test_makes_a_window_after_a_queued_delete",
+        "test_the_guard_left_the_other_tests_delete_queued",
     } <= passed
     messages = {
         report.nodeid: report.longreprtext
