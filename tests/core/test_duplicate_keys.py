@@ -6,6 +6,7 @@ import random
 
 import pytest
 from ruamel.yaml.constructor import DuplicateKeyError
+from tests.text_compare import assert_same_text
 
 import galley.core.format as format_module
 from galley.core.diff import load_document as diff_load_document
@@ -225,7 +226,7 @@ def test_valid_documents_never_run_the_located_scan(monkeypatch) -> None:
 
     monkeypatch.setattr(format_module, "_duplicate_key_error", fail)
     text = json.dumps(_large_value(2_000), indent=2, ensure_ascii=False)
-    assert format_json(text) == text + "\n"
+    assert_same_text(format_json(text), text + "\n")
     diff_load_document(text, "json")
 
 

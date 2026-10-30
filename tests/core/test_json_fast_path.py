@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.text_compare import assert_same_text
 
 from galley.core import format as format_module
 from galley.core.errors import MAX_DEPTH, InputError
@@ -234,7 +235,7 @@ def test_valid_surrogate_pair_passes() -> None:
 def test_nesting_exactly_at_the_limit_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     text = "[" * MAX_DEPTH + "0" + "]" * MAX_DEPTH
     formatted = format_json(text)
-    assert formatted == _format_json_walk_first(text)
+    assert_same_text(formatted, _format_json_walk_first(text))
     value = json.loads(formatted)
     for _ in range(MAX_DEPTH):
         assert isinstance(value, list)
@@ -249,7 +250,7 @@ def test_nesting_exactly_at_the_limit_passes(monkeypatch: pytest.MonkeyPatch) ->
         return real(source)
 
     monkeypatch.setattr(format_module, "_json_limits", spy)
-    assert format_json(text) == formatted
+    assert_same_text(format_json(text), formatted)
     assert calls["n"] == 0
 
 

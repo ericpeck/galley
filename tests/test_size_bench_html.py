@@ -11,6 +11,7 @@ from benchmarks.size_bench import (
     generate_files,
     render_html_catalog,
 )
+from tests.text_compare import assert_same_text
 
 from galley.core.html_format import format_html
 
@@ -49,7 +50,7 @@ def test_html_catalog_is_the_exact_size_and_formats() -> None:
         assert text.count("<article ") > 1
         assert text.endswith("</p>\n</main>\n</body>\n</html>\n")
         out = format_html(text)
-        assert format_html(out) == out
+        assert_same_text(format_html(out), out)
     assert render_html_catalog(4096) == render_html_catalog(4096)
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from tests.text_compare import assert_same_text
 
 from galley.core.diff import load_document as diff_load_document
 from galley.core.errors import (
@@ -309,7 +310,7 @@ def test_deep_block_nesting_lays_out_without_recursion() -> None:
     lines = format_html(text).splitlines()
     assert len(lines) == divs * 2 + 1
     assert lines[divs] == "  " * divs + "<p>x</p>"
-    assert format_html("\n".join(lines)) == "\n".join(lines) + "\n"
+    assert_same_text(format_html("\n".join(lines)), "\n".join(lines) + "\n")
 
 
 # --- The format table -------------------------------------------------------

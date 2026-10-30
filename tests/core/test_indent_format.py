@@ -12,6 +12,7 @@ from queue import SimpleQueue
 import pytest
 import ruamel.yaml.main as ruamel_main
 from ruamel.yaml import YAML
+from tests.text_compare import assert_same_text
 
 import galley.core.format as format_module
 from galley.core.format import (
@@ -268,8 +269,8 @@ def test_yaml_too_deep_for_ruamel_writes_the_unit(engine: str) -> None:
     text += "  " * depth + "leaf: 1\n"
     two = format_document(text, "yaml", "yaml")
     four = format_document(text, "yaml", "yaml", indent=_FOUR)
-    assert four == _deeper(two, _FOUR)
-    assert format_document(text, "yaml", "yaml", indent=_TAB) == two
+    assert_same_text(four, _deeper(two, _FOUR))
+    assert_same_text(format_document(text, "yaml", "yaml", indent=_TAB), two)
 
 
 # --- XML and HTML --------------------------------------------------------------

@@ -57,6 +57,8 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+          # Big-text compares and regex worker times, for the next step.
+          GALLEY_BIGCOMPARE_LOG: ${{ runner.temp }}/bigcompare.log
         # -rfEP keeps failure reports and prints the informational timing table.
         run: |
           uv run pytest -rfEP --junitxml="${RUNNER_TEMP}/pytest.xml"
@@ -77,6 +79,17 @@ jobs:
               sys.exit(1)
           print("clib-only tests ran")
           PY
+
+      - name: Show big-text compares and regex worker times
+        if: always()
+        shell: bash
+        run: |
+          log="${RUNNER_TEMP}/bigcompare.log"
+          if [ -f "$log" ]; then
+            cat "$log" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No compare log: the tests did not start." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   test-windows:
     name: Test (Windows)
@@ -99,8 +112,21 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+          # Big-text compares and regex worker times, for the next step.
+          GALLEY_BIGCOMPARE_LOG: ${{ runner.temp }}/bigcompare.log
         # -rfEP keeps failure reports and prints the informational timing table.
         run: uv run --no-sync pytest -rfEP
+
+      - name: Show big-text compares and regex worker times
+        if: always()
+        shell: bash
+        run: |
+          log="${RUNNER_TEMP}/bigcompare.log"
+          if [ -f "$log" ]; then
+            cat "$log" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No compare log: the tests did not start." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   perf:
     # The macOS leg keeps the check name "perf" for branch protection. The
