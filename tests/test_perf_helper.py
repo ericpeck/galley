@@ -277,3 +277,30 @@ def test_a_percentile_budget_checks_the_tail_not_the_median() -> None:
 def test_within_passes_runs_and_percentile_through() -> None:
     timing = Budget("t").within(10.0, lambda: None, fixture="f", runs=7, percentile=95)
     assert len(timing.samples) == 7
+
+
+# --- report_or_check (nightly_budget) ---------------------------------------
+
+_FAKE_SLOW = Timing((0.009, 0.010, 0.011))  # fake: 10 ms median, budget 4 ms
+
+
+def test_report_or_check_only_prints_a_slow_timing_in_gate_mode(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "gate")
+    perf.report_or_check(_FAKE_SLOW, 0.004, test="test_fake", fixture="fake")
+    out = capsys.readouterr().out
+    assert "median 10.000 ms, budget 4.0 ms (timing only in gate mode)" in out
+
+
+def test_report_or_check_fails_a_slow_timing_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "strict")
+    with pytest.raises(_FAILED, match="perf budget missed: test_fake"):
+        perf.report_or_check(_FAKE_SLOW, 0.004, test="test_fake", fixture="fake")
+
+
+def test_report_or_check_passes_a_fast_timing_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "strict")
+    perf.report_or_check(
+        Timing((0.001, 0.002, 0.003)), 0.004, test="test_fake", fixture="fake"
+    )

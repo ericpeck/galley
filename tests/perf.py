@@ -262,6 +262,27 @@ def check(
         )
 
 
+def report_or_check(
+    timing: Timing,
+    budget_s: float,
+    *,
+    test: str,
+    fixture: str,
+    mode: str | None = None,
+) -> None:
+    """For ``nightly_budget`` tests: print the median, and only under
+    ``strict`` fail when it is past ``budget_s`` (no 3x gate factor)."""
+    mode = current_mode() if mode is None else mode
+    if mode != STRICT:
+        print(
+            f"perf: {test} [{fixture}] median {timing.median * 1000:.3f} ms, "
+            f"budget {_ms(budget_s)} (timing only in {mode} mode)",
+            flush=True,
+        )
+        return
+    check(timing, budget_s, test=test, fixture=fixture, mode=STRICT)
+
+
 class Budget:
     """The ``perf_budget`` fixture: time and check runs for one test."""
 

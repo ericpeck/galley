@@ -9,8 +9,10 @@ the report and the time until the panes and the Changes pane are usable,
 plus the longest gap of a 16 ms UI-thread timer during the compare. At
 8 MB, Cancel must stop the compare within about 1 s.
 
-Link Scrolling (3e) is timed with no budget yet: the median time its
-handler takes per scroll step with 1 MB on each side.
+Link Scrolling (3e): the median time its handler takes per scroll step
+with 1 MB on each side. It is marked ``nightly_budget``: the budget is
+asserted only under GALLEY_PERF_MODE=strict and printed otherwise. The
+4 ms budget is a proposal (#152): worst CI median 3.173 ms x 1.25.
 
 All data is generated in memory from fixed seeds. Every test prints one
 ``perf:`` line per number.
@@ -28,7 +30,7 @@ from PySide6.QtCore import QElapsedTimer, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from tests.app.compare_inline import inline_compare as inline_compare
-from tests.perf import time_runs
+from tests.perf import report_or_check, time_runs
 
 from galley.app.changes_pane import ChangesPane, ChangesState
 from galley.app.compare_mode import COMPARE_ANYWAY
@@ -38,6 +40,9 @@ from galley.core.compare_report import build_report
 from galley.core.diff import diff, diff_with_pairs, load_document
 
 _BUDGET_S = 0.5
+# Proposal pending sign-off (#152): worst CI median (3.173 ms, Windows)
+# x 1.25 = 3.97 ms, rounded up.
+_LINK_SCROLL_BUDGET_S = 0.004
 _JUMP_BUDGET_S = 0.05
 _SPAWN_TIMEOUT_MS = 120_000
 _TIMING_RUNS = 3
@@ -192,8 +197,11 @@ def test_an_f7_jump_on_a_1_mb_diff(qtbot, perf_budget, inline_compare) -> None:
 
 
 @pytest.mark.perf
+@pytest.mark.nightly_budget
 def test_linked_scrolling_is_timed(qtbot, inline_compare) -> None:
-    """The linked-scroll handler, per scroll step, 1 MB per side. No budget yet.
+    """The linked-scroll handler, per scroll step, 1 MB per side.
+
+    Budget 4 ms (proposal, #152), asserted only in strict mode.
 
     Each step puts Left at the next of 200 positions spread over the whole
     document, then times the handler that scrolls Right to match.
@@ -228,9 +236,11 @@ def test_linked_scrolling_is_timed(qtbot, inline_compare) -> None:
     label = (
         f"{_mb(left_text):.1f} MB per side, {changed:,} changes, {_SCROLL_STEPS} steps"
     )
-    print(
-        f"perf: compare linked scroll step [{label}] median "
-        f"{timing.median * 1000:.3f} ms (timing only, no budget)"
+    report_or_check(
+        timing,
+        _LINK_SCROLL_BUDGET_S,
+        test="test_linked_scrolling_is_timed",
+        fixture=f"compare linked scroll step, {label}",
     )
 
 
