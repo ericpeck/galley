@@ -356,6 +356,15 @@ class MainWindow(QMainWindow):
         # Regex and Whole word for both find bars: one worker, started the
         # first time either toggle is turned on.
         self._regex_session = RegexSession(self)
+        # A window deleted without a close still stops both workers. This
+        # holds the sessions, not the window, so it makes no cycle.
+        sessions = (self._session, self._regex_session)
+
+        def _shut_down_workers(*_args: object) -> None:
+            for session in sessions:
+                session.shutdown()
+
+        self.destroyed.connect(_shut_down_workers)
         self.setWindowTitle("Galley")
         self.setFont(ui_font())
         self.resize(1280, 800)
