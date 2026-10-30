@@ -6,6 +6,7 @@ import pytest
 from benchmarks.size_bench import render_python_literal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QPushButton, QToolButton
+from tests.text_compare import assert_same_text
 from tests.yaml_fast_path import assert_c_emitter_writes
 
 import galley.app.main_window as main_window_module
@@ -209,9 +210,9 @@ def test_convert_runs_at_the_limit_for_the_output_format(qtbot, target, limit) -
 
     result = convert_python(text, target)
     assert isinstance(result, ConvertResult)
-    assert output.toPlainText() == result.text
+    assert_same_text(output.toPlainText(), result.text)
     assert status.text() == f"Converted to {target}."
-    assert editor.toPlainText() == text
+    assert_same_text(editor.toPlainText(), text)
 
 
 @_LIMITS
@@ -226,7 +227,7 @@ def test_convert_refuses_one_byte_over_the_limit(
     _action(window, "Convert from Python").trigger()
 
     assert output.toPlainText() == "previous\n"
-    assert editor.toPlainText() == text
+    assert_same_text(editor.toPlainText(), text)
     assert status.text() == convert_python_too_large_message(si_size_up(limit + 1))
     # One byte over reads above the limit, never as the limit itself.
     shown = {"JSON": "(1.1 MB)", "YAML": "(192.1 KB)"}[target]

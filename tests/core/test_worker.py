@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from queue import Empty
 
+from tests.text_compare import assert_same_text
+
 from galley.core.errors import MAX_DEPTH, InputError
 from galley.core.format import format_json
 from galley.core.html_format import format_html
@@ -113,8 +115,8 @@ def test_worker_writes_a_temp_and_leaves_the_destination(tmp_path: Path) -> None
     temp = Path(success.temp_path)
     assert temp.parent == destination.parent
     assert temp.name.startswith(".galley-")
-    assert temp.read_bytes() == format_json(text).encode()
-    assert destination.read_bytes() == original
+    assert_same_text(temp.read_bytes(), format_json(text).encode())
+    assert_same_text(destination.read_bytes(), original)
     unlink_temp(success.temp_path)
     assert not temp.exists()
 
@@ -335,4 +337,4 @@ def test_an_xml_job_cancelled_mid_write_leaves_the_destination(
     assert Path(temp_path).exists()
     unlink_temp(temp_path)
     assert not Path(temp_path).exists()
-    assert destination.read_bytes() == original
+    assert_same_text(destination.read_bytes(), original)

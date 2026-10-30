@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from ruamel.yaml import YAML
+from tests.text_compare import assert_same_text
 
 import galley.core as core
 from galley.core import MAX_DEPTH
@@ -236,7 +237,7 @@ def test_json_at_max_depth_parses() -> None:
         assert isinstance(value, list)
         value = value[0]
     assert value == 0
-    assert format_json(formatted) == formatted
+    assert_same_text(format_json(formatted), formatted)
 
 
 def test_yaml_at_max_depth_parses() -> None:
@@ -246,7 +247,7 @@ def test_yaml_at_max_depth_parses() -> None:
     for level in range(MAX_DEPTH - 1):
         assert lines[level] == f"{'  ' * level}k:"
     assert lines[-1] == f"{'  ' * (MAX_DEPTH - 1)}k: 1"
-    assert format_yaml(formatted) == formatted
+    assert_same_text(format_yaml(formatted), formatted)
 
 
 def test_json_past_max_depth_is_too_deep() -> None:
@@ -292,14 +293,14 @@ def test_long_json_string_and_key_round_trip() -> None:
     value = "v" * 100_000
     formatted = format_json(json.dumps({key: value}))
     assert json.loads(formatted) == {key: value}
-    assert format_json(formatted) == formatted
+    assert_same_text(format_json(formatted), formatted)
 
 
 def test_long_yaml_value_round_trips() -> None:
     value = "v" * 100_000
     formatted = format_yaml(f"k: {value}\n")
     assert YAML(typ="safe").load(formatted) == {"k": value}
-    assert format_yaml(formatted) == formatted
+    assert_same_text(format_yaml(formatted), formatted)
 
 
 def test_yaml_simple_key_at_spec_limit_round_trips() -> None:
@@ -609,7 +610,7 @@ def test_xml_reads_utf8_whatever_the_declaration_says() -> None:
     # inside the element name, and expat would reject it.
     for encoding in ("ISO-8859-1", "UTF-16", "Shift_JIS", "not-an-encoding"):
         text = f'<?xml version="1.0" encoding="{encoding}"?>\n<名前>値</名前>\n'
-        assert format_xml(text) == text
+        assert_same_text(format_xml(text), text)
 
 
 def test_the_network_guard_records_each_try(monkeypatch: pytest.MonkeyPatch) -> None:

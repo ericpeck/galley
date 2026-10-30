@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 from tests.core.mask_rows import pretty_json, text_of_size
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 
 import galley.app.main_window as main_window_module
 from galley.app.editor import TAB_OUTDENT_SPACES, CodeEditor
@@ -121,7 +122,7 @@ def _hold(monkeypatch, window) -> None:
 
 def _one_undo_restores(editor: CodeEditor, before: str) -> None:
     editor.undo()
-    assert editor.toPlainText() == before
+    assert_same_text(editor.toPlainText(), before)
     assert not editor.document().isUndoAvailable()
 
 
@@ -596,7 +597,7 @@ def test_indent_and_outdent_on_every_line_of_2_4_mb_are_timed(qtbot) -> None:
         reset()
 
     outdent = time_runs(window._actions.outdent.trigger, setup=reindent)
-    assert source.toPlainText() == text
+    assert_same_text(source.toPlainText(), text)
     _one_undo_restores(source, indented)
     reindent()
     check_one_step(window._actions.outdent)

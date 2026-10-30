@@ -10,8 +10,10 @@ import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAccessible, QAction, QKeySequence, QPalette, QTextCursor
 from PySide6.QtWidgets import QApplication, QPushButton
+from tests.app.regex_clock import freeze_watchdog, hold_answers, report_elapsed
 from tests.core.order_lines import REPLACE_BYTES, order_lines
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 
 from galley.app.actions import _ACTION_ATTRS, UNBUILT_ACTIONS, main
 from galley.app.editor import CodeEditor
@@ -24,27 +26,32 @@ from galley.app.find_bar import (
     SEARCH_TIMED_OUT_SPOKEN,
     FindBar,
     pattern_error_text,
+    replaced_announcement,
     replaced_text,
 )
 from galley.app.main import create_main_window
-from galley.app.regex_session import SEARCH_LIMIT_MS, RegexSession
+from galley.app.regex_session import MIN_GRACE_MS, SEARCH_LIMIT_MS, RegexSession
 from galley.app.shortcuts import TOGGLE_REGEX, TOGGLE_WHOLE_WORD
 from galley.app.style import find_toggle_style, options_link_style
 from galley.app.theme import composite, contrast_ratio, segment_colors
+from galley.core.regex_find import ReplacedAll
 
 _R = QPalette.ColorRole
 _PORTABLE = QKeySequence.SequenceFormat.PortableText
 _NATIVE = QKeySequence.SequenceFormat.NativeText
 _WAIT_MS = 15_000
-# Most tests stop a runaway search this soon; one uses the real 2 s.
+# Ordinary tests use the real 2 s limit: the worker times its own work, so
+# a slow runner does not push a quick search past it. Runaway tests stop
+# sooner, with a short limit and grace; one waits out the real ones.
 _SHORT_LIMIT_MS = 300
+_SHORT_GRACE_MS = 200
 _EMOJI = "\U0001f600"
 _RUNAWAY_TEXT = "a" * 30 + "b"
 _RUNAWAY = "(a+)+$"
 _ORDERS = "qty=1 qty=2\nQTY=3 qtys=4\n"
 
 
-def _window(qtbot, limit_ms: int = _SHORT_LIMIT_MS):
+def _window(qtbot, limit_ms: int = SEARCH_LIMIT_MS, grace_ms: int = MIN_GRACE_MS):
     window = create_main_window()
     qtbot.addWidget(window)
     # Wide, so the Windows runner's font shows every label.
@@ -52,6 +59,7 @@ def _window(qtbot, limit_ms: int = _SHORT_LIMIT_MS):
     window.show()
     qtbot.waitExposed(window)
     window._regex_session.limit_ms = limit_ms
+    window._regex_session.min_grace_ms = grace_ms
     return window
 
 
@@ -79,12 +87,19 @@ def _focus(qtbot, widget) -> None:
     qtbot.waitUntil(widget.hasFocus, timeout=2000)
 
 
-def _input_with(qtbot, text: str, limit_ms: int = _SHORT_LIMIT_MS):
-    window = _window(qtbot, limit_ms)
+def _input_with(
+    qtbot, text: str, limit_ms: int = SEARCH_LIMIT_MS, grace_ms: int = MIN_GRACE_MS
+):
+    window = _window(qtbot, limit_ms, grace_ms)
     editor = _editor(window, "input")
     editor.setPlainText(text)
     _focus(qtbot, editor)
     return window, editor, _bar(window, "input")
+
+
+def _runaway_input(qtbot):
+    """Input holds the runaway text, and a runaway is stopped in 0.5 s."""
+    return _input_with(qtbot, _RUNAWAY_TEXT, _SHORT_LIMIT_MS, _SHORT_GRACE_MS)
 
 
 def _output_with(qtbot, text: str):
@@ -503,7 +518,7 @@ def test_typing_while_a_search_runs_shows_only_the_newest_result(qtbot) -> None:
 def test_a_stale_runaway_never_shows_timed_out_and_the_newest_result_wins(
     qtbot,
 ) -> None:
-    window, editor, bar = _input_with(qtbot, _RUNAWAY_TEXT)
+    window, editor, bar = _runaway_input(qtbot)
     _find(qtbot, window, bar, "a")
     heard: list[str] = []
     bar.count_changed.connect(heard.append)
@@ -569,7 +584,7 @@ def test_an_invalid_pattern_ignores_document_edits_until_the_query_changes(
 
 
 def test_a_search_past_the_limit_says_so_and_is_not_tried_again(qtbot) -> None:
-    window, editor, bar = _input_with(qtbot, _RUNAWAY_TEXT)
+    window, editor, bar = _runaway_input(qtbot)
     _action(window, "Find and Replace…").trigger()
     bar.replace_field.setText("x")
     _find(qtbot, window, bar, "a+b")
@@ -609,7 +624,7 @@ def test_a_search_past_the_limit_says_so_and_is_not_tried_again(qtbot) -> None:
 
 
 def test_a_toggle_turned_off_on_a_closed_bar_lets_find_next_search(qtbot) -> None:
-    window, editor, bar = _input_with(qtbot, _RUNAWAY_TEXT)
+    window, editor, bar = _runaway_input(qtbot)
     _find(qtbot, window, bar, _RUNAWAY)
     assert bar.count_label_text() == SEARCH_TIMED_OUT
     bar.close_bar()
@@ -624,10 +639,14 @@ def test_a_toggle_turned_off_on_a_closed_bar_lets_find_next_search(qtbot) -> Non
 def test_the_real_limit_stops_a_runaway_search_and_a_new_worker_takes_over(
     qtbot,
 ) -> None:
-    """The one test per OS that waits out the real 2 s limit."""
-    window, editor, bar = _input_with(qtbot, _RUNAWAY_TEXT, limit_ms=SEARCH_LIMIT_MS)
+    """The one test per OS that waits out the real 2 s limit and 1 s grace.
+
+    A runaway never answers, so the watchdog stops it.
+    """
+    window, editor, bar = _input_with(qtbot, _RUNAWAY_TEXT)
     session = window._regex_session
     assert session.limit_ms == SEARCH_LIMIT_MS == 2000
+    assert session.watchdog_ms == SEARCH_LIMIT_MS + MIN_GRACE_MS == 3000
     bar.open(fill_from_selection=False)
     _turn_on(qtbot, window, bar.regex_button)
     old = session.process
@@ -643,7 +662,7 @@ def test_the_real_limit_stops_a_runaway_search_and_a_new_worker_takes_over(
     )
     elapsed = time.monotonic() - started
     ticker.stop()
-    assert elapsed <= 2.5, elapsed
+    assert elapsed <= session.watchdog_ms / 1000 + 0.5, elapsed
     # The UI kept running and the editor is not locked.
     assert len(ticks) >= 20
     assert not editor.isReadOnly()
@@ -778,19 +797,86 @@ def test_whole_word_alone_replaces_with_the_text_as_typed(qtbot) -> None:
     assert editor.toPlainText() == "$1=1 $1=2\nQTY=3 qtys=4\n"
 
 
-def test_replace_all_past_the_limit_leaves_the_document_alone(qtbot) -> None:
-    text = order_lines()
-    window, editor, _bar_ = _input_with(qtbot, text, limit_ms=60_000)
-    bar = _open_replace(qtbot, window, r"(q)ty", "$1")
-    assert bar.match_count() > 90_000
-    window._regex_session.limit_ms = 1
-    bar.replace_all()
-    qtbot.waitUntil(
-        lambda: bar.count_label_text() == SEARCH_TIMED_OUT, timeout=_WAIT_MS
-    )
-    assert editor.toPlainText() == text
+def _open_orders_replace(qtbot, monkeypatch):
+    """Open Replace on ``_ORDERS`` with the watchdog's clock stopped.
+
+    The limit is the real one. Only a test moves the clock.
+    """
+    window, editor, _bar_ = _input_with(qtbot, _ORDERS)
+    bar = _open_replace(qtbot, window, r"qty=(\d)", "n=$1")
+    assert bar.match_count() == 2
+    session = window._regex_session
+    clock = freeze_watchdog(monkeypatch)
+    timed_out: list[int] = []
+    session.timed_out.connect(timed_out.append)
+    return session, editor, bar, clock, timed_out
+
+
+def _assert_untouched_and_timed_out(editor: CodeEditor, bar: FindBar) -> None:
+    assert bar.count_label_text() == SEARCH_TIMED_OUT
+    assert_same_text(editor.toPlainText(), _ORDERS)
     assert not editor.document().isUndoAvailable()
     assert not bar.replace_all_button.isEnabled()
+
+
+def test_replace_all_past_the_limit_leaves_the_document_alone(
+    qtbot, monkeypatch
+) -> None:
+    """The worker took the whole limit by its own clock: the answer is dropped.
+
+    However soon this process reads it, the document stays. The worker does
+    too.
+    """
+    session, editor, bar, _clock, timed_out = _open_orders_replace(qtbot, monkeypatch)
+    read = report_elapsed(monkeypatch, session, SEARCH_LIMIT_MS)
+    old = session.process
+    bar.replace_all()
+    qtbot.waitUntil(lambda: bool(timed_out), timeout=_WAIT_MS)
+    assert [type(event) for event in read] == [ReplacedAll]
+    _assert_untouched_and_timed_out(editor, bar)
+    assert session.process is old
+    assert session.killed_process is None
+
+
+def test_replace_all_answered_under_the_limit_is_applied(qtbot, monkeypatch) -> None:
+    session, editor, bar, _clock, timed_out = _open_orders_replace(qtbot, monkeypatch)
+    read = report_elapsed(monkeypatch, session, SEARCH_LIMIT_MS - 1)
+    heard: list[str] = []
+    bar.count_changed.connect(heard.append)
+    bar.replace_all()
+    qtbot.waitUntil(
+        lambda: bar.count_label_text() == replaced_text(2), timeout=_WAIT_MS
+    )
+    assert isinstance(read[0], ReplacedAll)
+    assert timed_out == []
+    assert replaced_announcement(2) == "Replaced 2 matches."
+    assert replaced_announcement(2) in heard
+    assert editor.toPlainText() == "n=1 n=2\nQTY=3 qtys=4\n"
+    editor.undo()
+    assert editor.toPlainText() == _ORDERS
+    assert not editor.document().isUndoAvailable()
+
+
+def test_replace_all_with_no_answer_is_stopped_by_the_watchdog(
+    qtbot, monkeypatch
+) -> None:
+    """No answer within the limit plus the grace: the worker is killed."""
+    session, editor, bar, clock, timed_out = _open_orders_replace(qtbot, monkeypatch)
+    hold_answers(monkeypatch, session)
+    old = session.process
+    bar.replace_all()
+    # The job went out at once, while the clock was stopped at its start.
+    assert session.is_busy()
+    clock.set_ms_after_start(session.watchdog_ms - 1)
+    session._check_limit()
+    assert timed_out == []
+    assert bar.is_searching()
+    clock.set_ms_after_start(session.watchdog_ms)
+    session._check_limit()
+    assert len(timed_out) == 1
+    _assert_untouched_and_timed_out(editor, bar)
+    assert session.killed_process is old
+    qtbot.waitUntil(lambda: session.process not in (None, old), timeout=_WAIT_MS)
 
 
 def test_replace_all_drops_its_result_when_the_document_changed_meanwhile(
@@ -975,9 +1061,9 @@ def test_a_regex_replace_all_on_2_4_mb_is_timed(qtbot) -> None:
         )
 
     replace_all()
-    assert editor.toPlainText() == text.replace('"qty"', "qty")
+    assert_same_text(editor.toPlainText(), text.replace('"qty"', "qty"))
     editor.undo()
-    assert editor.toPlainText() == text
+    assert_same_text(editor.toPlainText(), text)
     timing = time_runs(replace_all, setup=reset)
     assert not editor.isReadOnly()
     _print_timing(

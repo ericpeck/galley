@@ -21,8 +21,9 @@ This module does not import Qt.
 """
 
 import re
+import time
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.queues import Queue
 
 _WORD_START = r"(?<!\w)(?:"
@@ -199,7 +200,8 @@ class StoreText:
     """The document to search, kept by the worker until the next one."""
 
     version: int
-    text: str
+    # UTF-8, so the worker times decoding it.
+    data: bytes
 
 
 @dataclass(frozen=True)
@@ -236,6 +238,10 @@ class ReplaceOneJob(ReplaceAllJob):
 
 # Events -----------------------------------------------------------------
 
+# Each answer carries ``elapsed_ms``: how long the worker took, from reading
+# the job to sending the answer, decoding a newly stored text included. The
+# UI process drops an answer that took its whole limit.
+
 
 @dataclass(frozen=True)
 class FindReady:
@@ -255,6 +261,7 @@ class Found:
     starts: array
     ends: array
     groups: int
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -265,6 +272,7 @@ class ReplacedAll:
     text: str
     starts: array
     ends: array
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -273,6 +281,7 @@ class ReplacedOne:
 
     job_id: int
     replacement: str | None
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -280,6 +289,7 @@ class PatternFailed:
     job_id: int
     message: str
     column: int | None
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -288,6 +298,7 @@ class ReplacementFailed:
 
     job_id: int
     group: int
+    elapsed_ms: float = 0.0
 
 
 FindEvent = Found | ReplacedAll | ReplacedOne | PatternFailed | ReplacementFailed
@@ -325,20 +336,28 @@ def run_job(job: FindJob, text: str) -> FindEvent:
 def run_find_worker(job_queue: Queue, event_queue: Queue) -> None:
     """Run find jobs until the queue yields ``None``.
 
-    The UI process kills this process when a job runs past its limit.
+    Each answer carries the worker's own time for its job. Decoding a
+    stored text counts toward the next job. The UI process kills this
+    process when a job sends no answer well past its limit.
     """
     event_queue.put(FindReady())
     text = ""
+    decode_ms = 0.0
     while True:
         job = job_queue.get()
+        received_s = time.perf_counter()
         if job is None:
             return
         if isinstance(job, StoreText):
-            text = job.text
+            text = job.data.decode("utf-8", "surrogatepass")
+            decode_ms = (time.perf_counter() - received_s) * 1000
             event_queue.put(TextStored(job.version))
             continue
         if isinstance(job, FindJob):
-            event_queue.put(run_job(job, text))
+            event = run_job(job, text)
+            elapsed_ms = decode_ms + (time.perf_counter() - received_s) * 1000
+            decode_ms = 0.0
+            event_queue.put(replace(event, elapsed_ms=elapsed_ms))
 
 
 def _compile(source: str, flags: int, *, shift: int, length: int) -> re.Pattern[str]:

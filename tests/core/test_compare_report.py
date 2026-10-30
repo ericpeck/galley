@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from tests.text_compare import assert_same_text
 
 from galley.core import diff as diff_module
 from galley.core.compare_report import (
@@ -572,7 +573,7 @@ def test_reformat_reuses_the_formatters_json_value(text: str) -> None:
     with mock.patch("galley.core.worker.load_document", _no_second_parse):
         event = run_compare(_job(text, other, reformat=True))
     assert isinstance(event, CompareEvent)
-    assert event.left_text == format_document(text, "json", "json")
+    assert_same_text(event.left_text, format_document(text, "json", "json"))
     left = load_document(event.left_text, "json")
     right = load_document(event.right_text, "json")
     result, pairs = diff_with_pairs(left, right)

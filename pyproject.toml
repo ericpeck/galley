@@ -26,6 +26,7 @@ dev = [
     "hypothesis>=6.170.5",
     "pytest>=8.3",
     "pytest-qt>=4.4",
+    "pytest-timeout>=2.4",
     "ruff>=0.8",
 ]
 
@@ -64,6 +65,17 @@ addopts = "-m 'not perf'"
 # the run, so a hang fails in the log instead of using up the job's time.
 faulthandler_timeout = 300
 faulthandler_exit_on_timeout = true
+# pytest-timeout: a test still running after 120 s, setup and teardown
+# included, prints every thread's stack and ends the run. "thread" works on
+# Windows too. The faulthandler limit above is a backstop for a run with the
+# plugin off.
+timeout = 120
+timeout_method = "thread"
+# Lets a call-site audit (GALLEY_BIGCOMPARE_AUDIT=1, see tests/conftest.py)
+# log passing compares of texts over 64 KB. Without the audit, a passing
+# assert costs one extra check. It stays on because pytest caches rewritten
+# asserts without regard to this setting.
+enable_assertion_pass_hook = true
 markers = [
     "perf: wall-clock budget; deselected by default, run with -m perf (tests/perf.py)",
     "nightly_budget: budget asserted only under GALLEY_PERF_MODE=strict (nightly on main); prints the timing otherwise",
