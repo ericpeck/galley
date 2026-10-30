@@ -172,8 +172,6 @@ def test_session_cancel_works_for_a_sorted_job(qtbot, tmp_path: Path) -> None:
 
 
 def test_release_check_no_longer_lists_sort_keys(capsys) -> None:
-    message = release_failure()
-    assert message is not None
-    assert "Sort keys" not in message
-    assert main() == 1
-    assert "Sort keys" not in capsys.readouterr().out
+    assert release_failure() is None
+    assert main() == 0
+    assert capsys.readouterr().out == ""

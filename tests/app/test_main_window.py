@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from galley.app.actions import UNBUILT_ACTIONS
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.app.main_window import (
@@ -694,11 +693,11 @@ def test_editors_have_line_number_gutters(qtbot) -> None:
 
 
 def test_stub_action_reports_not_yet(qtbot, monkeypatch) -> None:
-    # Nothing is Not yet any more. Link Scrolling off the Coming soon list
-    # is the example: it stays a stub, so it reports Not yet.
+    # Nothing is Not yet any more. Link Scrolling on the Not yet list is the
+    # example: a stub reports Not yet.
     monkeypatch.setattr(
-        "galley.app.actions.UNBUILT_ACTIONS",
-        tuple(name for name in UNBUILT_ACTIONS if name != "Link Scrolling"),
+        "galley.app.actions.ShellActions._not_yet_actions",
+        lambda self: [self.link_scrolling],
     )
     window = _show(qtbot)
     _action(window, "Link Scrolling").trigger()

@@ -76,9 +76,9 @@ _BROKEN = '{\n  "orders": [\n'
 _WAIT_MS = 5_000
 _SPAWN_TIMEOUT_MS = 30_000
 
-# Bill's 3d list, in the brief's order, by menu text.
+# Bill's 3d list, in the brief's order, by menu text. Format left the list
+# in 3e: it formats both sides while comparing.
 _GREYED = (
-    "Format",
     "Minify",
     "Validate",
     "Sort keys",
@@ -871,7 +871,7 @@ def test_toolbar_buttons_show_the_reason(qtbot, inline_compare) -> None:
             assert button.toolTip() == NOT_AVAILABLE_WHILE_COMPARING, text
     format_button = window.findChild(QPushButton, "formatButton")
     assert isinstance(format_button, QPushButton)
-    assert not format_button.isEnabled()
+    assert format_button.isEnabled()
 
 
 def test_the_window_cannot_turn_a_held_action_back_on(qtbot, inline_compare) -> None:

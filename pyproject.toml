@@ -60,6 +60,10 @@ qt_api = "pyside6"
 # Wall-clock budgets run only with -m perf. A later -m on the command line
 # replaces this one.
 addopts = "-m 'not perf'"
+# A test still running after 5 minutes prints every thread's stack and ends
+# the run, so a hang fails in the log instead of using up the job's time.
+faulthandler_timeout = 300
+faulthandler_exit_on_timeout = true
 markers = [
     "perf: wall-clock budget; deselected by default, run with -m perf (tests/perf.py)",
 ]

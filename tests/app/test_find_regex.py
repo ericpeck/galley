@@ -42,12 +42,6 @@ _EMOJI = "\U0001f600"
 _RUNAWAY_TEXT = "a" * 30 + "b"
 _RUNAWAY = "(a+)+$"
 _ORDERS = "qty=1 qty=2\nQTY=3 qtys=4\n"
-_COMING_SOON_OUTPUT = (
-    'Release blocked: these actions still show "Coming soon": '
-    "Open Right Document…, Link Scrolling.\n"
-    "Build them or remove them from UNBUILT_ACTIONS in actions.py "
-    "before tagging.\n"
-)
 
 
 def _window(qtbot, limit_ms: int = _SHORT_LIMIT_MS):
@@ -864,12 +858,11 @@ def test_the_toggles_are_not_menu_actions(qtbot) -> None:
     assert not names & texts
 
 
-def test_the_release_check_output_is_unchanged() -> None:
+def test_the_release_check_prints_nothing_and_passes() -> None:
     printed = io.StringIO()
     with redirect_stdout(printed):
-        assert main() == 1
-    assert printed.getvalue() == _COMING_SOON_OUTPUT
-    assert "Not yet" not in printed.getvalue()
+        assert main() == 0
+    assert printed.getvalue() == ""
 
 
 # Performance (timing only, no budget) ----------------------------------------

@@ -98,6 +98,7 @@ class PaneWidget(QWidget):
         self.setAutoFillBackground(True)
 
         self.editor = CodeEditor()
+        self._own_editor = self.editor
         self.editor.setObjectName(f"{spec.name}Editor")
         self.editor.setAccessibleName(f"{spec.title} editor")
 
@@ -150,6 +151,11 @@ class PaneWidget(QWidget):
         self.editor.setAccessibleName(f"{self._title} editor")
         self._format_label = label
         self.fit_tab_strip()
+
+    @property
+    def own_editor(self) -> CodeEditor:
+        """The editor this pane was built with, even while another one shows."""
+        return self._own_editor
 
     def show_editor(self, editor: CodeEditor, find_bar: FindBar) -> None:
         """Show ``editor`` and its ``find_bar`` where this pane's own are.
@@ -390,7 +396,7 @@ class PaneWidget(QWidget):
         heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        _style_empty_heading(heading)
+        style_empty_heading(heading)
         hint = QLabel("⌨ ⌘V to paste · Ctrl+V on Windows")
         hint.setObjectName(f"{self.spec.name}EmptyHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -427,7 +433,7 @@ class PaneWidget(QWidget):
         heading.setObjectName(f"{self.spec.name}EmptyTitle")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        _style_empty_heading(heading)
+        style_empty_heading(heading)
         self.paste_button = None
         self.open_button = None
         layout = QVBoxLayout(overlay)
@@ -497,7 +503,7 @@ def _source_empty_heading() -> str:
     return f"{EMPTY_HEADING} {shortcut} to open."
 
 
-def _style_empty_heading(heading: QLabel) -> None:
+def style_empty_heading(heading: QLabel) -> None:
     """Center a 15 px semibold heading and keep the wrap near 360 px."""
     font = ui_font()
     font.setPixelSize(15)

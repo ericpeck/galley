@@ -601,12 +601,15 @@ def test_find_and_replace_is_off_the_not_yet_list(qtbot) -> None:
     assert actions.find_replace not in actions.stubs()
     assert actions._not_yet_actions() == []
     assert not_yet_failure() is None
-    message = release_failure()
-    assert message is not None
-    assert "Find and Replace" not in message
+    assert release_failure() is None
 
 
-def test_the_release_check_leaves_out_an_empty_not_yet_section() -> None:
+def test_the_release_check_leaves_out_an_empty_not_yet_section(monkeypatch) -> None:
+    # Nothing is Coming soon since #65 slice 3e. Put its two names back.
+    monkeypatch.setattr(
+        "galley.app.actions.UNBUILT_ACTIONS",
+        ("Open Right Document…", "Link Scrolling"),
+    )
     printed = io.StringIO()
     with redirect_stdout(printed):
         assert main() == 1

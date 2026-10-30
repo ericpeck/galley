@@ -26,6 +26,7 @@ import multiprocessing
 import os
 import time
 from dataclasses import dataclass
+from multiprocessing.context import BaseContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue
 from queue import Empty
@@ -111,6 +112,17 @@ def _arm_exit_cleanup() -> None:
     """Run after queue finalizers are registered so exit closes them first."""
     atexit.unregister(_close_live_workers)
     atexit.register(_close_live_workers)
+
+
+def _unjoined_queue(ctx: BaseContext) -> Queue:
+    """A queue that never joins its feeder thread, even at exit.
+
+    The feeder can still be writing a large job to a child that was killed,
+    and that write never finishes.
+    """
+    queue: Queue = ctx.Queue()
+    queue.cancel_join_thread()
+    return queue
 
 
 def _dispose_queue(queue: Queue | None) -> None:
@@ -477,8 +489,8 @@ class ParseSession(QObject):
             self._forget_retired(entry, unlink=True)
 
     def _spawn(self) -> None:
-        job_queue: Queue = self._ctx.Queue()
-        event_queue: Queue = self._ctx.Queue()
+        job_queue = _unjoined_queue(self._ctx)
+        event_queue = _unjoined_queue(self._ctx)
         process = self._ctx.Process(
             target=run_worker,
             name="galley-parse",

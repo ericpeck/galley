@@ -162,18 +162,11 @@ def test_validate_is_built_and_off_the_release_lists(qtbot) -> None:
     assert action not in actions._stub_actions()
     assert action not in actions._not_yet_actions()
     assert action not in actions.stubs()
-    message = release_failure()
-    assert message is not None
-    assert "Validate" not in message
+    assert release_failure() is None
     printed = io.StringIO()
     with redirect_stdout(printed):
-        assert main() == 1
-    assert printed.getvalue() == (
-        'Release blocked: these actions still show "Coming soon": '
-        "Open Right Document…, Link Scrolling.\n"
-        "Build them or remove them from UNBUILT_ACTIONS in actions.py "
-        "before tagging.\n"
-    )
+        assert main() == 0
+    assert printed.getvalue() == ""
     host = _button(window).parentWidget()
     assert host is None or host.property("comingSoonHost") is not True
 

@@ -20,7 +20,6 @@ patterns.
 import multiprocessing
 import time
 from multiprocessing.process import BaseProcess
-from multiprocessing.queues import Queue
 from queue import Empty
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -31,6 +30,7 @@ from galley.app.parse_session import (
     _arm_exit_cleanup,
     _release_without_join,
     _RunningWorker,
+    _unjoined_queue,
 )
 from galley.core.regex_find import (
     FindJob,
@@ -163,8 +163,8 @@ class RegexSession(QObject):
     # Internals ----------------------------------------------------------
 
     def _spawn(self) -> None:
-        job_queue: Queue = self._ctx.Queue()
-        event_queue: Queue = self._ctx.Queue()
+        job_queue = _unjoined_queue(self._ctx)
+        event_queue = _unjoined_queue(self._ctx)
         process = self._ctx.Process(
             target=run_find_worker,
             name="galley-find",

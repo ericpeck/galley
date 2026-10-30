@@ -1,49 +1,78 @@
-"""Compare mode: View › Compare, Next Change and Previous Change (#65 slice 3d).
+"""Compare mode: View › Compare, its changes, opening and Format (#65 3d, 3e).
 
 Compare reuses the Input/Output splitter. The pane headers read Left and
-Right. Left is the Input editor itself, read-only, so Input's text and undo
-history are never touched. Right is a read-only editor of its own, shown in
-the Output pane in place of the Output editor, which stays as it was. Right
-keeps its text for the session. In 3d Paste fills Right; Open Right
-Document… and drag and drop come in 3e.
+Right. Left is the Input editor itself, read-only, so only a file opened
+into Left and Format change Input's text, each as one undo step. Right is a
+read-only editor of its own, shown in the Output pane in place of the
+Output editor, which stays as it was. Right keeps its text for the session.
+
+Paste and Open Right Document… fill Right. File › Open…, Open Recent and a
+file dropped outside the panes ask which side; a file dropped on a side
+loads that side. Each file is read once here and refused when it is XML or
+HTML; Left then takes the text through the window's own Open.
 
 The compare runs on the parse session's worker (#87), one job at a time,
-with its Cancel. A side over 2 MB asks first. The Changes pane (#146) is a
-tab of the results panel while Compare is on. ``ActionHold`` greys out the
-commands that don't apply and gives each its own state back on leaving.
+with its Cancel. A side over 2 MB asks first. Format sends one Format job
+per side, Left first, holds both results and changes neither side unless
+both succeed and neither side changed meanwhile. The
+Changes pane (#146) is a tab of the results panel while Compare is on.
+Link Scrolling keeps the lines the report pairs level. ``ActionHold`` greys
+out the commands that don't apply and gives each its own state back on
+leaving.
 
 The window wires this in one block and hands over what it needs as a
 ``CompareHost``.
 """
 
+from bisect import bisect_right
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeyEvent, QPalette
-from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+from PySide6.QtGui import QAction, QColor, QDropEvent, QKeyEvent, QPalette, QTextCursor
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from galley.app.actions import ActionHold, ShellActions, set_not_available
+from galley.app.actions import (
+    ActionHold,
+    ShellActions,
+    is_unbuilt,
+    set_not_available,
+)
 from galley.app.changes_pane import (
     CHANGES_NOUNS,
     COMPARISON_CANCELED,
     COMPARISON_STOPPED,
     ChangesPane,
+    ChangesState,
     difference_count_text,
 )
 from galley.app.editor import CHANGE_MARKERS, ChangeMarker, CodeEditor
+from galley.app.file_drop import dropped_files
 from galley.app.find_bar import FindBar
+from galley.app.indent import indent_unit
 from galley.app.limits import COMPARE_WARNING_BYTES
-from galley.app.pane import PaneWidget
+from galley.app.open_file import FileReader
+from galley.app.open_text import open_error_text, opened_first_text, opened_text
+from galley.app.pane import PaneWidget, style_empty_heading
 from galley.app.parse_session import CompareFailure, ParseSession
 from galley.app.problem_text import DisplayProblem, announcement_text
 from galley.app.problems_pane import ProblemsPane
 from galley.app.problems_settings import STATE_OPEN
 from galley.app.regex_session import RegexSession
 from galley.app.status_bar import Busy, StatusBar
+from galley.app.style import primary_button_style
 from galley.core.compare_report import ChangeRow, CompareReport, GroupRow, ReportRow
 from galley.core.formats import format_named
-from galley.core.worker import CompareEvent, CompareSide
+from galley.core.load import LoadedDocument, LoadError
+from galley.core.worker import CompareEvent, CompareSide, not_comparable
 
 LEFT_TITLE = "Left"
 RIGHT_TITLE = "Right"
@@ -56,6 +85,20 @@ SIZE_WARNING_TEXT = "Comparing this much data may take a while."
 COMPARE_ANYWAY = "Compare anyway"
 # "Comparing…" and Cancel wait as long as Format's spinner (ADR 0001).
 COMPARING_REVEAL_MS = 500
+# An empty Right (Bill's 3e criteria), with Open Right Document….
+RIGHT_PLACEHOLDER = "Paste or open the JSON or YAML to compare with."
+# File › Open…, Open Recent and a drop outside the panes ask which side,
+# with Left, Right (the default) and Cancel (Eric).
+OPEN_SIDE_TEXT = "Open “{name}” on the left or the right?"
+# Format in Compare (Eric).
+FORMATTED_BOTH = "Formatted both sides."
+FORMATTED_LEFT = "Formatted Left side."
+FIX_ERRORS_TO_FORMAT = "Fix errors to format."
+
+
+def open_side_text(file_name: str) -> str:
+    """The question the Left / Right / Cancel sheet asks."""
+    return OPEN_SIDE_TEXT.format(name=file_name)
 
 
 def compare_needs_size_warning(left_text: str, right_text: str) -> bool:
@@ -76,6 +119,15 @@ class CompareHost:
     View settings, ``bind_menu`` gives a pane's editor the right-click menu,
     ``toolbar_sync`` redraws the toolbar's tooltips and ``resync`` brings
     every window control up to date again after Compare.
+
+    ``choose_path`` asks for a file with the Open dialog, or None.
+    ``open_left`` opens a file already read into Input through the window's
+    own Open, replace prompt included. ``remember_recent`` puts a file in
+    Open Recent and ``size_text`` writes a size for the Opened status.
+    ``check_format_size`` applies Format's own size rules to (text, format)
+    pairs and calls back to go ahead, after its sheet when it asks.
+    ``indent_choice`` is the indent size picker's choice. ``formatting_text``
+    and ``format_canceled_text`` are Format's busy and canceled words.
     """
 
     window: QWidget
@@ -99,6 +151,29 @@ class CompareHost:
     bind_menu: Callable[[PaneWidget], None]
     toolbar_sync: Callable[[], None]
     resync: Callable[[], None]
+    choose_path: Callable[[], Path | None]
+    open_left: Callable[[Path, LoadedDocument, int], None]
+    check_format_size: Callable[[list[tuple[str, str]], Callable[[], None]], None]
+    remember_recent: Callable[[Path], None]
+    size_text: Callable[[int], str]
+    indent_choice: Callable[[], str]
+    formatting_text: str
+    format_canceled_text: str
+
+
+@dataclass
+class _FormatRun:
+    """Format in Compare: the sides still to format, then what each became.
+
+    Each side is one Format job, Left first. ``versions`` is each side's
+    document version when Format was asked for. Nothing is applied until
+    every side has succeeded, and nothing at all if a version moved.
+    """
+
+    sides: list[tuple[CompareSide, str, str]]
+    versions: dict[CompareSide, int]
+    side: CompareSide | None = None
+    done: dict[CompareSide, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -136,29 +211,63 @@ class CompareMode(QObject):
             self._right, "right", regex_session=host.regex_session
         )
         self._share_toggles(host.left.find_bar, self._right_bar)
+        self._placeholder = self._build_placeholder()
         self._right.textChanged.connect(self._sync_right_footer)
         self._right_format = ""
         self._saved: _Saved | None = None
         self._job_id: int | None = None
+        # The texts and formats of the running compare.
+        self._submitted: tuple[str, str, str, str] | None = None
+        self._format: _FormatRun | None = None
         self._size_box: QMessageBox | None = None
+        self._side_box: QMessageBox | None = None
         self._menu_bound = False
         self._restoring = False
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setSingleShot(True)
         self._reveal_timer.timeout.connect(self._show_comparing)
+        # A file read for one side: the read, then where it goes.
+        self._reader = FileReader(self)
+        self._reader.finished.connect(self._on_file_read)
+        self._open_job = 0
+        self._reading: tuple[Path, CompareSide, int] | None = None
+        # An Opened or Formatted status that a finished compare leaves.
+        self._kept_status = ""
+        # Each side's document version, for Format's stale-result rule.
+        self._versions: dict[CompareSide, int] = {"left": 0, "right": 0}
+        # Link Scrolling: each side's line of every pair, in step.
+        self._anchor_left: list[int] = []
+        self._anchor_right: list[int] = []
+        self._linking = False
 
         actions.compare.toggled.connect(self._on_toggled)
         actions.next_change.triggered.connect(self._next_change)
         actions.previous_change.triggered.connect(self._previous_change)
         actions.paste.triggered.connect(self._paste)
+        actions.open_right_document.triggered.connect(self.open_right_document)
+        actions.link_scrolling.toggled.connect(self._on_link_toggled)
         host.status.cancel_clicked.connect(self.cancel)
         host.results.jump_requested.connect(self._jump_in_right)
         host.left.format_changed.connect(self._on_format_changed)
         host.right.format_changed.connect(self._on_right_format_changed)
+        left = host.left.editor
+        # Bound methods, not lambdas: a lambda on Right's signal would keep
+        # this object, Right and the window's wrapper alive after it closes.
+        left.textChanged.connect(self._bump_left)
+        self._right.textChanged.connect(self._bump_right)
+        left.verticalScrollBar().valueChanged.connect(self._follow_left)
+        left.horizontalScrollBar().valueChanged.connect(self._follow_left_across)
+        self._right.verticalScrollBar().valueChanged.connect(self._follow_right)
+        self._right.horizontalScrollBar().valueChanged.connect(
+            self._follow_right_across
+        )
         session = host.session
         session.compare_finished.connect(self._on_finished)
         session.compare_failed.connect(self._on_failed)
         session.compare_stopped.connect(self._on_stopped)
+        session.succeeded.connect(self._on_format_succeeded)
+        session.problems_found.connect(self._on_format_problems)
+        session.failed.connect(self._on_format_failed)
         # A busy window or an XML or HTML Input greys Compare out. Each of
         # these changes when the window's own sync runs.
         for watched in (actions.format, actions.open_file, actions.copy_as_original):
@@ -184,13 +293,17 @@ class CompareMode(QObject):
         """Grey Compare out for XML or HTML Input, or while the window is busy.
 
         It stays on while Compare is on, so Compare can always be left.
+        Open Right Document… turns Compare on, so it follows Compare.
         """
-        action = self._host.actions.compare
+        actions = self._host.actions
         reason = "" if self.is_on() else self._host.format_reason()
         available = self.is_on() or (not reason and not self._host.busy())
-        if action.isEnabled() != available:
-            action.setEnabled(available)
-        set_not_available(action, reason)
+        for action in (actions.compare, actions.open_right_document):
+            if is_unbuilt(action):
+                continue
+            if action.isEnabled() != available:
+                action.setEnabled(available)
+            set_not_available(action, reason)
 
     # --- Entering and leaving ---------------------------------------------
 
@@ -267,6 +380,9 @@ class CompareMode(QObject):
         host = self._host
         QApplication.instance().removeEventFilter(self)
         self._close_size_box()
+        self._close_side_box()
+        self._reading = None
+        self._clear_drop_outline()
         self._cancel_job()
         self._clear_marks()
         self._right.set_problem_lines(set())
@@ -283,9 +399,11 @@ class CompareMode(QObject):
         left = host.left.editor
         left.setReadOnly(saved.left_read_only)
         left.setTextInteractionFlags(saved.left_flags)
+        # Opening into Left or Format may have made Left shorter.
+        end = max(0, left.document().characterCount() - 1)
         cursor = left.textCursor()
-        cursor.setPosition(saved.left_anchor)
-        cursor.setPosition(saved.left_position, cursor.MoveMode.KeepAnchor)
+        cursor.setPosition(min(saved.left_anchor, end))
+        cursor.setPosition(min(saved.left_position, end), cursor.MoveMode.KeepAnchor)
         left.setTextCursor(cursor)
         left.verticalScrollBar().setValue(saved.left_scroll)
         host.results.remove_tab(self._changes)
@@ -313,11 +431,22 @@ class CompareMode(QObject):
         """Compare Left with Right now. A running compare is dropped first."""
         if not self.is_on():
             return
+        host = self._host
+        left_text = host.left.editor.toPlainText()
+        right_text = self._right.toPlainText()
+        asked = (
+            left_text,
+            host.left.format_name(),
+            right_text,
+            host.right.format_name(),
+        )
+        if self._format is None and self.is_running() and asked == self._submitted:
+            # An open that changes the picker and the text asks twice.
+            return
         self._close_size_box()
         self._cancel_job()
         self._clear_marks()
-        left_text = self._host.left.editor.toPlainText()
-        right_text = self._right.toPlainText()
+        self._set_anchors([])
         if _is_blank(left_text) or _is_blank(right_text):
             self._show_empty()
             return
@@ -327,10 +456,20 @@ class CompareMode(QObject):
         self._submit(left_text, right_text)
 
     def cancel(self) -> bool:
-        """Stop the running compare, as Cancel and Esc do. False when idle."""
+        """Stop the running compare or Format, as Cancel and Esc do.
+
+        A canceled Format changes neither side and leaves the last result.
+        False when idle.
+        """
         if not self.is_running():
             return False
+        formatting = self._format is not None
         self._cancel_job()
+        if formatting:
+            if self._changes.state() is ChangesState.BUSY:
+                self._show_canceled()
+            self._host.status.set_state(self._host.format_canceled_text)
+            return True
         self._clear_marks()
         self._show_canceled()
         self._host.status.set_state(COMPARISON_CANCELED)
@@ -348,6 +487,12 @@ class CompareMode(QObject):
             self._show_stopped()
             return
         self._job_id = job_id
+        self._submitted = (
+            left_text,
+            host.left.format_name(),
+            right_text,
+            host.right.format_name(),
+        )
         # The last result's problems go with it.
         self._clear_problems()
         self._changes.show_busy()
@@ -359,11 +504,17 @@ class CompareMode(QObject):
         if not self.is_running():
             return
         status = self._host.status
+        if self._format is not None:
+            status.set_busy(Busy.SPINNER, cancel=True)
+            status.set_state(self._host.formatting_text)
+            return
         status.set_busy(Busy.SPINNER, COMPARING_ACCESSIBLE_NAME, cancel=True)
         status.set_state(COMPARING_MESSAGE)
 
     def _cancel_job(self) -> None:
-        """Drop the running compare quietly. The caller says what happened."""
+        """Drop the running compare or Format quietly. The caller says what
+        happened."""
+        self._format = None
         if self._job_id is None:
             return
         self._end_job()
@@ -371,6 +522,7 @@ class CompareMode(QObject):
 
     def _end_job(self) -> None:
         self._job_id = None
+        self._submitted = None
         self._reveal_timer.stop()
         self._host.status.set_busy(Busy.IDLE)
 
@@ -429,12 +581,18 @@ class CompareMode(QObject):
             else NO_DIFFERENCES_COUNT
         )
         host.status.set_counts(counts)
-        host.status.set_state("Ready")
+        # A file just opened, or Format, keeps its status.
+        if not self._kept_status or host.status.state_text() != self._kept_status:
+            host.status.set_state("Ready")
+        self._kept_status = ""
         host.status.announce(counts)
         self._mark(report)
+        self._set_anchors(report.anchor_pairs())
         first = self._changes.model().row_at(self._changes.list_view().current_row())
         if first is not None:
             self._show_row(first)
+        else:
+            self.link_scroll(host.left.editor)
 
     def _on_failed(self, job_id: int, failure: object) -> None:
         if job_id != self._job_id or not isinstance(failure, CompareFailure):
@@ -535,14 +693,22 @@ class CompareMode(QObject):
             editor.set_change_tints(side, ())
 
     def _show_row(self, row: object) -> None:
-        """Select a change's spans: Left, Right, or both. Focus stays put."""
+        """Select a change's spans: Left, Right, or both. Focus stays put.
+
+        Each side centers its own span, so Link Scrolling waits: a Moved
+        change can be far apart on the two sides.
+        """
         change = _first_change(row)
         if change is None:
             return
-        if change.left_span is not None:
-            self._host.left.editor.select_span(change.left_span)
-        if change.right_span is not None:
-            self._right.select_span(change.right_span)
+        self._linking = True
+        try:
+            if change.left_span is not None:
+                self._host.left.editor.select_span(change.left_span)
+            if change.right_span is not None:
+                self._right.select_span(change.right_span)
+        finally:
+            self._linking = False
 
     def _next_change(self) -> None:
         if self.is_on() and not self.is_running():
@@ -551,6 +717,336 @@ class CompareMode(QObject):
     def _previous_change(self) -> None:
         if self.is_on() and not self.is_running():
             self._changes.previous_change()
+
+    # --- Format -----------------------------------------------------------
+
+    def format(self) -> None:
+        """Format both sides, each as its own Format job, Left first.
+
+        Each side keeps its own format. Sort keys is ignored, and the indent
+        is the indent size picker's, in spaces for YAML. Format's own size
+        rules apply. Both results are held, then applied in one step: Left
+        as one undo step on Input, Right replaced. If either side has
+        errors, or changed meanwhile, neither changes. An empty Right is
+        skipped. The compare then runs once more.
+        """
+        if not self.is_on() or self._format is not None or self._size_box is not None:
+            return
+        host = self._host
+        sides: list[tuple[CompareSide, str, str]] = [
+            ("left", host.left.editor.toPlainText(), host.left.format_name()),
+            ("right", self._right.toPlainText(), host.right.format_name()),
+        ]
+        sides = [side for side in sides if not _is_blank(side[1])]
+        if not sides:
+            return
+        versions = dict(self._versions)
+        host.check_format_size(
+            [(text, source) for _side, text, source in sides],
+            lambda: self._start_format(sides, versions),
+        )
+
+    def _start_format(
+        self,
+        sides: list[tuple[CompareSide, str, str]],
+        versions: dict[CompareSide, int],
+    ) -> None:
+        if not self.is_on() or self._format is not None:
+            return
+        self._close_size_box()
+        self._cancel_job()
+        if self._host.session.active_job_id is not None:
+            return
+        self._format = _FormatRun(list(sides), versions)
+        self._reveal_timer.start(COMPARING_REVEAL_MS)
+        self._submit_format()
+
+    def _submit_format(self) -> None:
+        run = self._format
+        assert run is not None
+        side, text, source = run.sides.pop(0)
+        run.side = side
+        session = self._host.session
+        session.submit(
+            text,
+            source,
+            source,
+            sort_keys=False,
+            indent=indent_unit(self._host.indent_choice(), source),
+        )
+        job_id = session.active_job_id
+        if job_id is None:
+            self._format = None
+            self._end_job()
+            self._show_stopped()
+            return
+        self._job_id = job_id
+
+    def _on_format_succeeded(self, text: str) -> None:
+        run = self._format
+        if run is None or run.side is None:
+            return
+        if self._host.session.finished_job_id != self._job_id:
+            return
+        run.done[run.side] = text
+        if run.sides:
+            self._job_id = None
+            self._submit_format()
+            return
+        self._format = None
+        self._end_job()
+        self._apply_formatted(run)
+
+    def _apply_formatted(self, run: _FormatRun) -> None:
+        """Both sides in one step, or neither when a side changed meanwhile."""
+        host = self._host
+        if any(self._versions[side] != run.versions[side] for side in run.versions):
+            # The same stale-result rule as #170: drop both.
+            host.status.set_state("Ready")
+            return
+        left = host.left.editor
+        changed: list[CodeEditor] = []
+        for side, editor in (("left", left), ("right", self._right)):
+            text = run.done.get(side)
+            if text is None or text == editor.toPlainText():
+                continue
+            blocked = editor.blockSignals(True)
+            try:
+                if editor is left:
+                    _replace_as_one_undo(editor, text)
+                else:
+                    editor.setPlainText(text)
+            finally:
+                editor.blockSignals(blocked)
+            changed.append(editor)
+        for editor in changed:
+            editor.textChanged.emit()
+        status = FORMATTED_BOTH if "right" in run.done else FORMATTED_LEFT
+        host.status.set_state(status)
+        self._kept_status = status
+        self.run()
+
+    def _on_format_problems(self, problems: object) -> None:
+        run = self._format
+        if run is None or not isinstance(problems, tuple):
+            return
+        rows = tuple(item for item in problems if isinstance(item, DisplayProblem))
+        if not rows:
+            return
+        side = run.side
+        self._format = None
+        self._end_job()
+        host = self._host
+        self._clear_problems()
+        if side == "right":
+            self._show_right_problems(rows)
+        else:
+            host.apply_problems(rows)
+        host.results.tab_bar().setCurrentIndex(0)
+        host.status.set_state(FIX_ERRORS_TO_FORMAT)
+
+    def _on_format_failed(self, message: str) -> None:
+        if self._format is None:
+            return
+        if self._host.session.has_pending_job:
+            # The job waits out a reaped worker and still runs.
+            self._host.status.set_state(message)
+            return
+        self._format = None
+        self._end_job()
+        self._host.status.set_state(message)
+
+    def _bump_left(self) -> None:
+        self._versions["left"] += 1
+
+    def _bump_right(self) -> None:
+        self._versions["right"] += 1
+
+    # --- Opening ----------------------------------------------------------
+
+    def open_right_document(self) -> None:
+        """Choose a file for Right. Outside Compare, Compare turns on first."""
+        host = self._host
+        if not self._can_open():
+            return
+        if not self.is_on() and host.format_reason():
+            return
+        path = host.choose_path()
+        if path is None:
+            return
+        if not self.is_on():
+            host.actions.compare.setChecked(True)
+            if not self.is_on():
+                return
+        self._read(path, "right")
+
+    def open_file(self) -> None:
+        """File › Open… while comparing: choose a file, then a side."""
+        if not self.is_on() or not self._can_open():
+            return
+        path = self._host.choose_path()
+        if path is not None:
+            self._ask_side(path)
+
+    def open_recent(self, path: Path) -> None:
+        """An Open Recent file while comparing asks for a side."""
+        if self.is_on() and self._can_open():
+            self._ask_side(path)
+
+    def left_opened(self) -> None:
+        """Input took a file opened into Left: compare it."""
+        if not self.is_on():
+            return
+        self._kept_status = self._host.status.state_text()
+        self.run()
+
+    def _can_open(self) -> bool:
+        return not (self._host.busy() or self._side_box is not None or self._reading)
+
+    def _ask_side(self, path: Path, of_files: int = 1) -> None:
+        """Left, Right (the default) or Cancel (Esc)."""
+        box = QMessageBox(self._host.window)
+        box.setObjectName("compareOpenSide")
+        QWidget.setWindowTitle(box, "Galley")
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(open_side_text(path.name))
+        left = box.addButton(LEFT_TITLE, QMessageBox.ButtonRole.AcceptRole)
+        right = box.addButton(RIGHT_TITLE, QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(right)
+        box.setEscapeButton(cancel)
+        self._side_box = box
+
+        def _choose() -> None:
+            if self._side_box is not box:
+                return
+            clicked = box.clickedButton()
+            self._side_box = None
+            box.deleteLater()
+            if not self.is_on():
+                return
+            if clicked is left:
+                self._read(path, "left", of_files)
+            elif clicked is right:
+                self._read(path, "right", of_files)
+
+        box.finished.connect(_choose)
+        box.open()
+
+    def _close_side_box(self) -> None:
+        box = self._side_box
+        if box is None:
+            return
+        self._side_box = None
+        box.reject()
+        box.deleteLater()
+
+    def _read(self, path: Path, side: CompareSide, of_files: int = 1) -> None:
+        """Read ``path`` off the UI thread, then check it can be compared."""
+        self._open_job += 1
+        self._reading = (path, side, of_files)
+        self._reader.read(self._open_job, path)
+
+    def _on_file_read(self, job: int, result: object) -> None:
+        reading = self._reading
+        if job != self._open_job or reading is None:
+            return
+        self._reading = None
+        path, side, of_files = reading
+        if not self.is_on():
+            return
+        status = self._host.status
+        if isinstance(result, LoadError):
+            status.set_state(open_error_text(path.name, result), str(path))
+            return
+        if not isinstance(result, LoadedDocument):
+            return
+        refused = None if result.fmt is None else not_comparable(result.fmt)
+        if refused is not None:
+            status.set_state(refused, str(path))
+            return
+        if side == "left":
+            # The window's Open with the text read here: its replace prompt,
+            # one undo step, title and Recent. No second read.
+            self._host.open_left(path, result, of_files)
+            return
+        self._load_right(path, result, of_files)
+
+    def _load_right(self, path: Path, loaded: LoadedDocument, of_files: int) -> None:
+        host = self._host
+        self._right.setPlainText(loaded.text)
+        self._choose_right_format(loaded.fmt or _format_guess(loaded.text))
+        host.remember_recent(path)
+        status = opened_text(path.name, host.size_text(loaded.size))
+        if of_files > 1:
+            status = opened_first_text(of_files)
+        host.status.set_state(status, str(path))
+        self._kept_status = status
+        self.run()
+
+    # --- Link Scrolling ---------------------------------------------------
+
+    def link_scroll(self, source: CodeEditor) -> None:
+        """Scroll the other side so its matching line is level with
+        ``source``'s top line.
+
+        The report's line pairs match key paths. Between two pairs, and
+        before any result, lines are matched in proportion.
+        """
+        if (
+            self._linking
+            or not self.is_on()
+            or not self._host.actions.link_scrolling.isChecked()
+        ):
+            return
+        left = self._host.left.editor
+        if source is left:
+            target, mine, theirs = self._right, self._anchor_left, self._anchor_right
+        else:
+            target, mine, theirs = left, self._anchor_right, self._anchor_left
+        line = _map_line(
+            _top_line(source), mine, theirs, source.blockCount(), target.blockCount()
+        )
+        self._linking = True
+        try:
+            target.verticalScrollBar().setValue(_scroll_value(target, line))
+        finally:
+            self._linking = False
+
+    def _follow_left(self, _value: int) -> None:
+        self.link_scroll(self._host.left.editor)
+
+    def _follow_right(self, _value: int) -> None:
+        self.link_scroll(self._right)
+
+    def _follow_left_across(self, value: int) -> None:
+        self._link_across(self._right, value)
+
+    def _follow_right_across(self, value: int) -> None:
+        self._link_across(self._host.left.editor, value)
+
+    def _link_across(self, target: CodeEditor, value: int) -> None:
+        if (
+            self._linking
+            or not self.is_on()
+            or not self._host.actions.link_scrolling.isChecked()
+        ):
+            return
+        self._linking = True
+        try:
+            target.horizontalScrollBar().setValue(value)
+        finally:
+            self._linking = False
+
+    def _on_link_toggled(self, checked: bool) -> None:
+        if checked:
+            self.link_scroll(self._host.left.editor)
+
+    def _set_anchors(self, pairs: list[tuple[int, int]]) -> None:
+        self._anchor_left = [left for left, _right in pairs]
+        self._anchor_right = [right for _left, right in pairs]
 
     # --- Right ------------------------------------------------------------
 
@@ -594,6 +1090,30 @@ class CompareMode(QObject):
         if self.is_on() and not self._restoring:
             self.run()
 
+    def _build_placeholder(self) -> QWidget:
+        """Right's empty state: Bill's line and Open Right Document…."""
+        overlay = QWidget()
+        overlay.setObjectName("emptyRight")
+        overlay.setStyleSheet("background: transparent;")
+        heading = QLabel(RIGHT_PLACEHOLDER)
+        heading.setObjectName("rightEmptyTitle")
+        heading.setWordWrap(True)
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        style_empty_heading(heading)
+        open_right = self._host.actions.open_right_document
+        button = QPushButton(open_right.text())
+        button.setObjectName("openRightButton")
+        button.setStyleSheet(primary_button_style())
+        button.clicked.connect(open_right.trigger)
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        layout.addWidget(heading)
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._right.attach_overlay(overlay)
+        overlay.hide()
+        return overlay
+
     def _sync_right_footer(self) -> None:
         if not self.is_on():
             return
@@ -602,6 +1122,10 @@ class CompareMode(QObject):
         pane.count_label.setText(_line_label(self._right.blockCount()) if text else "")
         if pane.copy_button is not None:
             pane.copy_button.setEnabled(bool(text))
+        empty = _is_blank(text)
+        self._placeholder.setVisible(empty)
+        if empty:
+            self._right.place_overlay()
 
     def _share_toggles(self, first: FindBar, second: FindBar) -> None:
         """Right's Regex and Whole word follow the other bars', as theirs do."""
@@ -619,16 +1143,21 @@ class CompareMode(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """While comparing, Esc closes a find bar, then cancels the compare.
 
-        Idle, Esc goes on to the widget, so it never leaves Compare. Files
-        dropped on the window are refused until 3e opens them.
+        Idle, Esc goes on to the widget, so it never leaves Compare. A file
+        dropped on Left or Right loads that side; anywhere else in the
+        window it asks which side. Other drags are refused.
         """
         if not isinstance(watched, QWidget) or not _is_inside(
             watched, self._host.window
         ):
             return False
         kind = event.type()
+        if kind == QEvent.Type.DragLeave:
+            self._clear_drop_outline()
+            return False
         if kind in (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop):
-            event.ignore()
+            assert isinstance(event, QDropEvent)
+            self._take_drop(watched, event, dropped=kind == QEvent.Type.Drop)
             return True
         if (
             kind != QEvent.Type.KeyPress
@@ -644,6 +1173,90 @@ class CompareMode(QObject):
                 bar.close_bar()
                 return True
         return self.cancel()
+
+    def _take_drop(self, watched: QWidget, event: QDropEvent, *, dropped: bool) -> None:
+        """Follow a file drag, outlining the side it would load, or open it."""
+        files = dropped_files(event.mimeData())
+        if not files or not self._can_open():
+            self._clear_drop_outline()
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        side = self._side_under(watched)
+        if not dropped:
+            for pane, name in ((self._host.left, "left"), (self._host.right, "right")):
+                pane.set_drop_highlight(side == name)
+            return
+        self._clear_drop_outline()
+        if side is None:
+            self._ask_side(files[0], len(files))
+        else:
+            self._read(files[0], side, len(files))
+
+    def _side_under(self, widget: QWidget) -> CompareSide | None:
+        if _is_inside(widget, self._host.left):
+            return "left"
+        if _is_inside(widget, self._host.right):
+            return "right"
+        return None
+
+    def _clear_drop_outline(self) -> None:
+        for pane in (self._host.left, self._host.right):
+            pane.set_drop_highlight(False)
+
+
+def _replace_as_one_undo(editor: CodeEditor, text: str) -> None:
+    """Replace the whole document as a single undo step, as Open does."""
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    cursor.select(QTextCursor.SelectionType.Document)
+    cursor.insertText(text)
+    cursor.endEditBlock()
+    editor.setTextCursor(cursor)
+
+
+def _top_line(editor: CodeEditor) -> float:
+    """The 1-based line at the top of ``editor``, with a fraction for a
+    wrapped line part of the way down."""
+    value = editor.verticalScrollBar().value()
+    block = editor.document().findBlockByLineNumber(value)
+    if not block.isValid():
+        return float(editor.blockCount())
+    part = (value - block.firstLineNumber()) / max(1, block.lineCount())
+    return block.blockNumber() + 1 + min(max(part, 0.0), 1.0)
+
+
+def _scroll_value(editor: CodeEditor, line: float) -> int:
+    """The scroll value that puts 1-based ``line`` at the top of ``editor``."""
+    number = min(max(int(line), 1), editor.blockCount())
+    block = editor.document().findBlockByNumber(number - 1)
+    part = min(max(line - number, 0.0), 1.0)
+    return block.firstLineNumber() + int(part * max(1, block.lineCount()))
+
+
+def _map_line(
+    line: float, mine: list[int], theirs: list[int], my_count: int, their_count: int
+) -> float:
+    """The other side's line for ``line``, between the pairs around it.
+
+    The first lines and the last lines pair up too. With no pairs, lines
+    match by number.
+    """
+    if not mine:
+        return line
+    index = bisect_right(mine, line)
+    if index:
+        start = (float(mine[index - 1]), float(theirs[index - 1]))
+    else:
+        start = (1.0, 1.0)
+    if index < len(mine):
+        end = (float(mine[index]), float(theirs[index]))
+    else:
+        end = (float(max(my_count, mine[-1])), float(max(their_count, theirs[-1])))
+    if end[0] <= start[0]:
+        return start[1] + (line - start[0])
+    share = (line - start[0]) / (end[0] - start[0])
+    return start[1] + share * (end[1] - start[1])
 
 
 def _view_only(editor: CodeEditor) -> None:

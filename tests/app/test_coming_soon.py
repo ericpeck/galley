@@ -34,13 +34,11 @@ _RELEASE_FIX = (
 _NOT_YET_FIX = (
     "Build them or remove them from _not_yet_actions() in actions.py before tagging."
 )
-# Nothing is Not yet now. Tests of a non-empty Not yet list move Link
-# Scrolling off Coming soon and onto Not yet.
+# Both lists are empty since #65 slice 3e. Tests of a non-empty list put
+# Open Right Document… back on Coming soon and Link Scrolling on Not yet.
+_COMING_SOON_EXAMPLE = ("Open Right Document…",)
 _NOT_YET_EXAMPLE = "Link Scrolling"
 _NOT_YET_MENU_NAMES = (_NOT_YET_EXAMPLE,)
-_COMING_SOON_WITHOUT_EXAMPLE = tuple(
-    name for name in UNBUILT_ACTIONS if name != _NOT_YET_EXAMPLE
-)
 _RELEASE_WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release-macos.yml"
 )
@@ -171,11 +169,14 @@ def _not_yet_text(names: str) -> str:
     )
 
 
+def _example_coming_soon(monkeypatch) -> None:
+    """Put Open Right Document… back on the Coming soon list."""
+    monkeypatch.setattr("galley.app.actions.UNBUILT_ACTIONS", _COMING_SOON_EXAMPLE)
+
+
 def _example_not_yet(monkeypatch) -> None:
-    """Move Link Scrolling from Coming soon to Not yet."""
-    monkeypatch.setattr(
-        "galley.app.actions.UNBUILT_ACTIONS", _COMING_SOON_WITHOUT_EXAMPLE
-    )
+    """Coming soon has Open Right Document… and Not yet has Link Scrolling."""
+    _example_coming_soon(monkeypatch)
     monkeypatch.setattr(
         "galley.app.actions.ShellActions._not_yet_actions",
         lambda self: [self.link_scrolling],
@@ -229,11 +230,23 @@ def test_release_check_passes_when_both_lists_are_empty(monkeypatch, capsys) -> 
     assert captured.err == ""
 
 
+def test_release_check_passes_and_prints_nothing_as_shipped(capsys) -> None:
+    """#65 slice 3e emptied both lists, so the tag gate passes as is."""
+    assert UNBUILT_ACTIONS == ()
+    assert release_failure() is None
+    assert not_yet_failure() is None
+    assert main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_release_check_fails_when_only_coming_soon_remains(monkeypatch, capsys) -> None:
+    _example_coming_soon(monkeypatch)
     _clear_not_yet(monkeypatch)
     assert not_yet_failure() is None
     message = release_failure()
-    assert message == _release_text(", ".join(UNBUILT_ACTIONS))
+    assert message == _release_text(", ".join(_COMING_SOON_EXAMPLE))
     assert main() == 1
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -264,7 +277,7 @@ def test_release_check_fails_when_both_lists_remain(monkeypatch, qtbot, capsys) 
     window = _show(qtbot)
     coming = _menu_order(window)
     not_yet = _not_yet_menu_order(window)
-    assert coming == list(_COMING_SOON_WITHOUT_EXAMPLE)
+    assert coming == list(_COMING_SOON_EXAMPLE)
     assert not_yet == list(_NOT_YET_MENU_NAMES)
     assert coming
     assert not_yet
@@ -319,12 +332,13 @@ def test_tag_release_runs_the_unbuilt_action_check_after_copyright() -> None:
     assert "workflow_dispatch:" in workflow
 
 
-def test_unbuilt_actions_are_visible_disabled_and_marked(qtbot) -> None:
+def test_unbuilt_actions_are_visible_disabled_and_marked(monkeypatch, qtbot) -> None:
+    _example_coming_soon(monkeypatch)
     window = _show(qtbot)
     marked = [action for action in window.findChildren(QAction) if is_unbuilt(action)]
     assert marked
     names = [action.property("unbuiltName") for action in marked]
-    assert set(names) == set(UNBUILT_ACTIONS)
+    assert set(names) == set(_COMING_SOON_EXAMPLE)
     for action in marked:
         assert action.isVisible()
         assert not action.isEnabled()
@@ -493,9 +507,9 @@ def test_every_stub_action_is_covered_by_an_unbuilt_entry(qtbot) -> None:
     for action in actions._stub_actions():
         assert action.property("unbuiltName") == covered[id(action)]
         assert action.property("unbuiltName") in UNBUILT_ACTIONS
-    message = release_failure()
-    assert message == _release_text(", ".join(UNBUILT_ACTIONS))
-    assert message is not None
+    # 3e shipped the last two roadmap commands.
+    assert actions._stub_actions() == []
+    assert release_failure() is None
     not_yet = {id(action) for action in actions._not_yet_actions()}
     assert not not_yet
     assert not_yet.isdisjoint(covered)
@@ -524,11 +538,7 @@ def test_expand_and_collapse_all_shipped(qtbot) -> None:
         assert not is_unbuilt(action)
         assert id(action) not in stubs
         assert action.toolTip() != COMING_SOON
-    message = release_failure()
-    assert message is not None
-    assert "Expand" not in message
-    assert "Collapse" not in message
-    assert "Link Scrolling" in message
+    assert release_failure() is None
 
 
 def test_indent_and_outdent_shipped(qtbot) -> None:
@@ -544,13 +554,8 @@ def test_indent_and_outdent_shipped(qtbot) -> None:
         assert not is_unbuilt(action)
         assert id(action) not in pending
         assert action.toolTip() != COMING_SOON
-    coming = release_failure()
-    not_yet = not_yet_failure() or ""
-    assert coming is not None
-    assert not_yet == ""
-    for message in (coming, not_yet):
-        assert "Indent" not in message
-        assert "Outdent" not in message
+    assert release_failure() is None
+    assert not_yet_failure() is None
 
 
 def test_indent_size_picker_is_enabled_once_indent_ships(qtbot) -> None:
@@ -571,104 +576,74 @@ def test_indent_size_picker_is_enabled_once_indent_ships(qtbot) -> None:
 
 
 def test_release_check_lists_nothing_under_not_yet() -> None:
-    coming = release_failure()
-    assert coming is not None
+    assert release_failure() is None
     assert not_yet_failure() is None
-    assert "Output Options" not in coming
-    assert "Find and Replace" not in coming
 
 
 def test_release_check_no_longer_lists_preferences() -> None:
     """Release-check PR 2a removed Preferences instead of building it."""
     assert "Preferences" not in UNBUILT_ACTIONS
     assert "Preferences" not in _ACTION_ATTRS
-    coming = release_failure()
-    not_yet = not_yet_failure() or ""
-    assert coming is not None
-    assert not_yet == ""
-    assert "Preferences" not in coming
-    assert "Preferences" not in not_yet
+    assert release_failure() is None
+    assert not_yet_failure() is None
 
 
 def test_release_check_no_longer_lists_guides() -> None:
     """Release-check PR 2b removed Indent Guides instead of building them."""
     assert "Guides" not in UNBUILT_ACTIONS
     assert "Guides" not in _ACTION_ATTRS
-    coming = release_failure()
-    not_yet = not_yet_failure() or ""
-    assert coming is not None
-    assert not_yet == ""
-    assert "Guides" not in coming
-    assert "Guides" not in not_yet
+    assert release_failure() is None
+    assert not_yet_failure() is None
 
 
 def test_release_check_no_longer_lists_pop_out() -> None:
     """Release-check PR 2c removed Pop out instead of building it."""
     assert "Pop out" not in UNBUILT_ACTIONS
     assert "Pop out" not in _ACTION_ATTRS
-    coming = release_failure()
-    not_yet = not_yet_failure() or ""
-    assert coming is not None
-    assert not_yet == ""
-    for name in ("Pop out", "Show window", "Bring back"):
-        assert name not in coming
-        assert name not in not_yet
+    assert release_failure() is None
+    assert not_yet_failure() is None
 
 
 def test_release_check_no_longer_lists_tabs() -> None:
     """Release-check PR 2d removed Tabs instead of building them."""
     assert "Tabs" not in UNBUILT_ACTIONS
     assert "Tabs" not in _ACTION_ATTRS
-    coming = release_failure()
-    not_yet = not_yet_failure() or ""
-    assert coming is not None
-    assert not_yet == ""
-    for name in (
-        "Tabs",
-        "Rename",
-        "Duplicate",
-        "Close others",
-        "Close tabs to the right",
-        "New tab",
-    ):
-        assert name not in coming
-        assert name not in not_yet
+    assert release_failure() is None
+    assert not_yet_failure() is None
 
 
 # Menu order: File, then the View section after Previous Problem. Slice 3d
-# shipped Compare, Next Change and Previous Change; 3e ships the rest.
-_COMPARE_UNBUILT = (
+# shipped Compare, Next Change and Previous Change; 3e shipped the rest.
+_COMPARE_ITEMS = (
     "Open Right Document…",
+    "Compare",
+    "Next Change",
+    "Previous Change",
     "Link Scrolling",
 )
-_COMPARE_SHIPPED = ("Compare", "Next Change", "Previous Change")
 
 
-def test_compare_items_stay_unbuilt_until_they_ship(qtbot, capsys) -> None:
-    """#65 slice 3e's items stay on the release check until they ship.
+def test_every_compare_item_is_built_and_the_release_check_passes(
+    qtbot, capsys
+) -> None:
+    """#65 slice 3e shipped Open Right Document… and Link Scrolling.
 
-    Open Right Document… uses one U+2026 ellipsis. Neither has a shortcut.
-    Each one is disabled and says Coming soon. Compare, Next Change and
-    Previous Change (3d) are built: off the list, with their shortcuts,
-    while the stub map still names all five.
+    Open Right Document… uses one U+2026 ellipsis and has no shortcut. Link
+    Scrolling is checkable, on by default, with no shortcut. The stub map
+    still names all five, and the release check prints nothing.
     """
-    assert UNBUILT_ACTIONS == _COMPARE_UNBUILT
-    open_right = _COMPARE_UNBUILT[0]
-    assert open_right.endswith("\u2026")
-    assert not open_right.endswith("...")
-    for name in (*_COMPARE_UNBUILT, *_COMPARE_SHIPPED):
+    assert UNBUILT_ACTIONS == ()
+    for name in _COMPARE_ITEMS:
         assert name in _ACTION_ATTRS
 
     window = _show(qtbot)
     actions = window._actions
-    wired = {
+    built = {
         "Open Right Document…": actions.open_right_document,
-        "Link Scrolling": actions.link_scrolling,
-    }
-    shipped = {
         "Compare": actions.compare,
         "Next Change": actions.next_change,
         "Previous Change": actions.previous_change,
+        "Link Scrolling": actions.link_scrolling,
     }
     file_menu = _menu(window, "File")
     file_items = file_menu.actions()
@@ -688,54 +663,32 @@ def test_compare_items_stay_unbuilt_until_they_ship(qtbot, capsys) -> None:
         "Link Scrolling",
         "|",
     ]
-    section = view_items[previous + 2 : previous + 6]
-    assert section == [
-        actions.compare,
-        actions.next_change,
-        actions.previous_change,
-        actions.link_scrolling,
-    ]
-    assert view_items[previous + 1].isSeparator()
-    assert view_items[previous + 6].isSeparator()
 
-    assert actions.compare.isCheckable()
-    assert not actions.compare.isChecked()
-    for name, action in wired.items():
-        assert action.text() == name
-        assert action in actions._stub_actions()
-        assert action not in actions._not_yet_actions()
-        assert action.isVisible()
-        assert not action.isEnabled()
-        assert action.toolTip() == COMING_SOON
-        assert is_unbuilt(action)
-        assert action.property("unbuiltName") == name
-        assert action.menuRole() == QAction.MenuRole.NoRole
-        assert action.shortcut().isEmpty()
-        assert list(action.shortcuts()) == []
-        assert not action.isCheckable()
-    for name, action in shipped.items():
+    for name, action in built.items():
         assert action.text() == name
         assert action not in actions._stub_actions()
         assert action not in actions.stubs()
         assert action not in actions._not_yet_actions()
+        assert action.isVisible()
         assert action.toolTip() != COMING_SOON
         assert not is_unbuilt(action)
+        assert action.property("unbuiltName") is None
         assert action.menuRole() == QAction.MenuRole.NoRole
-        assert list(action.shortcuts())
-    # Compare is ready on an empty JSON window. Next and Previous Change
-    # wait for Compare mode.
-    assert actions.compare.isEnabled()
-    assert not actions.next_change.isEnabled()
-    assert not actions.previous_change.isEnabled()
-    assert actions.open_right_document.text()[-1] == "\u2026"
-    assert "..." not in actions.open_right_document.text()
+    open_right = actions.open_right_document
+    assert open_right.text().endswith("\u2026")
+    assert "..." not in open_right.text()
+    assert open_right.isEnabled()
+    assert list(open_right.shortcuts()) == []
+    assert not open_right.isCheckable()
+    link = actions.link_scrolling
+    assert link.isEnabled()
+    assert link.isCheckable()
+    assert link.isChecked()
+    assert list(link.shortcuts()) == []
 
-    message = release_failure()
-    assert message == _release_text("Open Right Document…, Link Scrolling")
+    assert release_failure() is None
     assert not_yet_failure() is None
-    assert main() == 1
+    assert main() == 0
     captured = capsys.readouterr()
+    assert captured.out == ""
     assert captured.err == ""
-    assert captured.out == message + "\n"
-    for name in _COMPARE_SHIPPED:
-        assert name not in captured.out

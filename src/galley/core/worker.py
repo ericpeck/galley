@@ -588,7 +588,7 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
         ("right", job.right_text, job.right_format),
     )
     for side, _text, source in sides:
-        refused = _not_comparable(source)
+        refused = not_comparable(source)
         if refused is not None:
             return CompareFailureEvent(job.job_id, side, refused)
     docs = []
@@ -640,10 +640,11 @@ def _reformatted(text: str, source: str) -> tuple[str, Doc]:
     return shown, Doc(loaded[0], "json", _json_spans(shown))
 
 
-def _not_comparable(source: str) -> str | None:
+def not_comparable(source: str) -> str | None:
     """Why a ``source`` document can't be compared, or None when it can.
 
-    An unknown name is None here. Loading that side reports it.
+    An unknown name is None here. Loading that side reports it. Compare
+    also refuses to open such a file with these words.
     """
     try:
         fmt = format_named(source)

@@ -565,8 +565,10 @@ def test_keyboard_reaches_and_opens_a_recent_file(qtbot, tmp_path) -> None:
 
     file_menu.popup(window.mapToGlobal(QPoint(20, 20)))
     qtbot.waitExposed(file_menu)
-    qtbot.keyClick(file_menu, Qt.Key.Key_Down)
-    qtbot.keyClick(file_menu, Qt.Key.Key_Down)
+    # Open file…, Open Right Document… (enabled since #65 slice 3e), then
+    # Open Recent.
+    for _ in range(3):
+        qtbot.keyClick(file_menu, Qt.Key.Key_Down)
     assert file_menu.activeAction() is recent.menuAction()
     qtbot.keyClick(file_menu, Qt.Key.Key_Right)
     qtbot.waitExposed(recent)

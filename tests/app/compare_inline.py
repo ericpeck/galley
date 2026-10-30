@@ -1,9 +1,12 @@
-"""An in-process compare behind ``ParseSession``'s compare signals.
+"""An in-process compare and format behind ``ParseSession``'s signals.
 
 ``inline_compare`` replaces ``ParseSession.submit_compare`` so a window test
 runs the compare without the spawn worker. Results arrive on the next
 event-loop turn through the session's own handlers, Cancel is the session's
 own, and ``stop`` reports a worker that exited mid-compare.
+
+``inline_format`` does the same for ``ParseSession.submit``, the Format job
+that Format in Compare sends once for each side.
 """
 
 from collections.abc import Iterator
@@ -12,8 +15,17 @@ from dataclasses import dataclass, field
 import pytest
 from PySide6.QtCore import QTimer
 
-from galley.app.parse_session import ParseSession, _CompareActive
-from galley.core.worker import CompareEvent, CompareJob, run_compare
+from galley.app.parse_session import ParseSession, _Active, _CompareActive
+from galley.core.format import DEFAULT_INDENT
+from galley.core.worker import (
+    CompareEvent,
+    CompareJob,
+    FailureEvent,
+    FormatJob,
+    SuccessEvent,
+    _execute,
+    run_compare,
+)
 
 
 @dataclass
@@ -82,4 +94,73 @@ def inline_compare(monkeypatch) -> Iterator[_Inline]:
         return job.job_id
 
     monkeypatch.setattr(ParseSession, "submit_compare", _submit)
+    yield inline
+
+
+@dataclass
+class _InlineFormat:
+    """Format jobs the window sent, delivered on the next event-loop turn.
+
+    ``hold`` keeps jobs running until :meth:`release` or a Cancel.
+    """
+
+    hold: bool = False
+    sent: list[FormatJob] = field(default_factory=list)
+    session: ParseSession | None = None
+
+    def deliver(self, session: ParseSession, job: FormatJob) -> None:
+        events: list[object] = []
+
+        class _Queue:
+            def put(self, event: object) -> None:
+                events.append(event)
+
+        _execute(job, _Queue())  # type: ignore[arg-type]
+        for event in events:
+            if isinstance(event, SuccessEvent):
+                session._handle_success(event)
+            elif isinstance(event, FailureEvent):
+                session._handle_failure(event)
+
+    def release(self) -> None:
+        assert self.session is not None
+        self.deliver(self.session, self.sent[-1])
+
+
+@pytest.fixture
+def inline_format(monkeypatch) -> Iterator[_InlineFormat]:
+    inline = _InlineFormat()
+
+    def _submit(
+        self: ParseSession,
+        text: str,
+        source: str,
+        target: str,
+        *,
+        sort_keys: bool = False,
+        minify: bool = False,
+        validate: bool = False,
+        indent: str = DEFAULT_INDENT,
+        **_ignored: object,
+    ) -> None:
+        if self._shut_down or self._active is not None:
+            return
+        self._job_ids += 1
+        job = FormatJob(
+            job_id=self._job_ids,
+            text=text,
+            source=source,
+            target=target,
+            sort_keys=sort_keys,
+            minify=minify,
+            validate=validate,
+            indent=indent,
+        )
+        self._active = _Active(job.job_id, None)
+        inline.session = self
+        inline.sent.append(job)
+        if not inline.hold:
+            QTimer.singleShot(0, lambda: inline.deliver(self, job))
+
+    monkeypatch.setattr(ParseSession, "submit", _submit)
     yield inline

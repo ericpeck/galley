@@ -62,10 +62,7 @@ OUTDENT_TOOLTIP = "Outdent lines ({keys})"
 
 # Menu order: menu bar, then the toolbar.
 # Delete a name here to ship that command. Do not keep a second list.
-UNBUILT_ACTIONS: tuple[str, ...] = (
-    "Open Right Document…",
-    "Link Scrolling",
-)
+UNBUILT_ACTIONS: tuple[str, ...] = ()
 
 # ShellActions attributes for each roadmap name. Shipping a command does
 # not edit this map; it only deletes the name from UNBUILT_ACTIONS.
@@ -456,7 +453,8 @@ class ShellActions:
             "Open file…",
             standard=QKeySequence.StandardKey.Open,
         )
-        # File › Open Right Document… (#65 slice 3e). No shortcut until it ships.
+        # File › Open Right Document… loads Compare's Right side (#65 slice
+        # 3e). No shortcut.
         self.open_right_document = _action(
             parent,
             "Open Right Document…",
@@ -574,7 +572,7 @@ class ShellActions:
         self.previous_problem = _action(parent, "Previous Problem")
         self.previous_problem.setShortcuts(list(PREVIOUS_PROBLEM))
         # View section for Compare (#65). Next and Previous Change wait for
-        # Compare mode.
+        # Compare mode. Link Scrolling is on until it is turned off.
         self.compare = _action(
             parent,
             "Compare",
@@ -599,6 +597,8 @@ class ShellActions:
         self.link_scrolling = _action(
             parent,
             "Link Scrolling",
+            checkable=True,
+            checked=True,
             role=QAction.MenuRole.NoRole,
         )
         self.appearance_system = _action(parent, "System", checkable=True, checked=True)
@@ -682,10 +682,7 @@ class ShellActions:
 
     def _stub_actions(self) -> list[QAction]:
         """Roadmap commands. Each one belongs to an :data:`UNBUILT_ACTIONS` entry."""
-        return [
-            self.open_right_document,
-            self.link_scrolling,
-        ]
+        return []
 
     def _not_yet_actions(self) -> list[QAction]:
         """Unfinished commands that are not on the Coming soon roadmap.
