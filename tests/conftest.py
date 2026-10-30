@@ -1,12 +1,20 @@
 """Pytest defaults for Galley. Tests always run without a display."""
 
+import functools
+import gc
 import os
+import sys
+import weakref
+from collections.abc import Generator, Iterable, Iterator
 from pathlib import Path
 
 import pytest
 from tests.perf import Budget, budget_for, current_mode
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+# tests/test_leak_guard.py runs the leak guard in pytester's inner sessions.
+pytest_plugins = ["pytester"]
 
 # DejaVu Sans Mono 2.37, regular, from the official release (#145). Its
 # license is LICENSE-DejaVu.txt in the same folder.
@@ -51,6 +59,125 @@ def _qt_tests_use_the_code_test_font(request: pytest.FixtureRequest) -> None:
     """
     if {"qapp", "qtbot"} & set(request.fixturenames):
         request.getfixturevalue("code_test_font")
+
+
+_MAIN_WINDOW_MODULE = "galley.app.main_window"
+_SETUP_OR_CALL_FAILED = pytest.StashKey[bool]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Note a failed setup or call, so the leak guard doesn't add a second
+    failure. A failed test's traceback still holds its window.
+    """
+    del call
+    report = yield
+    if report.when in ("setup", "call") and not report.passed:
+        item.stash[_SETUP_OR_CALL_FAILED] = True
+    return report
+
+
+@pytest.fixture(autouse=True)
+def _no_main_window_outlives_its_test(
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
+    """Fail a test that leaves a MainWindow alive after it ends.
+
+    A lambda connected to a long-lived signal kept every closed window
+    alive in #172, and the app tests ran 3x slower before anyone noticed.
+
+    The guard is off until ``galley.app.main_window`` is imported, so core
+    tests never load Qt for it. Otherwise it counts the windows this test
+    makes by wrapping ``MainWindow.__init__``, and does nothing more when
+    the test made none. Tests that run pytester are skipped: their inner
+    sessions run their own guard.
+    """
+    module = sys.modules.get(_MAIN_WINDOW_MODULE)
+    if module is None or "pytester" in request.fixturenames:
+        yield
+        return
+    window_class = module.MainWindow
+    original_init = vars(window_class)["__init__"]
+    made = weakref.WeakSet()
+    made_any = False
+
+    @functools.wraps(original_init)
+    def _counted_init(self, *args, **kwargs) -> None:
+        nonlocal made_any
+        original_init(self, *args, **kwargs)
+        made.add(self)
+        made_any = True
+
+    window_class.__init__ = _counted_init
+    try:
+        yield
+    finally:
+        window_class.__init__ = original_init
+    if made_any:
+        _fail_on_leftover_windows(request, made)
+
+
+def _fail_on_leftover_windows(
+    request: pytest.FixtureRequest, made: weakref.WeakSet
+) -> None:
+    """Close and delete this test's windows, then fail if any is still alive.
+
+    pytest-qt closes and deletes the widgets registered with
+    ``qtbot.addWidget`` in its teardown hook, before any fixture teardown,
+    so this runs after it. A closed window is hidden, and only visible
+    windows are closed here, so none is closed twice.
+
+    Nothing else is deleted here, so a window held through a parentless
+    widget's connection still counts. Compare's Right editor was one in
+    #172.
+    """
+    from PySide6.QtWidgets import QApplication
+    from shiboken6 import isValid
+
+    # In a helper, so no local name here still holds a window at the
+    # gc.collect() below.
+    _close_and_delete(window for window in list(made) if isValid(window))
+    QApplication.processEvents()
+    # pytest keeps fixture values in funcargs until after every teardown,
+    # and a fixture that returns a window would keep it alive here. The
+    # fixtures that made them are already torn down.
+    funcargs = getattr(request.node, "funcargs", None)
+    if funcargs:
+        funcargs.clear()
+    check = not request.node.stash.get(_SETUP_OR_CALL_FAILED, False) and (
+        request.node.get_closest_marker("allow_window_leak") is None
+    )
+    if check and made:
+        gc.collect()
+    leftover = len(made) if check else 0
+    if leftover:
+        noun, it = ("MainWindow", "it") if leftover == 1 else ("MainWindows", "them")
+        pytest.fail(
+            f"{request.node.nodeid} left {leftover} {noun} alive after it "
+            f"ended. Something still refers to {it}, such as a module-level "
+            "name or a lambda connected to a signal that outlives the window.",
+            pytrace=False,
+        )
+
+
+def _close_and_delete(windows: Iterable) -> None:
+    """Close each window if it is visible, then delete it now.
+
+    Only these windows' deleteLater() calls run. Running every pending one also
+    deleted widgets that earlier tests left behind, and macOS CI crashed in
+    the gc.collect() after it (#174). Outside a running event loop,
+    processEvents() alone leaves deleteLater() queued.
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    for window in windows:
+        if window.isVisible():
+            window.close()
+        window.deleteLater()
+        QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
 
 
 @pytest.fixture

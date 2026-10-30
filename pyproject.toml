@@ -79,4 +79,5 @@ enable_assertion_pass_hook = true
 markers = [
     "perf: wall-clock budget; deselected by default, run with -m perf (tests/perf.py)",
     "nightly_budget: budget asserted only under GALLEY_PERF_MODE=strict (nightly on main); prints the timing otherwise",
+    "allow_window_leak: a known MainWindow leak; the leak guard in tests/conftest.py still closes the windows but doesn't fail the test",
 ]
