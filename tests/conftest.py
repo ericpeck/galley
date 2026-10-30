@@ -5,7 +5,7 @@ import gc
 import os
 import sys
 import weakref
-from collections.abc import Generator, Iterable, Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 import pytest
@@ -128,12 +128,18 @@ def _fail_on_leftover_windows(
     ``qtbot.addWidget`` in its teardown hook, before any fixture teardown,
     so this runs after it. A closed window is hidden, and only visible
     windows are closed here, so none is closed twice.
+
+    Nothing else is deleted here, so a window held through a parentless
+    widget's connection still counts. Compare's Right editor was one in
+    #172.
     """
     from PySide6.QtWidgets import QApplication
     from shiboken6 import isValid
 
-    _close_and_delete(window for window in list(made) if isValid(window))
-    _run_deferred_deletes()
+    for window in list(made):
+        if isValid(window):
+            _close_and_delete(window)
+    QApplication.processEvents()
     # pytest keeps fixture values in funcargs until after every teardown,
     # and a fixture that returns a window would keep it alive here. The
     # fixtures that made them are already torn down.
@@ -146,15 +152,6 @@ def _fail_on_leftover_windows(
     if check and made:
         gc.collect()
     leftover = len(made) if check else 0
-    # Every other top-level window goes after the count, so a window held
-    # by a parentless widget's connection still counts. Compare's Right
-    # editor was one in #172.
-    _close_and_delete(
-        widget
-        for widget in QApplication.topLevelWidgets()
-        if widget.parentWidget() is None
-    )
-    _run_deferred_deletes()
     if leftover:
         noun, it = ("MainWindow", "it") if leftover == 1 else ("MainWindows", "them")
         pytest.fail(
@@ -165,22 +162,21 @@ def _fail_on_leftover_windows(
         )
 
 
-def _close_and_delete(windows: Iterable) -> None:
-    for window in windows:
-        if window.isVisible():
-            window.close()
-        window.deleteLater()
+def _close_and_delete(window) -> None:
+    """Close the window if it is visible, then delete it now.
 
-
-def _run_deferred_deletes() -> None:
-    """Run pending deleteLater() calls now. Outside a running event loop,
-    processEvents() alone leaves them queued.
+    Only this window's deleteLater() runs. Running every pending one also
+    deleted widgets that earlier tests left behind, and macOS CI crashed in
+    the gc.collect() after it (#174). Outside a running event loop,
+    processEvents() alone leaves deleteLater() queued.
     """
     from PySide6.QtCore import QEvent
     from PySide6.QtWidgets import QApplication
 
-    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    QApplication.processEvents()
+    if window.isVisible():
+        window.close()
+    window.deleteLater()
+    QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
 
 
 @pytest.fixture

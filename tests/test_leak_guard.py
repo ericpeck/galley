@@ -21,6 +21,7 @@ import sys
 import weakref
 
 import pytest
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from galley.app.main import create_main_window
@@ -68,10 +69,23 @@ def test_kept_by_a_lambda_on_an_app_signal(app_slots):
     app_slots.append(weakref.ref(slot))
 
 
-def test_kept_by_a_lambda_on_a_parentless_widget():
+@pytest.fixture(scope="module")
+def strays():
+    """Delete at the end of the module, after the guard has counted. The
+    guard deletes only MainWindows, so nothing else deletes them.
+    """
+    widgets = []
+    yield widgets
+    for widget in widgets:
+        widget.deleteLater()
+        QApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete.value)
+
+
+def test_kept_by_a_lambda_on_a_parentless_widget(strays):
     window = create_main_window()
     window.stray = QWidget()
     window.stray.objectNameChanged.connect(lambda *_: window)
+    strays.append(window.stray)
 
 
 @pytest.mark.allow_window_leak
