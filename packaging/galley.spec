@@ -24,7 +24,9 @@ from galley import __version__
 BUNDLE_IDENTIFIER = "com.ericmercurypeck.galley"
 
 # Floor is the highest minos any bundled binary records (12.0 with
-# PySide6 6.9.3) rounded up to the oldest macOS CI launches on (14.0).
+# PySide6 6.9.3) raised to 14.0, the oldest macOS the app was last tested
+# on in CI (macos-14, until GitHub retired that runner on 2026-11-02). CI
+# now runs on macOS 15, so 14.0 is supported but no longer tested in CI.
 # PySide6 6.10+ bindings record the build SDK as minos, so do not bump
 # PySide6 without re-checking those binaries.
 MINIMUM_MACOS = "14.0"
