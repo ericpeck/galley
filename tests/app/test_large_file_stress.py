@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 from tests.perf import time_runs
+from tests.text_compare import assert_same_text
 
 from galley.app.editor import CHANGE_MARKERS, CodeEditor, LineMarker
 from galley.app.limits import MARKUP_FORMAT_LIMIT_BYTES
@@ -111,7 +112,7 @@ def test_generated_fixture_is_deterministic_json() -> None:
         first = _build(size)
         second = _build(size)
         other = _build(size, seed=FIXTURE_SEED + 1)
-        assert first == second
+        assert_same_text(first, second)
         assert first != other
         assert len(first.encode("utf-8")) == size
         assert first.startswith("{\n")
@@ -130,7 +131,7 @@ def test_generated_fixture_is_deterministic_json() -> None:
         assert marker_at > len(first) * 9 // 10
         assert parsed["tail"]["marker"] == _NEEDLE
         rendered = json.dumps(parsed, indent=2, ensure_ascii=False) + "\n"
-        assert first == rendered
+        assert_same_text(first, rendered)
         _DOCUMENTS[label] = first
 
 

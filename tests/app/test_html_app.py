@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
 from PySide6.QtGui import QAction, QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QToolButton
+from tests.text_compare import assert_same_text
 
 from galley.app.actions import ShellActions
 from galley.app.editor import CodeEditor
@@ -314,7 +315,7 @@ def test_format_refuses_markup_over_two_megabytes(qtbot, fmt: str) -> None:
     assert not window._formatting
     assert window.findChild(QMessageBox, "sizeWarning") is None
     assert output.toPlainText() == "kept\n"
-    assert source.editor.toPlainText() == text
+    assert_same_text(source.editor.toPlainText(), text)
 
 
 def _at_the_limit() -> str:

@@ -12,6 +12,7 @@ import random
 
 import pytest
 from PySide6.QtGui import QAction, QTextCursor, QTextOption
+from tests.text_compare import assert_same_text
 
 import galley.app.editor as editor_module
 from galley.app.editor import (
@@ -164,7 +165,7 @@ def test_deleting_the_long_line_brings_dots_and_colors_back(qtbot) -> None:
     editor.setPlainText(pretty + one_line + "\n" + pretty)
     _assert_both_limited(editor)
     long_block = editor.document().findBlockByNumber(pretty.count("\n"))
-    assert long_block.text() == one_line
+    assert_same_text(long_block.text(), one_line)
 
     # Select the line's text and delete it. The block stays, empty.
     cursor = QTextCursor(long_block)
@@ -183,11 +184,11 @@ def test_deleting_the_long_line_brings_dots_and_colors_back(qtbot) -> None:
     cursor.movePosition(
         QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.KeepAnchor
     )
-    assert cursor.selectedText().rstrip(" ") == one_line
+    assert_same_text(cursor.selectedText().rstrip(" "), one_line)
     cursor.removeSelectedText()
 
     _assert_full_display(editor)
-    assert editor.toPlainText() == pretty + pretty
+    assert_same_text(editor.toPlainText(), pretty + pretty)
     assert editor.longest_line_chars() == _true_longest(editor)
     qtbot.waitUntil(lambda: _first_block_is_colored(editor))
 

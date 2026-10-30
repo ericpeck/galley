@@ -1,12 +1,15 @@
 """Regex and Whole word: the engine the find worker runs."""
 
+import queue
 import re
+from types import SimpleNamespace
 
 import pytest
 
 from galley.core.find import astral_offsets, utf16_offsets
 from galley.core.regex_find import (
     FindJob,
+    FindReady,
     Found,
     PatternError,
     PatternFailed,
@@ -15,6 +18,8 @@ from galley.core.regex_find import (
     ReplacedOne,
     ReplacementFailed,
     ReplaceOneJob,
+    StoreText,
+    TextStored,
     compile_pattern,
     expand,
     find_spans,
@@ -24,6 +29,7 @@ from galley.core.regex_find import (
     pattern_source,
     replace_spans,
     replacement_at,
+    run_find_worker,
     run_job,
 )
 
@@ -278,3 +284,24 @@ def test_replace_one_returns_that_matchs_replacement() -> None:
         end=8,
     )
     assert run_job(job, "ab@ cde@") == ReplacedOne(1, "<cde>")
+
+
+def test_the_worker_reports_its_own_time_with_each_answer(monkeypatch) -> None:
+    """From reading the job to sending the answer, plus decoding new text."""
+    # What the worker's clock reads, in seconds: text read, text decoded, job
+    # read, job done, second job read, second job done, None read.
+    ticks = iter([1.0, 1.01, 1.05, 1.08, 2.0, 2.002, 3.0])
+    clock = SimpleNamespace(perf_counter=lambda: next(ticks))
+    monkeypatch.setattr("galley.core.regex_find.time", clock)
+    jobs: queue.Queue[object] = queue.Queue()
+    events: queue.Queue[object] = queue.Queue()
+    jobs.put(StoreText(1, b"qty qty"))
+    jobs.put(_job(query="q"))
+    jobs.put(_job(job_id=2, query="t"))
+    jobs.put(None)
+    run_find_worker(jobs, events)
+    sent = [events.get_nowait() for _ in range(events.qsize())]
+    assert [type(event) for event in sent] == [FindReady, TextStored, Found, Found]
+    assert sent[2].elapsed_ms == pytest.approx(10 + 30)
+    assert sent[3].elapsed_ms == pytest.approx(2)
+    assert list(sent[3].starts) == [1, 5]

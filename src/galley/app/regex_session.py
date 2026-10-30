@@ -6,12 +6,22 @@ owner (a find bar) has at most one job waiting: a new one replaces it. If
 the owner's job is running, its result is then dropped, because it answers
 an old query.
 
-A job that runs past :attr:`RegexSession.limit_ms` is killed with its
-process. ``timed_out`` reports it, unless a newer job was already waiting.
-The poll never joins. A replacement starts once the killed child has
-exited, or after :data:`REAP_DEADLINE_MS` if it has not. The clock starts
-when a job is sent to a worker that is up, so starting a cold worker does
-not count against a job.
+The worker times each job itself and sends ``elapsed_ms`` with the answer.
+An answer that took :attr:`RegexSession.limit_ms` or more is dropped and
+``timed_out`` reports it, so a Replace All the bar says timed out never
+changes the document. The worker's clock decides, so a pause in this
+process before it reads an answer changes nothing.
+
+A job with no answer after the limit plus a grace of
+``max(min_grace_ms, limit_ms / 2)`` is killed with its process, and
+``timed_out`` reports it. Either way a job that a newer one had already
+replaced is dropped quietly. The poll never joins. A replacement starts
+once the killed child has exited, or after :data:`REAP_DEADLINE_MS` if it
+has not. The watchdog's clock starts when a job is sent to a worker that is
+up, so starting a cold worker does not count against a job.
+
+:meth:`RegexSession.shutdown` kills each child, closes its pipes, and joins
+it for up to :data:`SHUTDOWN_JOIN_S`.
 
 The ``re`` engine runs only in the child. This module does not compile user
 patterns.
@@ -40,8 +50,13 @@ from galley.core.regex_find import (
     run_find_worker,
 )
 
-# How long one Regex or Whole word job may run before its process is killed.
+# How long one Regex or Whole word job may take, by the worker's own clock.
 SEARCH_LIMIT_MS = 2000
+# The least the watchdog waits past the limit for an answer before it kills
+# the worker. It waits half the limit when that is longer.
+MIN_GRACE_MS = 1000
+# How long shutdown waits for each killed child to exit.
+SHUTDOWN_JOIN_S = 5.0
 _POLL_MS = 10
 
 
@@ -58,16 +73,21 @@ class RegexSession(QObject):
 
     # Job id, then the worker's event for it.
     finished = Signal(int, object)
-    # Job id of a job killed at the limit.
+    # Job id of a job that took the whole limit or sent no answer in time.
     timed_out = Signal(int)
     # Version of the text the worker now holds.
     text_stored = Signal(int)
 
     def __init__(
-        self, parent: QObject | None = None, *, limit_ms: int = SEARCH_LIMIT_MS
+        self,
+        parent: QObject | None = None,
+        *,
+        limit_ms: int = SEARCH_LIMIT_MS,
+        min_grace_ms: int = MIN_GRACE_MS,
     ) -> None:
         super().__init__(parent)
         self.limit_ms = limit_ms
+        self.min_grace_ms = min_grace_ms
         self._ctx = multiprocessing.get_context("spawn")
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
@@ -90,6 +110,11 @@ class RegexSession(QObject):
     @property
     def process(self) -> BaseProcess | None:
         return self._resource.process if self._resource is not None else None
+
+    @property
+    def watchdog_ms(self) -> float:
+        """How long a job may go without an answer before it is killed."""
+        return self.limit_ms + max(self.min_grace_ms, self.limit_ms / 2)
 
     def is_ready(self) -> bool:
         """The worker is up and has said so."""
@@ -136,7 +161,7 @@ class RegexSession(QObject):
         self.start()
         if self._resource is None or not self._ready:
             return
-        self._send(StoreText(version, text))
+        self._send(StoreText(version, _encoded(text)))
         self._held_version = version
 
     def drop(self, owner: object = None) -> None:
@@ -146,7 +171,7 @@ class RegexSession(QObject):
             self._running_stale = True
 
     def shutdown(self) -> None:
-        """Kill every child and wait briefly for each to exit."""
+        """Kill every child, close its pipes, and wait briefly for it to exit."""
         if self._shut_down:
             return
         self._shut_down = True
@@ -154,10 +179,10 @@ class RegexSession(QObject):
         self._pending.clear()
         self._running = None
         if self._resource is not None:
-            self._resource.close()
+            _close_worker(self._resource)
             self._resource = None
         for killed in self._killed:
-            killed.resource.close()
+            _close_worker(killed.resource)
         self._killed.clear()
 
     # Internals ----------------------------------------------------------
@@ -193,7 +218,7 @@ class RegexSession(QObject):
         owner = next(iter(self._pending))
         job, text = self._pending.pop(owner)
         if self._held_version != job.version:
-            self._send(StoreText(job.version, text))
+            self._send(StoreText(job.version, _encoded(text)))
             self._held_version = job.version
         self._send(job)
         self._running = job
@@ -249,15 +274,20 @@ class RegexSession(QObject):
         stale = self._running_stale
         self._running = None
         self._running_stale = False
-        if not stale:
+        if not stale and getattr(event, "elapsed_ms", 0.0) < self.limit_ms:
             self.finished.emit(job_id, event)
+        elif not stale:
+            # The worker took the whole limit by its own clock. Its answer is
+            # dropped. The worker is idle again, so it stays.
+            self.timed_out.emit(job_id)
         self._flush()
 
     def _check_limit(self) -> None:
+        """The watchdog: kill a job that has sent no answer in time."""
         running = self._running
         if running is None:
             return
-        if (time.monotonic() - self._sent_s) * 1000 < self.limit_ms:
+        if (time.monotonic() - self._sent_s) * 1000 < self.watchdog_ms:
             return
         stale = self._running_stale
         self._running = None
@@ -313,3 +343,29 @@ class RegexSession(QObject):
         _release_without_join(resource)
         if running is not None and not stale:
             self.timed_out.emit(running.job_id)
+
+
+def _close_worker(resource: _RunningWorker) -> None:
+    """Kill the child, close its pipes, then join it for a bounded time.
+
+    The pipes close first, so a feeder thread still writing a document to
+    the child cannot keep them open.
+    """
+    if resource.closed:
+        return
+    resource.closed = True
+    process = resource.process
+    if process.exitcode is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    resource.drop_queues()
+    process.join(timeout=SHUTDOWN_JOIN_S)
+    if resource in _LIVE_WORKERS:
+        _LIVE_WORKERS.remove(resource)
+
+
+def _encoded(text: str) -> bytes:
+    """The text as UTF-8. A lone surrogate from Qt goes through as it is."""
+    return text.encode("utf-8", "surrogatepass")
