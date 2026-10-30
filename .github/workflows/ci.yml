@@ -39,7 +39,7 @@ jobs:
 
   test-macos:
     name: Test (macOS arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -140,11 +140,11 @@ jobs:
         include:
           - name: perf
             # Same runner as Test (macOS arm64), so budgets compare like for like.
-            os: macos-14
+            os: macos-15
           - name: perf (Windows)
             os: windows-latest
     runs-on: ${{ matrix.os }}
-    # Measured on a84365a: 46 s on macos-14 (19 s of tests). The Windows leg
+    # Measured on a84365a, on macos-14: 46 s (19 s of tests). The Windows leg
     # is longer; 15 minutes is well past both.
     timeout-minutes: 15
     steps:
