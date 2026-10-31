@@ -199,6 +199,15 @@ class _Saved:
     counts_text: str
 
 
+@dataclass(frozen=True)
+class _RunStart:
+    """Each side's caret, and the focused side, when a compare started."""
+
+    left_position: int
+    right_position: int
+    right_had_focus: bool
+
+
 class CompareMode(QObject):
     """Turns Compare on and off and runs each compare."""
 
@@ -232,6 +241,8 @@ class CompareMode(QObject):
         self._job_id: int | None = None
         # The texts and formats of the running compare.
         self._submitted: tuple[str, str, str, str] | None = None
+        # Where a Cancel puts the carets and the focus back.
+        self._run_start: _RunStart | None = None
         self._format: _FormatRun | None = None
         self._size_box: QMessageBox | None = None
         self._side_box: QMessageBox | None = None
@@ -472,6 +483,7 @@ class CompareMode(QObject):
         if _is_blank(left_text) or _is_blank(right_text):
             self._show_empty()
             return
+        self._run_start = self._take_run_start()
         if compare_needs_size_warning(left_text, right_text):
             self._ask_size(left_text, right_text)
             return
@@ -495,7 +507,43 @@ class CompareMode(QObject):
         self._clear_marks()
         self._show_canceled()
         self._host.status.set_state(COMPARISON_CANCELED)
+        self._put_back_run_start()
         return True
+
+    def _take_run_start(self) -> _RunStart:
+        left = self._host.left.editor
+        focused = QApplication.focusWidget()
+        return _RunStart(
+            left_position=left.textCursor().position(),
+            right_position=self._right.textCursor().position(),
+            right_had_focus=focused is not None
+            and (focused is self._right or self._right.isAncestorOf(focused)),
+        )
+
+    def _put_back_run_start(self) -> None:
+        """Drop the last result's selection and give the focus back.
+
+        Each caret goes back where it was when the compare started, without
+        a selection, and neither view scrolls. Focus goes to the side that
+        had it, or to Left.
+        """
+        start = self._run_start
+        self._run_start = None
+        if start is None:
+            return
+        left = self._host.left.editor
+        # Link Scrolling waits, so neither side moves the other.
+        self._linking = True
+        try:
+            for editor, position in (
+                (left, start.left_position),
+                (self._right, start.right_position),
+            ):
+                _place_caret(editor, position)
+        finally:
+            self._linking = False
+        focus = self._right if start.right_had_focus else left
+        focus.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _submit(self, left_text: str, right_text: str) -> None:
         host = self._host
@@ -1226,6 +1274,18 @@ class CompareMode(QObject):
     def _clear_drop_outline(self) -> None:
         for pane in (self._host.left, self._host.right):
             pane.set_drop_highlight(False)
+
+
+def _place_caret(editor: CodeEditor, position: int) -> None:
+    """Put ``editor``'s caret at ``position`` with no selection and no scroll."""
+    bars = (editor.verticalScrollBar(), editor.horizontalScrollBar())
+    values = [bar.value() for bar in bars]
+    cursor = editor.textCursor()
+    end = max(0, editor.document().characterCount() - 1)
+    cursor.setPosition(min(position, end))
+    editor.setTextCursor(cursor)
+    for bar, value in zip(bars, values, strict=True):
+        bar.setValue(value)
 
 
 def _replace_as_one_undo(editor: CodeEditor, text: str) -> None:

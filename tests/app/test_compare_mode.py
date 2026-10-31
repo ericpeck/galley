@@ -184,6 +184,10 @@ def _focus(qtbot, widget: QWidget) -> None:
     qtbot.waitUntil(widget.hasFocus, timeout=_WAIT_MS)
 
 
+def _scroll(editor: CodeEditor) -> tuple[int, int]:
+    return editor.verticalScrollBar().value(), editor.horizontalScrollBar().value()
+
+
 def _press_escape(qtbot, widget: QWidget) -> None:
     qtbot.keyClick(widget, Qt.Key.Key_Escape)
 
@@ -682,6 +686,47 @@ def test_a_canceled_compare_runs_again_on_the_next_paste(qtbot, inline_compare) 
     inline_compare.hold = False
     _paste_right(window, _ONE_CHANGE)
     qtbot.waitUntil(lambda: _changes(window).count() == 1, timeout=_WAIT_MS)
+
+
+def test_a_canceled_compare_clears_the_highlight_and_gives_focus_back(
+    qtbot, inline_compare
+) -> None:
+    """The last result's selected change goes; carets, view and focus stay."""
+    window = _show(qtbot)
+    _compare(qtbot, window)
+    left, right = _left(window), _right(window)
+    # The first change is selected on both sides when a result arrives.
+    assert left.textCursor().hasSelection()
+    assert right.textCursor().hasSelection()
+    _focus(qtbot, right)
+    carets = [left.textCursor().position(), right.textCursor().position()]
+    scrolls = [_scroll(left), _scroll(right)]
+    inline_compare.hold = True
+    window._compare.run()
+    cancel = window.findChild(QPushButton, "cancelButton")
+    assert isinstance(cancel, QPushButton)
+    qtbot.waitUntil(cancel.isVisible, timeout=_WAIT_MS)
+    qtbot.mouseClick(cancel, Qt.MouseButton.LeftButton)
+    assert _changes(window).state() == ChangesState.CANCELED
+    assert _status_state(window) == COMPARISON_CANCELED
+    assert not left.textCursor().hasSelection()
+    assert not right.textCursor().hasSelection()
+    assert [left.textCursor().position(), right.textCursor().position()] == carets
+    assert [_scroll(left), _scroll(right)] == scrolls
+    qtbot.waitUntil(right.hasFocus, timeout=_WAIT_MS)
+
+
+def test_a_canceled_compare_falls_back_to_left_focus(qtbot, inline_compare) -> None:
+    """Focus outside both panes when the compare starts goes back to Left."""
+    window = _show(qtbot)
+    _compare(qtbot, window)
+    _focus(qtbot, _changes(window).list_view())
+    inline_compare.hold = True
+    window._compare.run()
+    assert window._compare.cancel()
+    assert not _left(window).textCursor().hasSelection()
+    assert not _right(window).textCursor().hasSelection()
+    qtbot.waitUntil(_left(window).hasFocus, timeout=_WAIT_MS)
 
 
 def test_a_stopped_worker_offers_compare_again(qtbot, inline_compare) -> None:
