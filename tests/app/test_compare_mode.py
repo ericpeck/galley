@@ -775,8 +775,8 @@ def test_over_2_mb_asks_first_and_cancel_starts_no_job(qtbot, inline_compare) ->
         == SIZE_WARNING_DETAIL
         == (
             "Large files can take several seconds, and the window may pause for a few "
-            "seconds while the results appear. Press Cancel at any point while it's "
-            "comparing to stop."
+            "seconds while the results appear. Press Cancel while it's comparing to "
+            "stop."
         )
     )
     assert sorted(button.text() for button in box.buttons()) == [

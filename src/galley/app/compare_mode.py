@@ -85,8 +85,7 @@ SIZE_WARNING_TEXT = "Comparing this much data may take a while."
 # The sheet's body, Bill's v1 wording, from the 5, 8 and 16 MB timings.
 SIZE_WARNING_DETAIL = (
     "Large files can take several seconds, and the window may pause for a few "
-    "seconds while the results appear. Press Cancel at any point while it's "
-    "comparing to stop."
+    "seconds while the results appear. Press Cancel while it's comparing to stop."
 )
 COMPARE_ANYWAY = "Compare anyway"
 # "Comparing…" and Cancel wait as long as Format's spinner (ADR 0001).
