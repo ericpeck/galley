@@ -4,10 +4,11 @@ Budgets (Isaac, PR gate at 3x): the diff of two 1 MB documents with about
 10% of keys changed, a reordered 10k array, the aligned ~5,000-item case,
 each 0.5 s or less, and an F7 jump on a 1 MB diff, 0.05 s or less.
 
-The ~5 MB and ~8 MB tests have no budget. They print medians for the diff,
-the report and the time until the panes and the Changes pane are usable,
-plus the longest gap of a 16 ms UI-thread timer during the compare. At
-8 MB, Cancel must stop the compare within about 1 s.
+The ~5 MB, ~8 MB and ~16 MB tests have no budget. They print medians for
+the diff, the report and the time until the panes and the Changes pane are
+usable, plus the longest gap of a 16 ms UI-thread timer during the compare.
+The 16 MB case decides whether Compare needs a size cap for v1 (Erik's rule,
+#152). At 8 MB, Cancel must stop the compare within about 1 s.
 
 Link Scrolling (3e): the median time its handler takes per scroll step
 with 1 MB on each side. It is marked ``nightly_budget``: the budget is
@@ -276,7 +277,16 @@ class _TickGaps:
 
 
 @pytest.mark.perf
-@pytest.mark.parametrize("megabytes", [5, 8])
+@pytest.mark.parametrize(
+    "megabytes",
+    [
+        5,
+        8,
+        # About twice the 8 MB case's run time, which nears pytest-timeout's
+        # 120 s default on a slow runner. Still under faulthandler's 300 s.
+        pytest.param(16, marks=pytest.mark.timeout(240)),
+    ],
+)
 def test_large_compares_are_timed(qtbot, megabytes: int) -> None:
     left_text, right_text, changed = _pair(megabytes * 1_000_000)
     label = f"{_mb(left_text):.1f} MB per side, {changed:,} keys changed"
