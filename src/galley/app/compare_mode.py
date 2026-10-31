@@ -201,7 +201,7 @@ class CompareMode(QObject):
         super().__init__(host.window)
         self._host = host
         actions = host.actions
-        self._hold = ActionHold(host.held_actions, host.held_widgets)
+        self._hold = ActionHold(host.held_actions, host.held_widgets, parent=self)
         self._changes = ChangesPane()
         self._changes.activated.connect(self._show_row)
         self._changes.escape_pressed.connect(self._focus_side)

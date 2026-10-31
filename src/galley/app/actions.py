@@ -231,10 +231,18 @@ class ActionHold:
     sync that turns one on leaves it off, and the reason comes back if a
     sync sets another tooltip. A held widget is turned off again the same
     way, such as the Format button, which the window enables itself.
+
+    ``parent`` owns the group and the widget guard, so Qt deletes them with
+    it. Left to Python's gc, their Qt destructors could run mid-collection
+    while Qt still used them.
     """
 
     def __init__(
-        self, actions: Iterable[QAction], widgets: Iterable[QWidget] = ()
+        self,
+        actions: Iterable[QAction],
+        widgets: Iterable[QWidget] = (),
+        *,
+        parent: QObject,
     ) -> None:
         self._actions = tuple(actions)
         self._widgets = tuple(widgets)
@@ -242,7 +250,8 @@ class ActionHold:
         self._saved: list[tuple[bool, str, str, object]] = []
         self._saved_widgets: list[tuple[bool, str, str]] = []
         self._watchers: list[tuple[QAction, partial[None]]] = []
-        self._guard = _WidgetGuard()
+        self._parent = parent
+        self._guard = _WidgetGuard(parent)
 
     def is_held(self) -> bool:
         return self._group is not None
@@ -270,7 +279,7 @@ class ActionHold:
             (widget.isEnabled(), widget.toolTip(), widget.accessibleDescription())
             for widget in self._widgets
         ]
-        group = QActionGroup(None)
+        group = QActionGroup(self._parent)
         group.setExclusive(False)
         self._group = group
         for action in self._actions:
