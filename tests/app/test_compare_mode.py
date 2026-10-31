@@ -911,7 +911,7 @@ def test_action_hold_saves_and_restores_each_state(qtbot) -> None:
     reasoned = QAction("Reasoned", owner)
     reasoned.setEnabled(False)
     set_not_available(reasoned, "Not available for XML")
-    hold = ActionHold([on, off, tipped, reasoned])
+    hold = ActionHold([on, off, tipped, reasoned], parent=owner)
     hold.set_held(True)
     for action in (on, off, tipped, reasoned):
         assert not action.isEnabled()
