@@ -95,6 +95,8 @@ class RegexSession(QObject):
         self._resource: _RunningWorker | None = None
         self._ready = False
         self._held_version: int | None = None
+        # Versions sent with StoreText whose TextStored hasn't been read.
+        self._storing: set[int] = set()
         self._running: FindJob | None = None
         self._running_owner: object = None
         self._running_stale = False
@@ -163,6 +165,7 @@ class RegexSession(QObject):
             return
         self._send(StoreText(version, _encoded(text)))
         self._held_version = version
+        self._storing.add(version)
 
     def drop(self, owner: object = None) -> None:
         """Forget ``owner``'s waiting job, and the result of its running one."""
@@ -202,6 +205,7 @@ class RegexSession(QObject):
         _arm_exit_cleanup()
         self._ready = False
         self._held_version = None
+        self._storing.clear()
 
     def _send(self, item: object) -> None:
         assert self._resource is not None
@@ -220,6 +224,7 @@ class RegexSession(QObject):
         if self._held_version != job.version:
             self._send(StoreText(job.version, _encoded(text)))
             self._held_version = job.version
+            self._storing.add(job.version)
         self._send(job)
         self._running = job
         self._running_owner = owner
@@ -239,10 +244,13 @@ class RegexSession(QObject):
             self._timer.stop()
 
     def _idle(self) -> bool:
+        # A TextStored still on its way counts as work: on a slow runner it
+        # can come after the next poll, and nothing would read it.
         return (
             self._ready
             and self._running is None
             and not self._pending
+            and not self._storing
             and not self._killed
         )
 
@@ -262,6 +270,7 @@ class RegexSession(QObject):
                 self._ready = True
                 self._flush()
             elif isinstance(event, TextStored):
+                self._storing.discard(event.version)
                 self.text_stored.emit(event.version)
             else:
                 self._finish(event)
@@ -303,6 +312,7 @@ class RegexSession(QObject):
         self._resource = None
         self._ready = False
         self._held_version = None
+        self._storing.clear()
         process = resource.process
         self.killed_process = process
         if process.exitcode is None:
@@ -340,6 +350,7 @@ class RegexSession(QObject):
         self._resource = None
         self._ready = False
         self._held_version = None
+        self._storing.clear()
         _release_without_join(resource)
         if running is not None and not stale:
             self.timed_out.emit(running.job_id)
