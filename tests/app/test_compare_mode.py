@@ -930,6 +930,45 @@ def test_action_hold_saves_and_restores_each_state(qtbot) -> None:
     assert reasoned.toolTip() == "Not available for XML"
 
 
+def test_compare_owns_its_action_hold_group_and_guard(qtbot, inline_compare) -> None:
+    """Compare is the parent of the held actions' group and the widget guard.
+
+    Without a parent they were left to Python's gc, which could run their Qt
+    destructors mid-collection while the group still held the actions and
+    the guard still watched the widgets.
+    """
+    window = _show(qtbot)
+    compare = window._compare
+    hold = compare._hold
+    _compare(qtbot, window)
+    assert hold.is_held()
+    parents = {"group": hold._group.parent(), "guard": hold._guard.parent()}
+    assert parents == {"group": compare, "guard": compare}
+
+
+def test_a_held_group_and_guard_outlive_their_action_hold(qtbot) -> None:
+    """Dropping the hold leaves its group and guard to its parent, at work."""
+    owner = QWidget()
+    qtbot.addWidget(owner)
+    action = QAction("On", owner)
+    picker = QWidget(owner)
+    hold = ActionHold([action], [picker], parent=owner)
+    hold.set_held(True)
+    refs = {"group": weakref.ref(hold._group), "guard": weakref.ref(hold._guard)}
+    del hold
+    gc.collect()
+    alive = {
+        name: (made := ref()) is not None and shiboken6.isValid(made)
+        for name, ref in refs.items()
+    }
+    assert alive == {"group": True, "guard": True}
+    action.setEnabled(True)
+    picker.setEnabled(True)
+    assert not action.isEnabled()
+    assert not picker.isEnabled()
+    assert picker.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
+
+
 # --- Layout ----------------------------------------------------------------
 
 
