@@ -207,7 +207,7 @@ class CompareMode(QObject):
         super().__init__(host.window)
         self._host = host
         actions = host.actions
-        self._hold = ActionHold(host.held_actions, host.held_widgets)
+        self._hold = ActionHold(host.held_actions, host.held_widgets, parent=self)
         self._changes = ChangesPane()
         self._changes.activated.connect(self._show_row)
         self._changes.escape_pressed.connect(self._focus_side)
@@ -289,6 +289,14 @@ class CompareMode(QObject):
             watched.changed.connect(self.sync_action)
         host.left.format_changed.connect(self.sync_action)
         self.sync_action()
+        # The host holds the window and the window holds this object, so
+        # let go of the host when Qt deletes this object. Refcounts then
+        # free both, and gc never runs their Qt destructors (#176). A bound
+        # method on this object's own destroyed signal is never called.
+        self.destroyed.connect(lambda *_args: self._forget_host())
+
+    def _forget_host(self) -> None:
+        del self._host
 
     # --- State ------------------------------------------------------------
 

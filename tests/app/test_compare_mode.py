@@ -920,7 +920,7 @@ def test_action_hold_saves_and_restores_each_state(qtbot) -> None:
     reasoned = QAction("Reasoned", owner)
     reasoned.setEnabled(False)
     set_not_available(reasoned, "Not available for XML")
-    hold = ActionHold([on, off, tipped, reasoned])
+    hold = ActionHold([on, off, tipped, reasoned], parent=owner)
     hold.set_held(True)
     for action in (on, off, tipped, reasoned):
         assert not action.isEnabled()
@@ -937,6 +937,45 @@ def test_action_hold_saves_and_restores_each_state(qtbot) -> None:
     assert not reasoned.isEnabled()
     assert not_available_reason(reasoned) == "Not available for XML"
     assert reasoned.toolTip() == "Not available for XML"
+
+
+def test_compare_owns_its_action_hold_group_and_guard(qtbot, inline_compare) -> None:
+    """Compare is the parent of the held actions' group and the widget guard.
+
+    Without a parent they were left to Python's gc, which could run their Qt
+    destructors mid-collection while the group still held the actions and
+    the guard still watched the widgets.
+    """
+    window = _show(qtbot)
+    compare = window._compare
+    hold = compare._hold
+    _compare(qtbot, window)
+    assert hold.is_held()
+    parents = {"group": hold._group.parent(), "guard": hold._guard.parent()}
+    assert parents == {"group": compare, "guard": compare}
+
+
+def test_a_held_group_and_guard_outlive_their_action_hold(qtbot) -> None:
+    """Dropping the hold leaves its group and guard to its parent, at work."""
+    owner = QWidget()
+    qtbot.addWidget(owner)
+    action = QAction("On", owner)
+    picker = QWidget(owner)
+    hold = ActionHold([action], [picker], parent=owner)
+    hold.set_held(True)
+    refs = {"group": weakref.ref(hold._group), "guard": weakref.ref(hold._guard)}
+    del hold
+    gc.collect()
+    alive = {
+        name: (made := ref()) is not None and shiboken6.isValid(made)
+        for name, ref in refs.items()
+    }
+    assert alive == {"group": True, "guard": True}
+    action.setEnabled(True)
+    picker.setEnabled(True)
+    assert not action.isEnabled()
+    assert not picker.isEnabled()
+    assert picker.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
 
 
 # --- Layout ----------------------------------------------------------------
@@ -1186,6 +1225,43 @@ def test_a_window_that_never_compares_deletes_its_compare_widgets(qtbot) -> None
     assert _alive() == []
     gc.collect()
     assert _alive() == []
+
+
+def _alive_without_gc(make_window) -> list[str]:
+    """Make a window, close and delete it, and name what is still alive.
+
+    Python's gc is off throughout, so only refcounts free anything. Compare
+    kept its host and the host kept the window, so before the fix only
+    gc freed them, running Qt destructors mid-collection like #176's crash.
+    """
+    gc.collect()
+    gc.disable()
+    try:
+        window = make_window()
+        refs = {
+            "MainWindow": weakref.ref(window),
+            "CompareMode": weakref.ref(window._compare),
+        }
+        window.close()
+        window.deleteLater()
+        QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
+        del window
+        return [name for name, ref in refs.items() if ref() is not None]
+    finally:
+        gc.enable()
+
+
+def test_a_deleted_window_and_its_compare_go_without_gc(qtbot) -> None:
+    assert _alive_without_gc(lambda: _show(qtbot)) == []
+
+
+def test_a_deleted_window_that_compared_goes_without_gc(qtbot, inline_compare) -> None:
+    def _compared():
+        window = _show(qtbot)
+        _compare(qtbot, window)
+        return window
+
+    assert _alive_without_gc(_compared) == []
 
 
 def test_compare_widgets_stay_hidden_and_out_of_tab_until_compare(qtbot) -> None:
