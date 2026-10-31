@@ -1,24 +1,31 @@
 # Galley
 
-Galley is a desktop app for formatting, validating, and converting JSON and YAML. Paste text or open a file, and Galley gives you clean output, plain-language errors that point at the exact line, and a Convert from Python that never runs your code. It's built with Qt 6 and PySide6, with a print-inspired design.
+Galley is a desktop app for formatting, validating, and converting JSON and YAML, and for formatting XML and HTML. Paste text or open a file, and Galley gives you clean output, plain-language errors that point at the exact line, and a Convert from Python that never runs your code. It's built with Qt 6 and PySide6, with a print-inspired design.
 
 ![Galley converting minified JSON into YAML, in light mode](docs/images/json-to-yaml-light.png)
 
-> **Work in progress.** Galley is still being built and hasn't had a release yet. The features below work today. [In the works](#in-the-works) lists what's being built right now.
+> **Work in progress.** Galley is still being built and hasn't had a release yet. The features below work today. [In the works](#in-the-works) lists what's next.
 
 ## What it does
 
 - **Format and convert.** Pick the Input format and the Output format, then press Format. JSON to JSON, YAML to YAML, JSON to YAML and YAML to JSON all work. Input is never changed, and each result lands in Output as one undo step.
+- **XML and HTML.** Format also takes XML and HTML. XML formats to XML and HTML to HTML; neither converts to JSON or YAML. Format refuses XML or HTML over 2 MB. The XML parser reads no external DTD or entity, and nothing is ever fetched.
+- **Sort keys.** Turn on Sort keys, and the next Format writes object keys A–Z at every level, with "· keys sorted A–Z" in the status bar. Input is never changed, and Galley remembers the setting between launches.
 - **Minify JSON.** Press Minify to write Input's JSON to Output with no spaces or line breaks. Key order is kept, and Input is never changed.
-- **Validate.** Press Validate to check Input for errors. Problems lists each one, and Output is never changed.
-- **Indent size, Indent and Outdent.** Pick 2 spaces, 4 spaces or Tab, and Format writes that indent from the next Format on. YAML always indents with spaces. Indent and Outdent (⌘] and ⌘[) shift the selected lines in either pane, and Tab and Shift+Tab do the same for a selection over several lines. The Options link under Output shows the indent size and Sort keys too, with Reset to defaults.
+- **Validate.** Press Validate to check JSON, YAML or XML in Input for errors. Problems lists each one, and Output is never changed. Validate isn't available for HTML, and a good HTML Format says "Formatted HTML".
+- **Indent size, Indent and Outdent.** Pick 2 spaces, 4 spaces or Tab, and Format writes that indent from the next Format on. YAML always indents with spaces. Indent and Outdent (⌘] and ⌘[) shift the selected lines in either pane, and Tab and Shift+Tab do the same for a selection over several lines. Otherwise Tab types spaces up to the next indent stop, or a tab character when the indent size is Tab (never in YAML). The Options link under Output shows the indent size and Sort keys too, with Reset to defaults.
 - **Point at the problem.** Errors open the Problems pane, with one row per error and a marker in the gutter on the line to fix. The messages are plain sentences, such as "Remove the repeated key "status" on line 5." Repeated JSON keys are reported as errors, where most parsers silently keep only the last value.
+- **Every JSON error at once.** For JSON, the Problems pane lists every error in the document, not just the first. Next Problem and Previous Problem (F8 and Shift+F8) step through them.
+- **Find and replace.** Find… opens a find bar over Input or Output, with a match count, Previous and Next that wrap around, and Match case. On Output, Keys only matches object keys and skips values. Find and Replace… adds a replace row to Input's bar, with Replace and Replace All, and Replace All is one undo step. Regex and Whole word work on both bars, and a regex replacement can put in `$1` to `$9`.
+- **Compare two documents.** View › Compare puts two JSON or YAML documents side by side as Left and Right. The Changes pane lists every added, removed, changed and moved value, Next Change and Previous Change step through them, and Link Scrolling keeps matching lines level. Fill Right by pasting or with File › Open Right Document…. Compare doesn't take XML or HTML.
+- **Copy As, with masking.** Edit › Copy As, also in Output's right-click menu, copies Output as Original, as Masked with sensitive values shown as `•••`, or as Random fake with made-up values in their place. Sensitive values are found by key name (password, token, email and so on) and by value (emails and phone numbers). Copy As works on JSON and YAML.
 - **Fold big documents.** Collapse objects and arrays in Output from the gutter, the View menu, or the keyboard. A folded line shows a summary such as `{ … }, 3 keys`. Collapse all and Expand all work across the whole document, and copying always gives the full text.
-- **Convert from Python.** Paste a Python literal (a dict or list with `True`, `None`, tuples and so on) and get JSON or YAML. Galley reads it with Python's `ast` module. It never runs the text.
+- **Convert from Python.** Paste a Python literal (a dict or list with `True`, `None`, tuples and so on) and get JSON or YAML. Galley reads it with Python's `ast` module. It never runs the text. Input over 1 MB when Output is JSON, or over 192 KB when it's YAML, is refused so the window stays responsive.
 - **Escape and unescape strings.** Turn a document into one escaped JSON string, or turn an escaped string back into formatted JSON or YAML.
+- **Open files three ways.** Use File › Open file…, pick one of the ten most recent files from File › Open Recent, or drop a file on the window. Files up to 100 MB open.
 - **Stay responsive on large files.** Formatting runs in a separate process. A spinner and a progress bar appear for long jobs, and Cancel stops the job right away and puts the previous result back. Very long single lines turn off whitespace dots and syntax colors so typing stays fast.
 - **Light, Dark, or System.** View › Appearance follows macOS or stays fixed. Every color is tested for contrast in both modes, and color is never the only cue.
-- **The small things.** Open files up to 100 MB, Show Whitespace, Word Wrap, bigger and smaller text, and Stack Panes to put Input above Output.
+- **The small things.** Show Whitespace, Word Wrap, a font of your choice from View › Font, bigger and smaller text, and Stack Panes to put Input above Output.
 
 | | |
 |---|---|
@@ -35,11 +42,15 @@ Galley is a desktop app for formatting, validating, and converting JSON and YAML
 |---|---|---|
 | Format | ⌘↵ | Ctrl+Enter |
 | Open file | ⌘O | Ctrl+O |
+| Find | ⌘F | Ctrl+F |
+| Find Next / Find Previous | ⌘G / ⇧⌘G | F3 / Shift+F3 |
 | Find and Replace | ⌥⌘F | Ctrl+H |
 | Regex / Whole word (in the find bar) | ⌥⌘R / ⌥⌘W | Alt+R / Alt+W |
 | Show Problems | ⇧⌘M | Ctrl+Shift+M |
+| Next Problem / Previous Problem | ⌘' / ⇧⌘' (also F8 / ⇧F8) | F8 / Shift+F8 |
 | Compare | ⇧⌘D | Ctrl+Shift+D |
 | Next Change / Previous Change | ⌥⌘↓ / ⌥⌘↑ (also F7 / ⇧F7) | F7 / Shift+F7 |
+| Indent / Outdent | ⌘] / ⌘[ | Ctrl+] / Ctrl+[ |
 | Fold / Unfold | ⌥⌘[ / ⌥⌘] | Ctrl+Shift+[ / Ctrl+Shift+] |
 | Collapse all / Expand all | ⌘K ⌘0 / ⌘K ⌘J | Ctrl+K, Ctrl+0 / Ctrl+K, Ctrl+J |
 | Escape as String | ⇧⌘E | Ctrl+Shift+E |
@@ -53,21 +64,15 @@ No shortcut uses Ctrl+Alt on Windows, because AltGr acts as Ctrl+Alt there and w
 
 ## In the works
 
-These features are being built now, and most are already in review. They aren't in the app yet.
+The rest of the UI audit is approved and not in the app yet ([#91](https://github.com/ericpeck/galley/issues/91)):
 
-- **Find bar.** Search Input or Output, with match counts, wrap-around, and a "Keys only" option that matches object keys and skips values. Find and Replace adds a replace row to Input's bar, with Replace and Replace All. Regex and Whole word work on both bars, and a regex replacement can put in `$1` to `$9` ([#52](https://github.com/ericpeck/galley/issues/52), [#62](https://github.com/ericpeck/galley/issues/62)).
-- **Sort keys.** Sort object keys alphabetically in the output. Input never changes ([#59](https://github.com/ericpeck/galley/issues/59)).
-- **Every JSON error at once.** The Problems pane lists every error in the document, not just the first, with F8 and Shift+F8 to step through them ([#78](https://github.com/ericpeck/galley/issues/78)).
-- **Open Recent.** The ten most recent files, from the File menu ([#85](https://github.com/ericpeck/galley/issues/85)).
-- **Drag and drop to open.** Drop a file on the window to open it ([#86](https://github.com/ericpeck/galley/issues/86)).
-- **Copy As and masking.** Copy Output as the original, with sensitive values masked as `•••`, or with random fake values. Sensitive values are found by key name (password, token, email and so on) and by value (emails, phone numbers). A View menu toggle to mask Output itself comes next ([#66](https://github.com/ericpeck/galley/issues/66)).
-- **Compare two documents.** Put two JSON or YAML documents side by side and list every added, removed, changed and moved value ([#65](https://github.com/ericpeck/galley/issues/65)).
-- **HTML and XML.** Format HTML and XML documents, with a locked-down parser that never fetches anything ([#63](https://github.com/ericpeck/galley/issues/63)).
-- **Interface fixes from the UI audit.** The Tab key types spaces, the pane headers fit narrow windows, a large Convert from Python is refused instead of freezing the window, and Output is marked Stale after Input changes ([#91](https://github.com/ericpeck/galley/issues/91)).
+- Output is marked Stale after Input changes, until the next Format or Convert.
+- The direction label, such as JSON → YAML, follows the result on screen, not the pickers.
+- A Convert from Python error gets a Problems row and a gutter marker, like other errors.
 
 ## Planned
 
-Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain. Not started yet:
+Menu items and toolbar buttons that aren't built yet are disabled and say "Coming soon", so nothing pretends to work. Galley won't be released while any remain, and none do today. Not started yet:
 
 - Windows builds
 
