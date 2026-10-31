@@ -17,7 +17,7 @@ import weakref
 
 import pytest
 import shiboken6
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -976,6 +976,20 @@ def test_a_held_group_and_guard_outlive_their_action_hold(qtbot) -> None:
     assert not action.isEnabled()
     assert not picker.isEnabled()
     assert picker.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
+
+
+def test_holding_after_the_parent_is_gone_raises_and_changes_nothing() -> None:
+    """A clear RuntimeError, not an assert that ``python -O`` strips."""
+    owner = QObject()
+    action = QAction("On")
+    hold = ActionHold([action], parent=owner)
+    del owner
+    gc.collect()
+    with pytest.raises(RuntimeError, match="parent was deleted"):
+        hold.set_held(True)
+    assert not hold.is_held()
+    assert action.isEnabled()
+    assert not_available_reason(action) == ""
 
 
 # --- Layout ----------------------------------------------------------------
