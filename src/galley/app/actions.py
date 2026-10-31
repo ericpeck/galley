@@ -268,6 +268,13 @@ class ActionHold:
             self._release()
 
     def _hold(self) -> None:
+        # Checked first, so a refused hold leaves every action as it was.
+        parent = self._parent()
+        if parent is None:
+            raise RuntimeError(
+                "ActionHold can't hold: its parent was deleted, so there is "
+                "nothing to own the action group."
+            )
         self._saved = [
             (
                 action.isEnabled(),
@@ -281,8 +288,6 @@ class ActionHold:
             (widget.isEnabled(), widget.toolTip(), widget.accessibleDescription())
             for widget in self._widgets
         ]
-        parent = self._parent()
-        assert parent is not None
         group = QActionGroup(parent)
         group.setExclusive(False)
         self._group = group

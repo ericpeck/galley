@@ -17,7 +17,7 @@ import weakref
 
 import pytest
 import shiboken6
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -182,6 +182,10 @@ def _title(window, name: str) -> str:
 def _focus(qtbot, widget: QWidget) -> None:
     widget.setFocus()
     qtbot.waitUntil(widget.hasFocus, timeout=_WAIT_MS)
+
+
+def _scroll(editor: CodeEditor) -> tuple[int, int]:
+    return editor.verticalScrollBar().value(), editor.horizontalScrollBar().value()
 
 
 def _press_escape(qtbot, widget: QWidget) -> None:
@@ -684,6 +688,47 @@ def test_a_canceled_compare_runs_again_on_the_next_paste(qtbot, inline_compare) 
     qtbot.waitUntil(lambda: _changes(window).count() == 1, timeout=_WAIT_MS)
 
 
+def test_a_canceled_compare_clears_the_highlight_and_gives_focus_back(
+    qtbot, inline_compare
+) -> None:
+    """The last result's selected change goes; carets, view and focus stay."""
+    window = _show(qtbot)
+    _compare(qtbot, window)
+    left, right = _left(window), _right(window)
+    # The first change is selected on both sides when a result arrives.
+    assert left.textCursor().hasSelection()
+    assert right.textCursor().hasSelection()
+    _focus(qtbot, right)
+    carets = [left.textCursor().position(), right.textCursor().position()]
+    scrolls = [_scroll(left), _scroll(right)]
+    inline_compare.hold = True
+    window._compare.run()
+    cancel = window.findChild(QPushButton, "cancelButton")
+    assert isinstance(cancel, QPushButton)
+    qtbot.waitUntil(cancel.isVisible, timeout=_WAIT_MS)
+    qtbot.mouseClick(cancel, Qt.MouseButton.LeftButton)
+    assert _changes(window).state() == ChangesState.CANCELED
+    assert _status_state(window) == COMPARISON_CANCELED
+    assert not left.textCursor().hasSelection()
+    assert not right.textCursor().hasSelection()
+    assert [left.textCursor().position(), right.textCursor().position()] == carets
+    assert [_scroll(left), _scroll(right)] == scrolls
+    qtbot.waitUntil(right.hasFocus, timeout=_WAIT_MS)
+
+
+def test_a_canceled_compare_falls_back_to_left_focus(qtbot, inline_compare) -> None:
+    """Focus outside both panes when the compare starts goes back to Left."""
+    window = _show(qtbot)
+    _compare(qtbot, window)
+    _focus(qtbot, _changes(window).list_view())
+    inline_compare.hold = True
+    window._compare.run()
+    assert window._compare.cancel()
+    assert not _left(window).textCursor().hasSelection()
+    assert not _right(window).textCursor().hasSelection()
+    qtbot.waitUntil(_left(window).hasFocus, timeout=_WAIT_MS)
+
+
 def test_a_stopped_worker_offers_compare_again(qtbot, inline_compare) -> None:
     window = _show(qtbot)
     inline_compare.hold = True
@@ -775,8 +820,8 @@ def test_over_2_mb_asks_first_and_cancel_starts_no_job(qtbot, inline_compare) ->
         == SIZE_WARNING_DETAIL
         == (
             "Large files can take several seconds, and the window may pause for a few "
-            "seconds while the results appear. Press Cancel at any point while it's "
-            "comparing to stop."
+            "seconds while the results appear. Press Cancel while it's comparing to "
+            "stop."
         )
     )
     assert sorted(button.text() for button in box.buttons()) == [
@@ -976,6 +1021,20 @@ def test_a_held_group_and_guard_outlive_their_action_hold(qtbot) -> None:
     assert not action.isEnabled()
     assert not picker.isEnabled()
     assert picker.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
+
+
+def test_holding_after_the_parent_is_gone_raises_and_changes_nothing() -> None:
+    """A clear RuntimeError, not an assert that ``python -O`` strips."""
+    owner = QObject()
+    action = QAction("On")
+    hold = ActionHold([action], parent=owner)
+    del owner
+    gc.collect()
+    with pytest.raises(RuntimeError, match="parent was deleted"):
+        hold.set_held(True)
+    assert not hold.is_held()
+    assert action.isEnabled()
+    assert not_available_reason(action) == ""
 
 
 # --- Layout ----------------------------------------------------------------
