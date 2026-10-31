@@ -10,6 +10,7 @@ there when it ships. :func:`main` fails while either list is non-empty.
 """
 
 import os
+import weakref
 from collections.abc import Iterable, Sequence
 from functools import partial
 
@@ -234,7 +235,8 @@ class ActionHold:
 
     ``parent`` owns the group and the widget guard, so Qt deletes them with
     it. Left to Python's gc, their Qt destructors could run mid-collection
-    while Qt still used them.
+    while Qt still used them. The hold keeps a weak reference only, so it
+    does not keep Compare or the window alive until that collection.
     """
 
     def __init__(
@@ -250,7 +252,7 @@ class ActionHold:
         self._saved: list[tuple[bool, str, str, object]] = []
         self._saved_widgets: list[tuple[bool, str, str]] = []
         self._watchers: list[tuple[QAction, partial[None]]] = []
-        self._parent = parent
+        self._parent = weakref.ref(parent)
         self._guard = _WidgetGuard(parent)
 
     def is_held(self) -> bool:
@@ -279,7 +281,9 @@ class ActionHold:
             (widget.isEnabled(), widget.toolTip(), widget.accessibleDescription())
             for widget in self._widgets
         ]
-        group = QActionGroup(self._parent)
+        parent = self._parent()
+        assert parent is not None
+        group = QActionGroup(parent)
         group.setExclusive(False)
         self._group = group
         for action in self._actions:

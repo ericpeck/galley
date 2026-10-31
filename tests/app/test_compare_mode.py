@@ -1218,6 +1218,43 @@ def test_a_window_that_never_compares_deletes_its_compare_widgets(qtbot) -> None
     assert _alive() == []
 
 
+def _alive_without_gc(make_window) -> list[str]:
+    """Make a window, close and delete it, and name what is still alive.
+
+    Python's gc is off throughout, so only refcounts free anything. Compare
+    kept its host and the host kept the window, so before the fix only
+    gc freed them, running Qt destructors mid-collection like #176's crash.
+    """
+    gc.collect()
+    gc.disable()
+    try:
+        window = make_window()
+        refs = {
+            "MainWindow": weakref.ref(window),
+            "CompareMode": weakref.ref(window._compare),
+        }
+        window.close()
+        window.deleteLater()
+        QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
+        del window
+        return [name for name, ref in refs.items() if ref() is not None]
+    finally:
+        gc.enable()
+
+
+def test_a_deleted_window_and_its_compare_go_without_gc(qtbot) -> None:
+    assert _alive_without_gc(lambda: _show(qtbot)) == []
+
+
+def test_a_deleted_window_that_compared_goes_without_gc(qtbot, inline_compare) -> None:
+    def _compared():
+        window = _show(qtbot)
+        _compare(qtbot, window)
+        return window
+
+    assert _alive_without_gc(_compared) == []
+
+
 def test_compare_widgets_stay_hidden_and_out_of_tab_until_compare(qtbot) -> None:
     window = _show(qtbot)
     widgets = _compare_widgets(window)
