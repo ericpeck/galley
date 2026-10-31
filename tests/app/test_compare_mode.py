@@ -52,6 +52,7 @@ from galley.app.compare_mode import (
     COMPARING_ACCESSIBLE_NAME,
     COMPARING_MESSAGE,
     NO_DIFFERENCES_COUNT,
+    SIZE_WARNING_DETAIL,
     SIZE_WARNING_TEXT,
 )
 from galley.app.editor import CHANGE_MARKERS, CodeEditor
@@ -769,7 +770,15 @@ def test_over_2_mb_asks_first_and_cancel_starts_no_job(qtbot, inline_compare) ->
     assert (
         box.text() == SIZE_WARNING_TEXT == "Comparing this much data may take a while."
     )
-    assert box.informativeText() == ""
+    assert (
+        box.informativeText()
+        == SIZE_WARNING_DETAIL
+        == (
+            "Large files can take several seconds, and the window may pause for a few "
+            "seconds while the results appear. Press Cancel at any point while it's "
+            "comparing to stop."
+        )
+    )
     assert sorted(button.text() for button in box.buttons()) == [
         "Cancel",
         COMPARE_ANYWAY,
