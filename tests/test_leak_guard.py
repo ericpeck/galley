@@ -188,6 +188,9 @@ def test_the_guard_fails_only_the_tests_that_leak(pytester, qapp) -> None:
     ]:
         nodeid = f"test_inner.py::{name}"
         assert f"{nodeid} left {count} alive after it ended" in messages[nodeid]
+        # The next step names the marker. A substring, so wording and path
+        # separators can change.
+        assert "allow_window_leak" in messages[nodeid]
 
 
 def test_the_guard_counts_the_windows_a_plain_test_makes(qapp, tmp_path) -> None:
