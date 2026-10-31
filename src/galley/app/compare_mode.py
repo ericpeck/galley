@@ -283,6 +283,14 @@ class CompareMode(QObject):
             watched.changed.connect(self.sync_action)
         host.left.format_changed.connect(self.sync_action)
         self.sync_action()
+        # The host holds the window and the window holds this object, so
+        # let go of the host when Qt deletes this object. Refcounts then
+        # free both, and gc never runs their Qt destructors (#176). A bound
+        # method on this object's own destroyed signal is never called.
+        self.destroyed.connect(lambda *_args: self._forget_host())
+
+    def _forget_host(self) -> None:
+        del self._host
 
     # --- State ------------------------------------------------------------
 
