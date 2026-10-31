@@ -149,6 +149,25 @@ def test_store_text_answers_once_the_worker_has_it(qtbot, session) -> None:
     assert blocker.args == [7]
 
 
+def test_text_stored_still_answers_when_the_worker_is_slower_than_a_poll(
+    qtbot, session, monkeypatch
+) -> None:
+    """A slow runner can answer after the next poll. The session keeps polling.
+
+    It used to count itself idle on that poll and stop, so ``text_stored``
+    never came (CI flake in test_store_text_answers_once_the_worker_has_it).
+    """
+    _ready(qtbot, session)
+    hold_answers(monkeypatch, session)
+    with qtbot.waitSignal(session._timer.timeout, timeout=_WAIT_MS):
+        session.store_text(7, "x" * 1000)
+    # The answer shows up only now, after a poll that saw nothing.
+    monkeypatch.undo()
+    with qtbot.waitSignal(session.text_stored, timeout=_WAIT_MS) as blocker:
+        pass
+    assert blocker.args == [7]
+
+
 def test_a_job_past_the_limit_kills_the_worker_and_a_new_one_starts(
     qtbot, session
 ) -> None:
