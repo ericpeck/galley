@@ -2565,10 +2565,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     if machine.get("cpu_model"):
         lines.append(f"CPU: {machine['cpu_model']}.")
     if not machine["apple_silicon"]:
-        lines.append(
-            "Provisional Linux x86 timings. The macos-14 run happens after "
-            "the workflow is on main."
-        )
+        lines.append("Provisional Linux x86 timings.")
     lines.extend(
         [
             "",
