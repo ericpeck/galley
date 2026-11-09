@@ -1,0 +1,381 @@
+# Push-only diagnostic. A pull_request trigger would run the full CI matrix.
+name: Setup uv diagnostic
+
+on:
+  push:
+    branches:
+      - diag/setup-uv-191
+    paths:
+      - .github/workflows/setup-uv-diag.yml
+      - .github/diagnostics/setup_uv_diag.py
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: setup-uv pin diagnostic
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout diagnostic helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: helper
+
+      - name: Checkout frozen app tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 50950262452a27cfe0faf07746f60f89d508887d
+          persist-credentials: false
+          path: app
+
+      - name: Record app SHA, lock hash, and baseline PATH
+        id: prepare
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" prepare \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --results-dir "$GITHUB_WORKSPACE/diag-results" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Make the app tree read-only
+        run: |
+          set -euo pipefail
+          chmod -R a-w app
+
+      - name: Decide whether sample 1 launches
+        id: gate_1
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 1 setup start
+        if: steps.gate_1.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 1 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 1 (B, v10.3.3)
+        id: setup_1
+        if: steps.gate_1.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 1 (B)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_1.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_1.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_1.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 1 \
+            --variant B \
+            --action-sha 68559e99cc807c1eb7e9238fd43a15bba460eec2 \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Decide whether sample 2 launches
+        id: gate_2
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 2 setup start
+        if: steps.gate_2.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 2 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 2 (A, v10.3.2)
+        id: setup_2
+        if: steps.gate_2.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 2 (A)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_2.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_2.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_2.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 2 \
+            --variant A \
+            --action-sha 07a047e608db84b3d8c06cd9a7c7dcc9c355c18e \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Decide whether sample 3 launches
+        id: gate_3
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 3 setup start
+        if: steps.gate_3.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 3 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 3 (A, v10.3.2)
+        id: setup_3
+        if: steps.gate_3.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 3 (A)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_3.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_3.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_3.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 3 \
+            --variant A \
+            --action-sha 07a047e608db84b3d8c06cd9a7c7dcc9c355c18e \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Decide whether sample 4 launches
+        id: gate_4
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 4 setup start
+        if: steps.gate_4.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 4 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 4 (B, v10.3.3)
+        id: setup_4
+        if: steps.gate_4.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 4 (B)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_4.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_4.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_4.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 4 \
+            --variant B \
+            --action-sha 68559e99cc807c1eb7e9238fd43a15bba460eec2 \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Decide whether sample 5 launches
+        id: gate_5
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 5 setup start
+        if: steps.gate_5.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 5 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 5 (B, v10.3.3)
+        id: setup_5
+        if: steps.gate_5.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 5 (B)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_5.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_5.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_5.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 5 \
+            --variant B \
+            --action-sha 68559e99cc807c1eb7e9238fd43a15bba460eec2 \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Decide whether sample 6 launches
+        id: gate_6
+        run: |
+          set -euo pipefail
+          if [ -f diag-state/HALT ]; then
+            echo "launch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "launch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark sample 6 setup start
+        if: steps.gate_6.outputs.launch == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" mark \
+            --index 6 \
+            --state-dir "$GITHUB_WORKSPACE/diag-state"
+
+      - name: Set up uv for sample 6 (A, v10.3.2)
+        id: setup_6
+        if: steps.gate_6.outputs.launch == 'true'
+        continue-on-error: true
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.6"
+          python-version: "3.12.10"
+          enable-cache: false
+
+      - name: Run sample 6 (A)
+        continue-on-error: true
+        env:
+          DIAG_UV: ${{ steps.setup_6.outputs.uv-path }}
+          DIAG_UV_VERSION: ${{ steps.setup_6.outputs.uv-version }}
+          DIAG_PYTHON_VERSION: ${{ steps.setup_6.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" sample \
+            --index 6 \
+            --variant A \
+            --action-sha 07a047e608db84b3d8c06cd9a7c7dcc9c355c18e \
+            --app-source "$GITHUB_WORKSPACE/app" \
+            --uv "$DIAG_UV" \
+            --reported-uv-version "$DIAG_UV_VERSION" \
+            --reported-python-version "$DIAG_PYTHON_VERSION" \
+            --output "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --state-dir "$GITHUB_WORKSPACE/diag-state" \
+            --work-root "${RUNNER_TEMP}/diag" \
+            --expected-sha 50950262452a27cfe0faf07746f60f89d508887d \
+            --expected-uv "0.13.6" \
+            --expected-python "3.12.10"
+
+      - name: Upload diagnostic results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: setup-uv-diag
+          path: diag-results/
+          if-no-files-found: error
+
+      - name: Fail the job when a sample or a pin check failed
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/helper/.github/diagnostics/setup_uv_diag.py" summarize \
+            --input "$GITHUB_WORKSPACE/diag-results/samples.jsonl" \
+            --identity "$GITHUB_WORKSPACE/diag-results/identity.json"
