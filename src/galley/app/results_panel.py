@@ -393,8 +393,14 @@ class ResultsPanel(QWidget):
     def tab_bar(self) -> QTabBar:
         return self._tab_bar
 
-    def header_width(self) -> int:
-        """The width the header needs to show its title, or every tab whole."""
+    def tabs_width(self) -> int:
+        """The width the header needs to show every tab whole, or 0 with one.
+
+        With one tab the header shows a title and badge instead, which may
+        clip, so the panel can still shrink to its minimum (#91 D2).
+        """
+        if len(self._tabs) < 2:
+            return 0
         return self._header.sizeHint().width()
 
     def current_page(self) -> QWidget | None:

@@ -1,11 +1,15 @@
 """Results panel tabs: hidden while Problems is the only tab."""
 
+from collections.abc import Iterator
+
+import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from galley.app.problem_text import display_problem
 from galley.app.problems_pane import ProblemsPane
+from galley.app.problems_settings import MIN_WIDTH
 from galley.app.results_panel import ResultRow, ResultsList
 from galley.core.problems import Problem
 
@@ -97,3 +101,39 @@ def test_clicking_a_row_selects_it_and_sends_its_data(qtbot) -> None:
         qtbot.mouseClick(second, Qt.MouseButton.LeftButton)
     assert activated.args == [9]
     assert changes.currentItem() is changes.item(1)
+
+
+@pytest.fixture
+def large_app_font(qapp) -> Iterator[None]:
+    """Four times the application font. The header's labels take it."""
+    previous = QFont(qapp.font())
+    large = QFont(previous)
+    large.setPointSize(previous.pointSize() * 4)
+    qapp.setFont(large)
+    yield
+    qapp.setFont(previous)
+
+
+def test_only_tabs_widen_the_panel_minimum(qtbot, large_app_font) -> None:
+    """A wide title header never raises the minimum, but tabs do (#171).
+
+    Large fonts make the one-tab header wider than MIN_WIDTH, as Windows'
+    wide fallback font does in test_tab_strip_shedding. Problems must still
+    shrink to MIN_WIDTH then (#91 D2).
+    """
+    del large_app_font
+    pane = ProblemsPane()
+    qtbot.addWidget(pane)
+    pane.show()
+    qtbot.waitExposed(pane)
+    header = pane.findChild(QWidget, "problemsHeader")
+    assert isinstance(header, QWidget)
+    assert header.sizeHint().width() > MIN_WIDTH
+    assert pane.tabs_width() == 0
+
+    changes = _changes()
+    pane.add_tab(changes, "Changes", ("change", "changes"), _accent)
+    assert pane.tabs_width() == header.sizeHint().width() > MIN_WIDTH
+
+    pane.remove_tab(changes)
+    assert pane.tabs_width() == 0

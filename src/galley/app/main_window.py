@@ -1714,9 +1714,10 @@ class MainWindow(QMainWindow):
             splitter.setSizes([STRIP_WIDTH, max(0, total - STRIP_WIDTH)])
             return
         pane.setMaximumWidth(16_777_215)
-        # Never so narrow that the header's tabs scroll: with Problems and
-        # Changes, both labels and counts show whole (#171).
-        floor = max(MIN_WIDTH, pane.header_width())
+        # While the header shows tabs (Problems and Changes in Compare),
+        # never so narrow that they scroll: both labels and counts show
+        # whole (#171). Otherwise the floor is MIN_WIDTH.
+        floor = max(MIN_WIDTH, pane.tabs_width())
         pane.setMinimumWidth(floor)
         # Shrink toward the floor before the tab strips shed (#91 D2).
         # The saved width stays as the user left it.
