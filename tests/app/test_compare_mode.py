@@ -60,6 +60,11 @@ from galley.app.find_bar import FindBar
 from galley.app.main import create_main_window
 from galley.app.main_window import SPINNER_REVEAL_MS
 from galley.app.problems_pane import ProblemsPane
+from galley.app.problems_settings import (
+    MIN_WIDTH,
+    STATE_OPEN,
+    save_problems_preferences,
+)
 from galley.core.compare_report import ChangeRow
 
 # Fake data only. Left to Right: total 40 → 45, region removed, role user →
@@ -524,6 +529,36 @@ def test_changes_tab_is_added_on_entry_and_removed_on_leaving(
     _action(window, "Compare").trigger()
     assert _tab_titles(panel) == ["Problems"]
     assert not panel.isVisible()
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_both_tab_labels_fit_at_the_narrowest_panel(
+    qtbot, inline_compare, install_scheme, scheme: str
+) -> None:
+    """Problems and Changes both show whole, so the tabs never scroll (#171).
+
+    The panel starts at its 200 px minimum and widens as Changes' count
+    grows to five digits. Outside Compare the 200 px minimum is unchanged.
+    """
+    save_problems_preferences(STATE_OPEN, MIN_WIDTH)
+    window = _show(qtbot)
+    install_scheme(scheme)
+    panel = window.findChild(ProblemsPane)
+    assert isinstance(panel, ProblemsPane)
+    tabs = panel.tab_bar()
+
+    def fits() -> bool:
+        last = tabs.tabRect(tabs.count() - 1)
+        return tabs.width() >= tabs.sizeHint().width() and last.right() < tabs.width()
+
+    _compare(qtbot, window)
+    qtbot.waitUntil(fits)
+    panel.set_count(_changes(window), 12_345)
+    assert tabs.tabText(1) == "Changes 12345"
+    qtbot.waitUntil(fits)
+    assert panel.width() >= MIN_WIDTH
+    _action(window, "Compare").trigger()
+    assert panel.minimumWidth() in (0, MIN_WIDTH)
 
 
 def _tab_titles(panel: ProblemsPane) -> list[str]:

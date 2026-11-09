@@ -824,6 +824,8 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.splitterMoved.connect(self._on_problems_splitter_moved)
         self._problems_pane.width_changed.connect(self._remember_problems_width)
+        # A tab or a count changes how wide the header must be.
+        self._problems_pane.tabs_changed.connect(self._layout_problems)
         return splitter
 
     def _build_caption(self) -> QLabel:
@@ -1712,11 +1714,14 @@ class MainWindow(QMainWindow):
             splitter.setSizes([STRIP_WIDTH, max(0, total - STRIP_WIDTH)])
             return
         pane.setMaximumWidth(16_777_215)
-        pane.setMinimumWidth(MIN_WIDTH)
-        # Shrink toward MIN_WIDTH before the tab strips shed (#91 D2).
+        # Never so narrow that the header's tabs scroll: with Problems and
+        # Changes, both labels and counts show whole (#171).
+        floor = max(MIN_WIDTH, pane.header_width())
+        pane.setMinimumWidth(floor)
+        # Shrink toward the floor before the tab strips shed (#91 D2).
         # The saved width stays as the user left it.
         room = total - splitter.handleWidth() - self._panes_full_width()
-        width = min(self._problems_width, max(MIN_WIDTH, min(room, total - 240)))
+        width = max(floor, min(self._problems_width, room, total - 240))
         splitter.setSizes([width, max(0, total - width)])
 
     def _panes_full_width(self) -> int:
