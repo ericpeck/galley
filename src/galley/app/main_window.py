@@ -339,6 +339,9 @@ class MainWindow(QMainWindow):
         self._validate_status_timer.timeout.connect(self._clear_validate_status)
         self._validate_status = ""
         self._output_before_format = ""
+        # The direction of the result in Output, such as "JSON → YAML", or ""
+        # while the direction label follows the pickers (#91 D4).
+        self._result_direction = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_sorted = False
@@ -1265,6 +1268,7 @@ class MainWindow(QMainWindow):
             self._status.set_state(result.message)
             return
         self._output_pane.editor.setPlainText(result.text)
+        self._show_result_direction("")
         if result.notices:
             self._status.set_state(
                 " ".join(notice.message for notice in result.notices)
@@ -1322,6 +1326,7 @@ class MainWindow(QMainWindow):
             self._status.set_state(result.status)
             return
         _replace_as_one_undo(self._output_pane.editor, result.output)
+        self._show_result_direction("")
         self._clear_problems()
         self._status.set_state(result.status)
 
@@ -1428,6 +1433,7 @@ class MainWindow(QMainWindow):
             self._show_minified_as_json()
         output = self._output_pane.editor
         _replace_as_one_undo(output, text)
+        self._show_result_direction(f"{self._format_source} → {self._format_target}")
         # The worker found the fold ranges with the text (Erik's #64 plan).
         output.set_fold_ranges(*unpack_ranges(self._session.finished_folds))
         self._clear_problems()
@@ -2474,6 +2480,8 @@ class MainWindow(QMainWindow):
         self._sync_copy_as_actions()
         self._sync_indent_actions()
         self._output_pane.set_empty_visible(empty)
+        if self._result_direction and self._output_pane.own_editor.document().isEmpty():
+            self._show_result_direction("")
         if empty:
             self._output_pane.count_label.setText("")
             return
@@ -2528,10 +2536,28 @@ class MainWindow(QMainWindow):
         keys = "" if fmt.loads_to_value else fmt.label
         self._output_pane.find_bar.set_keys_only_unavailable(keys)
 
+    def _show_result_direction(self, direction: str) -> None:
+        """Name the direction of the result just written to Output, or "".
+
+        "" makes the label follow the pickers. Convert from Python, Escape
+        String and Unescape String pass "" until their label is decided
+        (asked on #91), so a Format's direction doesn't outlive its text.
+        """
+        self._result_direction = direction
+        self._sync_direction()
+
     def _sync_direction(self) -> None:
-        left = self._input_pane.format_name()
-        right = self._output_pane.format_name()
-        self._status.set_info(f"{left} → {right}")
+        """Show the direction of the result in Output (#91 D4).
+
+        A picker change after a result leaves it: Output still holds that
+        result. While Output is empty, the label follows the pickers.
+        """
+        direction = self._result_direction
+        if not direction or self._output_pane.own_editor.document().isEmpty():
+            left = self._input_pane.format_name()
+            right = self._output_pane.format_name()
+            direction = f"{left} → {right}"
+        self._status.set_info(direction)
 
 
 def _is_blank(text: str) -> bool:
