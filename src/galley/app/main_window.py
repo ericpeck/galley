@@ -2649,9 +2649,8 @@ def si_size(num_bytes: int) -> str:
 def si_size_up(num_bytes: int) -> str:
     """``num_bytes`` in SI units like :func:`si_size`, rounded up, never down.
 
-    A too-large message shows the size this way, so a size just over a
-    limit never reads as the limit itself: 2,048,023 bytes is ``2.1 MB``
-    against a 2.0 MB limit, not ``2.0 MB`` (Bill, #148). An exact size uses
+    Rounds up, so 2,048,023 bytes reads ``2.1 MB`` and a file over a 2 MB
+    limit never reads as exactly the limit (Bill, #148). An exact size uses
     the same one decimal, such as ``3.3 MB`` or ``250.0 KB``. Rounding up
     to 1000 of a unit rolls over, as in :func:`si_size`.
     """
