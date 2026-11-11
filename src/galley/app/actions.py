@@ -198,24 +198,43 @@ def not_available_text(label: str) -> str:
     return NOT_AVAILABLE.format(label=label)
 
 
+def _remember_ready_tips(action: QAction) -> None:
+    """Save the tooltip and status tip ``action`` shows while it is available.
+
+    Qt reports the action text when no tooltip was set. Saving "" puts that
+    default back on restore.
+    """
+    tip = action.toolTip()
+    action.setProperty("readyToolTip", "" if tip == action.text() else tip)
+    action.setProperty("readyStatusTip", action.statusTip())
+
+
 def set_not_available(action: QAction, reason: str) -> None:
     """Show why ``action`` is greyed out, or "" for its usual tips.
 
     The reason is the tooltip and the status tip, which the macOS menu bar
     shows instead of a tooltip. The action's own tips come back with "".
-    The caller enables and disables the action.
+    Clearing the reason saves those tips again. The next grey-out saves
+    them once more, so a tip changed while the action is available is what
+    comes back. The caller enables and disables the action.
     """
-    if action.property("readyToolTip") is None:
-        tip = action.toolTip()
-        action.setProperty("readyToolTip", "" if tip == action.text() else tip)
-        action.setProperty("readyStatusTip", action.statusTip())
-    action.setProperty("notAvailable", reason)
     if reason:
+        # A reason already showing must not replace the saved tips. The
+        # text on the action then is the previous reason.
+        if not not_available_reason(action):
+            _remember_ready_tips(action)
+        action.setProperty("notAvailable", reason)
         action.setToolTip(reason)
         action.setStatusTip(reason)
         return
-    action.setToolTip(action.property("readyToolTip"))
-    action.setStatusTip(action.property("readyStatusTip"))
+    saved_tip = action.property("readyToolTip")
+    if not_available_reason(action) and saved_tip is not None:
+        action.setToolTip(saved_tip)
+        action.setStatusTip(action.property("readyStatusTip"))
+    # Re-save after the restore, and again on the next grey-out, so a tip
+    # changed while the action is available replaces this copy.
+    _remember_ready_tips(action)
+    action.setProperty("notAvailable", "")
 
 
 class ActionHold:
