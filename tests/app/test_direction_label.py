@@ -3,9 +3,11 @@
 While Output is empty it follows the pickers. Once a Format or Minify
 writes Output, it names that result's direction until Output changes
 result or empties. A picker change after a result leaves it alone; the
-Stale cue for that is D2.
+Stale cue for that is D2. Convert from Python, Escape as String and
+Unescape String name their own sources, as Bill chose on #91.
 """
 
+import pytest
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QLabel
 
@@ -110,14 +112,77 @@ def test_validate_leaves_output_and_its_direction(qtbot) -> None:
     assert _direction(window) == "JSON → YAML"
 
 
-def test_convert_from_python_shows_the_pickers_until_bill_decides(qtbot) -> None:
-    """Asked on #91: Convert from Python, Escape and Unescape keep the
-    picker label for now, so a Format's direction doesn't outlive its text.
-    """
+def _label(window) -> QLabel:
+    label = window.findChild(QLabel, "directionLabel")
+    assert label is not None
+    return label
+
+
+def _assert_label(window, text: str) -> None:
+    """The label and its accessible name read the same text (Bill, #91)."""
+    label = _label(window)
+    assert label.text() == text
+    assert label.accessibleName() == text
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+@pytest.mark.parametrize("target", ["JSON", "YAML"])
+def test_convert_from_python_names_python_as_its_source(
+    qtbot, install_scheme, scheme: str, target: str
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _format_to_yaml(qtbot, window)
+    _picker(window, "outputFormat").setCurrentText(target)
+    window._input_pane.editor.setPlainText(_PYTHON)
+    _action(window, "Convert from Python").trigger()
+    assert window._output_pane.own_editor.toPlainText() != ""
+    _assert_label(window, f"Python → {target}")
+    window._output_pane.own_editor.clear()
+    _assert_label(window, f"JSON → {target}")
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_escape_as_string_names_text_as_its_source(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _picker(window, "inputFormat").setCurrentText("YAML")
+    _picker(window, "outputFormat").setCurrentText("YAML")
+    window._input_pane.editor.setPlainText("name: Ada Example\nid: 7\n")
+    _action(window, "Escape as String").trigger()
+    assert window._output_pane.own_editor.toPlainText().startswith('"')
+    _assert_label(window, "Text → JSON")
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_unescape_string_names_the_output_format(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _picker(window, "outputFormat").setCurrentText("YAML")
+    window._input_pane.editor.setPlainText('"{\\"name\\":\\"Ada Example\\"}"\n')
+    _action(window, "Unescape String").trigger()
+    assert window._output_pane.own_editor.toPlainText() == "name: Ada Example\n"
+    _assert_label(window, "JSON → YAML")
+
+
+def test_a_failed_convert_or_unescape_keeps_the_label(qtbot) -> None:
     window = _show(qtbot)
     _format_to_yaml(qtbot, window)
     _picker(window, "outputFormat").setCurrentText("JSON")
-    window._input_pane.editor.setPlainText(_PYTHON)
+    window._input_pane.editor.setPlainText("{'name': 'Ada Example'")
     _action(window, "Convert from Python").trigger()
-    assert window._output_pane.own_editor.toPlainText().startswith("{")
-    assert _direction(window) == "JSON → JSON"
+    _assert_label(window, "JSON → YAML")
+    window._input_pane.editor.setPlainText('{"not": "a string"}')
+    _action(window, "Unescape String").trigger()
+    _assert_label(window, "JSON → YAML")
+
+
+def test_a_format_direction_reads_the_same_to_screen_readers(qtbot) -> None:
+    window = _show(qtbot)
+    _assert_label(window, "JSON → JSON")
+    _format_to_yaml(qtbot, window)
+    _assert_label(window, "JSON → YAML")

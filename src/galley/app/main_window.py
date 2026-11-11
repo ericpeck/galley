@@ -1268,7 +1268,7 @@ class MainWindow(QMainWindow):
             self._status.set_state(result.message)
             return
         self._output_pane.editor.setPlainText(result.text)
-        self._show_result_direction("")
+        self._show_result_direction(f"Python → {target}")
         if result.notices:
             self._status.set_state(
                 " ".join(notice.message for notice in result.notices)
@@ -1295,7 +1295,8 @@ class MainWindow(QMainWindow):
                 escape_too_large_message(si_size_up(size), si_size(limit))
             )
             return
-        self._show_string_result(escape_input(text, source))
+        # Bill's wording (#91): the result is one JSON string.
+        self._show_string_result(escape_input(text, source), "Text → JSON")
 
     def _unescape_string(self) -> None:
         """Format the JSON inside an escaped Input string into Output.
@@ -1316,9 +1317,9 @@ class MainWindow(QMainWindow):
                 unescape_too_large_message(si_size_up(size), si_size(limit))
             )
             return
-        self._show_string_result(unescape_input(text, target))
+        self._show_string_result(unescape_input(text, target), f"JSON → {target}")
 
-    def _show_string_result(self, result: StringResult) -> None:
+    def _show_string_result(self, result: StringResult, direction: str) -> None:
         if result.problems:
             self._apply_problems(result.problems)
             return
@@ -1326,7 +1327,7 @@ class MainWindow(QMainWindow):
             self._status.set_state(result.status)
             return
         _replace_as_one_undo(self._output_pane.editor, result.output)
-        self._show_result_direction("")
+        self._show_result_direction(direction)
         self._clear_problems()
         self._status.set_state(result.status)
 
@@ -2537,11 +2538,11 @@ class MainWindow(QMainWindow):
         self._output_pane.find_bar.set_keys_only_unavailable(keys)
 
     def _show_result_direction(self, direction: str) -> None:
-        """Name the direction of the result just written to Output, or "".
+        """Name the direction of the result just written to Output.
 
-        "" makes the label follow the pickers. Convert from Python, Escape
-        String and Unescape String pass "" until their label is decided
-        (asked on #91), so a Format's direction doesn't outlive its text.
+        Format and Minify name the formats. Convert from Python, Escape as
+        String and Unescape String name their own sources, as Bill chose on
+        #91. "" makes the label follow the pickers.
         """
         self._result_direction = direction
         self._sync_direction()

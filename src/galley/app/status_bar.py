@@ -41,6 +41,10 @@ COUNTS_RESERVE = ("99999 differences",)
 _FORMAT_NAMES = (*FORMAT_LABELS, "Python")
 INFO_RESERVE = (
     *(f"{left} → {right}" for left in _FORMAT_NAMES for right in _FORMAT_NAMES),
+    # Convert from Python and Escape as String name their own sources (#91).
+    "Python → JSON",
+    "Python → YAML",
+    "Text → JSON",
     "Ln 99999, Col 999",
 )
 
@@ -212,8 +216,12 @@ class StatusBar(QStatusBar):
         return self._counts.text()
 
     def set_info(self, text: str) -> None:
-        """Show the right-hand info text, today the format direction."""
+        """Show the right-hand info text, today the format direction.
+
+        Screen readers hear the same text (Bill, #91).
+        """
         self._direction.setText(text)
+        self._direction.setAccessibleName(text)
 
     def info_text(self) -> str:
         return self._direction.text()
