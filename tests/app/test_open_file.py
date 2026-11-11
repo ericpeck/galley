@@ -303,7 +303,7 @@ def test_opening_shows_after_500_ms_and_blocks_open_and_format(
 
 
 def test_large_file_opens_without_a_prompt_and_format_still_asks(
-    qtbot, tmp_path, monkeypatch
+    qtbot, tmp_path, monkeypatch, scheme_palette
 ) -> None:
     path = tmp_path / "big.yaml"
     payload = "y" * YAML_WARNING_BYTES
@@ -316,14 +316,14 @@ def test_large_file_opens_without_a_prompt_and_format_still_asks(
     assert _message(window, "sizeWarning") is None
     assert not window._formatting
     assert not window._size_warning_accepted
-    assert _status(window).text() == "Opened big.yaml (352 KB)"
+    assert _status(window).text() == "Opened big.yaml (352.0 KB)"
     assert _format_name(window) == "YAML"
 
     started: list[str] = []
     window._start_format = lambda text: started.append(text)  # type: ignore[method-assign]
     window._actions.format.trigger()
     warning = _require(window, "sizeWarning")
-    assert warning.text() == "Format this 352 KB document?"
+    assert warning.text() == "Format this 352.0 KB document?"
     assert started == []
     cancel = warning.escapeButton()
     assert cancel is not None
