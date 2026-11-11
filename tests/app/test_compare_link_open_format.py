@@ -1113,9 +1113,10 @@ def test_format_on_the_spawn_worker_formats_both_sides(qtbot) -> None:
 def test_a_closed_window_leaves_no_compare_widgets_behind(qtbot) -> None:
     """Right's editor, its find bar and the Changes pane go with the window.
 
-    They have no parent while Compare is off. A lambda connected to one of
-    their signals kept them, Compare and the window's wrapper alive, so
-    every later window in the process got slower.
+    While Compare is off they are hidden children of the window (#176).
+    Before that they had no parent, and a lambda connected to one of their
+    signals kept them, Compare and the window's wrapper alive, so every
+    later window in the process got slower.
     """
     import gc
 
@@ -1133,7 +1134,7 @@ def test_a_closed_window_leaves_no_compare_widgets_behind(qtbot) -> None:
 
     before = _left_over()
     # A window that never enters Compare, as most are: Right and the
-    # Changes pane are still parentless.
+    # Changes pane stay hidden children of the window.
     window = create_main_window()
     window.show()
     qtbot.waitExposed(window)

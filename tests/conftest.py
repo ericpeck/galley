@@ -25,16 +25,19 @@ CODE_TEST_FAMILY = "DejaVu Sans Mono"
 
 
 @pytest.fixture(scope="session")
-def code_test_font(qapp) -> str:
+def code_test_font(qapp) -> Iterator[str]:
     """Load DejaVu Sans Mono and make it the editors' code font (#145).
 
     Qt's offscreen platform on the Windows runners has no fonts and draws
     every glyph as the same box, so pixel tests broke there only. Loading a
-    real font gives every platform the same glyphs. ``code_font`` asks for
-    the generic ``monospace`` family, which Qt maps to this font here. App
-    code is unchanged.
+    real font gives every platform the same glyphs. Here ``code_font`` asks
+    for the generic ``monospace`` family instead of the platform's, and Qt
+    maps that name to this font. Default Font keeps a name of its own, so
+    View › Font tests can still pick the test font as a different family.
     """
     from PySide6.QtGui import QFont, QFontDatabase
+
+    from galley.app import fonts
 
     del qapp
     font_id = QFontDatabase.addApplicationFont(str(CODE_TEST_FONT))
@@ -47,7 +50,10 @@ def code_test_font(qapp) -> str:
             pytrace=False,
         )
     QFont.insertSubstitution("monospace", CODE_TEST_FAMILY)
-    return CODE_TEST_FAMILY
+    patch = pytest.MonkeyPatch()
+    patch.setattr(fonts, "code_family", lambda: "monospace")
+    yield CODE_TEST_FAMILY
+    patch.undo()
 
 
 @pytest.fixture(autouse=True)
