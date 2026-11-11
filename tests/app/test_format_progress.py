@@ -31,6 +31,7 @@ from galley.app.main_window import (
     YAML_TAB_PROGRESS_BYTES,
     YAML_WARNING_BYTES,
     _busy_progress_bytes,
+    si_limit,
     si_size,
     si_size_up,
 )
@@ -51,6 +52,18 @@ def test_si_size_uses_decimal_units() -> None:
     assert si_size(JSON_BUSY_BYTES) == "5.0 MB"
     assert si_size(JSON_PROGRESS_BYTES) == "20.0 MB"
     assert si_size(JSON_WARNING_BYTES) == "100.0 MB"
+
+
+def test_si_limit_is_whole_on_a_whole_unit_and_matches_si_size_otherwise() -> None:
+    """A limit reads 2 MB, and anything else stays on si_size's decimal (Bill)."""
+    assert si_limit(2_000_000) == "2 MB"
+    assert si_limit(2_000) == "2 KB"
+    assert si_limit(192_000) == "192 KB"
+    assert si_limit(1_000_000) == "1 MB"
+    assert si_limit(1_200_000) == si_size(1_200_000) == "1.2 MB"
+    assert si_limit(2_500) == si_size(2_500) == "2.5 KB"
+    assert si_limit(999_999) == si_size(999_999) == "1.0 MB"
+    assert si_limit(999) == si_size(999) == "999 B"
 
 
 def test_si_size_labels_use_one_decimal_and_roll_over_at_1000() -> None:

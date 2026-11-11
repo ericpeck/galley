@@ -310,14 +310,37 @@ def test_format_refuses_markup_over_two_megabytes(
 
     window._actions.format.trigger()
 
-    # Just over the limit, the size rounds up, so it never reads as 2.0 MB.
+    # The measured size keeps one decimal. The limit is a whole unit (Bill).
     assert _status(window).text() == (
-        "This document is too large to format (2.1 MB). The limit is 2.0 MB."
+        "This document is too large to format (2.1 MB). The limit is 2 MB."
     )
     assert not window._formatting
     assert window.findChild(QMessageBox, "sizeWarning") is None
     assert output.toPlainText() == "kept\n"
     assert_same_text(source.editor.toPlainText(), text)
+
+
+def test_compare_format_states_the_limit_as_a_whole_number(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
+    """Compare's Format uses the same whole-unit limit, in light and dark."""
+    del scheme_palette
+    monkeypatch.setattr(
+        "galley.app.main_window._format_limit_bytes", lambda _source: 2_000
+    )
+    window = _show(qtbot)
+    try:
+        _pane(window, "input").editor.setPlainText("y" * 2502)
+        window._actions.compare.trigger()
+        assert window._actions.compare.isChecked()
+        qtbot.waitUntil(lambda: not window._compare.is_running(), timeout=15000)
+        window._actions.format.trigger()
+        assert _status(window).text() == (
+            "This document is too large to format (2.6 KB). The limit is 2 KB."
+        )
+        assert not window._formatting
+    finally:
+        window.shutdown_parse_worker()
 
 
 def _at_the_limit() -> str:

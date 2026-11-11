@@ -299,9 +299,9 @@ def test_large_input_is_refused_with_its_size(
 
     _action(window, _ESCAPE).trigger()
     # 2,502 bytes. A too-large size rounds up (Bill, #148), so it reads 2.6.
-    assert _status(window) == escape_too_large_message("2.6 KB", "2.0 KB")
+    assert _status(window) == escape_too_large_message("2.6 KB", "2 KB")
     _action(window, _UNESCAPE).trigger()
-    assert _status(window) == unescape_too_large_message("2.6 KB", "2.0 KB")
+    assert _status(window) == unescape_too_large_message("2.6 KB", "2 KB")
     assert output.toPlainText() == "previous\n"
 
     monkeypatch.setattr(main_window_module, "YAML_BUSY_BYTES", 100)
