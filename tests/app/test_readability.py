@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from galley.app.actions import COMING_SOON, is_unbuilt
 from galley.app.editor import CodeEditor
+from galley.app.fonts import code_family as platform_code_family
 from galley.app.fonts import ui_font
 from galley.app.main import create_main_window
 from galley.app.splitter import RESET_NAME
@@ -89,6 +90,18 @@ def test_ui_font_is_the_system_font_and_editors_stay_mono(qtbot) -> None:
         "outputEditor",
         "rightEditor",
     ]
+
+
+def test_default_code_font_names_the_platform_fixed_font(qapp) -> None:
+    """Default Font asks for the platform's fixed-width family by name.
+
+    ``platform_code_family`` is imported before ``code_test_font`` swaps
+    ``code_family`` for the test font, so this checks the app's own lookup.
+    The offscreen platform itself reports "monospace"; macOS reports Menlo.
+    """
+    del qapp
+    fixed = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    assert platform_code_family() == fixed.family()
 
 
 def test_undo_enables_after_paste_and_follows_the_editor_stack(qtbot) -> None:
