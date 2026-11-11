@@ -10,9 +10,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QThreadPool
+from PySide6.QtCore import QEvent, QPoint, Qt, QThreadPool
 from PySide6.QtGui import QAccessible, QAction, QColor, QImage, QPalette
-from PySide6.QtWidgets import QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox, QWidget
+from shiboken6 import isValid
 
 from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
@@ -25,6 +26,7 @@ from galley.app.recent_files import (
     remember_recent_file,
 )
 from galley.app.theme import contrast_ratio
+from galley.core.recent import RECENT_LIMIT
 
 _SAMPLE = '{"a":1}'
 
@@ -355,6 +357,65 @@ def test_stuck_checks_in_two_windows_share_the_slots(
     _settle(qtbot, second)
     assert slow_stat.most_at_once == CHECK_THREADS
     assert len(slow_stat.calls) == 2 * len(stuck)
+
+
+# Enough windows that one thread per row is far past the two check slots.
+_ABANDONED_WINDOWS = 4
+
+
+def test_abandoned_checks_keep_parked_threads_within_the_bound(
+    qtbot, tmp_path, slow_stat
+) -> None:
+    """Starting and dropping many Open Recent checks must not pile up threads.
+
+    Each row of each window used to start a thread and park it on the shared
+    semaphore. The threads already inside stat stay alive until that stat
+    returns, and every other check is dropped with the window, so nothing is
+    killed and nothing is left behind once the hung stats return.
+    """
+    paths = [_write(tmp_path / f"file{index}.json") for index in range(RECENT_LIMIT)]
+    for path in paths:
+        remember_recent_file(path)
+    slow_stat.hold(*paths)
+    windows = [_show(qtbot, settle=False) for _ in range(_ABANDONED_WINDOWS)]
+
+    # Both slots are taken, so any further live thread is parked.
+    qtbot.waitUntil(lambda: slow_stat.in_stat() == CHECK_THREADS)
+    _destroy_windows(windows)
+    assert all(not isValid(window) for window in windows)
+    windows.clear()
+
+    parked = _parked_checks(slow_stat)
+    assert 0 <= parked <= CHECK_THREADS
+    running = _check_threads()
+    assert len(running) <= CHECK_THREADS
+    assert running
+    assert all(thread.is_alive() for thread in running)
+    assert slow_stat.in_stat() == len(running)
+    hung = {thread.ident for thread in running}
+
+    # A later wave, also abandoned, must not grow or replace those threads.
+    more = [_show(qtbot, settle=False) for _ in range(_ABANDONED_WINDOWS)]
+    assert 0 <= _parked_checks(slow_stat) <= CHECK_THREADS
+    assert len(_check_threads()) <= CHECK_THREADS
+    _destroy_windows(more)
+    assert all(not isValid(window) for window in more)
+    more.clear()
+    assert {thread.ident for thread in _check_threads()} == hung
+    assert all(thread.is_alive() for thread in _check_threads())
+
+    started = len(slow_stat.calls)
+    slow_stat.release()
+    qtbot.waitUntil(lambda: slow_stat.in_stat() == 0 and not _check_threads())
+    # Only the checks that had already entered stat ran. The abandoned
+    # rows never got a thread, and the ones that did were not killed in it.
+    assert len(slow_stat.calls) == started == CHECK_THREADS
+    assert slow_stat.in_stat() == 0
+
+    window = _show(qtbot)
+    assert len(_entries(window)) == RECENT_LIMIT
+    assert all(action.isEnabled() for action in _entries(window))
+    qtbot.waitUntil(lambda: not _check_threads())
 
 
 def test_choosing_a_row_before_its_check_returns_opens_it(
@@ -729,6 +790,10 @@ class _SlowStat:
         with self._lock:
             self._inside -= 1
 
+    def in_stat(self) -> int:
+        with self._lock:
+            return self._inside
+
 
 @pytest.fixture
 def slow_stat(monkeypatch) -> Iterator[_SlowStat]:
@@ -750,6 +815,28 @@ def slow_stat(monkeypatch) -> Iterator[_SlowStat]:
 
 def _settle(qtbot, window) -> None:
     qtbot.waitUntil(lambda: not _recent(window).checking())
+
+
+def _check_threads() -> list[threading.Thread]:
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "Open Recent check" and thread.is_alive()
+    ]
+
+
+def _parked_checks(slow: _SlowStat) -> int:
+    """Check threads that are alive but not inside stat."""
+    return len(_check_threads()) - slow.in_stat()
+
+
+def _destroy_windows(windows: list[QWidget]) -> None:
+    """Close and delete each window now, menu and queued checks included."""
+    for window in windows:
+        if window.isVisible():
+            window.close()
+        window.deleteLater()
+        QApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete.value)
 
 
 def _row(image: QImage, menu: QMenu, action: QAction) -> QImage:
