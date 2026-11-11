@@ -13,7 +13,9 @@ The 16 MB case decides whether Compare needs a size cap for v1 (Erik's rule,
 Link Scrolling (3e): the median time its handler takes per scroll step
 with 1 MB on each side. It is marked ``nightly_budget``: the budget is
 asserted only under GALLEY_PERF_MODE=strict and printed otherwise. The
-4 ms budget is a proposal (#152): worst CI median 3.173 ms x 1.25.
+5 ms budget is both platforms: worst medians 3.6 ms on macOS (nightly run
+42658869790) and 3.5 ms on Windows (nightly run 41482325043), each x 1.25,
+rounded up to the next 1 ms.
 
 All data is generated in memory from fixed seeds. Every test prints one
 ``perf:`` line per number.
@@ -41,9 +43,10 @@ from galley.core.compare_report import build_report
 from galley.core.diff import diff, diff_with_pairs, load_document
 
 _BUDGET_S = 0.5
-# Proposal pending sign-off (#152): worst CI median (3.173 ms, Windows)
-# x 1.25 = 3.97 ms, rounded up.
-_LINK_SCROLL_BUDGET_S = 0.004
+# Both platforms, rounded up to the next 1 ms. macOS: worst median 3.6 ms
+# (nightly run 42658869790) x 1.25 = 4.5 ms. Windows: worst median 3.5 ms
+# (nightly run 41482325043) x 1.25 = 4.375 ms. It was 4 ms.
+_LINK_SCROLL_BUDGET_S = 0.005
 _JUMP_BUDGET_S = 0.05
 _SPAWN_TIMEOUT_MS = 120_000
 _TIMING_RUNS = 3
@@ -202,7 +205,7 @@ def test_an_f7_jump_on_a_1_mb_diff(qtbot, perf_budget, inline_compare) -> None:
 def test_linked_scrolling_is_timed(qtbot, inline_compare) -> None:
     """The linked-scroll handler, per scroll step, 1 MB per side.
 
-    Budget 4 ms (proposal, #152), asserted only in strict mode.
+    Budget 5 ms, asserted only in strict mode.
 
     Each step puts Left at the next of 200 positions spread over the whole
     document, then times the handler that scrolls Right to match.
