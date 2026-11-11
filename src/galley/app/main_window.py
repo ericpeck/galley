@@ -487,7 +487,7 @@ class MainWindow(QMainWindow):
                 limit = _format_limit_bytes(source)
                 if limit is not None and size > limit:
                     self._status.set_state(
-                        format_too_large_message(si_size_up(size), si_size(limit))
+                        format_too_large_message(si_size_up(size), si_limit(limit))
                     )
                     return
             large = [item for item in sizes if item[0] >= _warning_bytes(item[2])]
@@ -1119,7 +1119,7 @@ class MainWindow(QMainWindow):
         if limit is not None and size > limit:
             # Like #104's guard: nothing is parsed, and both panes stay.
             self._status.set_state(
-                format_too_large_message(si_size_up(size), si_size(limit))
+                format_too_large_message(si_size_up(size), si_limit(limit))
             )
             return
         if size >= _warning_bytes(source) and not self._size_warning_accepted:
@@ -1288,7 +1288,7 @@ class MainWindow(QMainWindow):
         limit = _busy_progress_bytes(source, text)[0]
         if size >= limit:
             self._status.set_state(
-                escape_too_large_message(si_size_up(size), si_size(limit))
+                escape_too_large_message(si_size_up(size), si_limit(limit))
             )
             return
         self._show_string_result(escape_input(text, source))
@@ -1309,7 +1309,7 @@ class MainWindow(QMainWindow):
         limit = _busy_progress_bytes(target, text)[0]
         if size >= limit:
             self._status.set_state(
-                unescape_too_large_message(si_size_up(size), si_size(limit))
+                unescape_too_large_message(si_size_up(size), si_limit(limit))
             )
             return
         self._show_string_result(unescape_input(text, target))
@@ -2655,6 +2655,23 @@ def si_size_up(num_bytes: int) -> str:
     to 1000 of a unit rolls over, as in :func:`si_size`.
     """
     return _si_label(num_bytes, round_up=True)
+
+
+def si_limit(num_bytes: int) -> str:
+    """A size limit in SI units, whole when it lands on a whole unit.
+
+    ``2_000_000`` bytes reads ``2 MB``. A value that is not a whole number
+    of its unit uses :func:`si_size`.
+    """
+    if num_bytes < _SI_KB:
+        return si_size(num_bytes)
+    for scale, label in _SI_UNITS:
+        if num_bytes < scale:
+            continue
+        if num_bytes % scale == 0:
+            return f"{num_bytes // scale} {label}"
+        return si_size(num_bytes)
+    return si_size(num_bytes)
 
 
 def _si_label(num_bytes: int, *, round_up: bool) -> str:
