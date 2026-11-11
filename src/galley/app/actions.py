@@ -214,9 +214,11 @@ def set_not_available(action: QAction, reason: str) -> None:
 
     The reason is the tooltip and the status tip, which the macOS menu bar
     shows instead of a tooltip. The action's own tips come back with "".
-    Clearing the reason saves those tips again. The next grey-out saves
-    them once more, so a tip changed while the action is available is what
-    comes back. The caller enables and disables the action.
+    A grey-out saves the tips the action has while no reason is showing,
+    so a tip changed while the action is available is what comes back.
+    Clearing does not save: Compare puts its own reason back on the
+    action's changed signal, and that text must not become the ready tips.
+    The caller enables and disables the action.
     """
     if reason:
         # A reason already showing must not replace the saved tips. The
@@ -231,9 +233,6 @@ def set_not_available(action: QAction, reason: str) -> None:
     if not_available_reason(action) and saved_tip is not None:
         action.setToolTip(saved_tip)
         action.setStatusTip(action.property("readyStatusTip"))
-    # Re-save after the restore, and again on the next grey-out, so a tip
-    # changed while the action is available replaces this copy.
-    _remember_ready_tips(action)
     action.setProperty("notAvailable", "")
 
 
