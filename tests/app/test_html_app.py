@@ -295,7 +295,9 @@ def test_xml_and_html_share_one_two_megabyte_limit() -> None:
 
 
 @pytest.mark.parametrize("fmt", ["XML", "HTML"])
-def test_format_refuses_markup_over_two_megabytes(qtbot, fmt: str) -> None:
+def test_format_refuses_markup_over_two_megabytes(
+    qtbot, fmt: str, scheme_palette
+) -> None:
     window = _show(qtbot)
     source = _pane(window, "input")
     _choose(source, fmt)
@@ -308,7 +310,7 @@ def test_format_refuses_markup_over_two_megabytes(qtbot, fmt: str) -> None:
 
     window._actions.format.trigger()
 
-    # Just over the limit, the size rounds up, so it never reads as 2 MB.
+    # The measured size keeps one decimal. The limit is a whole unit (Bill).
     assert _status(window).text() == (
         "This document is too large to format (2.1 MB). The limit is 2 MB."
     )
@@ -316,6 +318,29 @@ def test_format_refuses_markup_over_two_megabytes(qtbot, fmt: str) -> None:
     assert window.findChild(QMessageBox, "sizeWarning") is None
     assert output.toPlainText() == "kept\n"
     assert_same_text(source.editor.toPlainText(), text)
+
+
+def test_compare_format_states_the_limit_as_a_whole_number(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
+    """Compare's Format uses the same whole-unit limit, in light and dark."""
+    del scheme_palette
+    monkeypatch.setattr(
+        "galley.app.main_window._format_limit_bytes", lambda _source: 2_000
+    )
+    window = _show(qtbot)
+    try:
+        _pane(window, "input").editor.setPlainText("y" * 2502)
+        window._actions.compare.trigger()
+        assert window._actions.compare.isChecked()
+        qtbot.waitUntil(lambda: not window._compare.is_running(), timeout=15000)
+        window._actions.format.trigger()
+        assert _status(window).text() == (
+            "This document is too large to format (2.6 KB). The limit is 2 KB."
+        )
+        assert not window._formatting
+    finally:
+        window.shutdown_parse_worker()
 
 
 def _at_the_limit() -> str:
@@ -346,9 +371,9 @@ def test_markup_at_the_limit_still_formats_after_the_size_prompt(qtbot) -> None:
     [
         (205, "205 B"),
         (2_500, "2.5 KB"),
-        (250_000, "250 KB"),
+        (250_000, "250.0 KB"),
         (3_300_000, "3.3 MB"),
-        (2_000_000, "2 MB"),
+        (2_000_000, "2.0 MB"),
         (2_000_001, "2.1 MB"),
         (2_048_023, "2.1 MB"),
         (1_000_001, "1.1 MB"),

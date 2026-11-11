@@ -287,7 +287,9 @@ def test_shortcut_keys_run_both_commands(qtbot) -> None:
     assert source.toPlainText() == '"[1]"'
 
 
-def test_large_input_is_refused_with_its_size(qtbot, monkeypatch) -> None:
+def test_large_input_is_refused_with_its_size(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
     window = _show(qtbot)
     source, output = _editors(window)
     output.setPlainText("previous\n")
