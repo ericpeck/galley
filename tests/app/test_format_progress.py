@@ -32,6 +32,7 @@ from galley.app.main_window import (
     YAML_WARNING_BYTES,
     _busy_progress_bytes,
     si_size,
+    si_size_up,
 )
 from galley.app.parse_session import ParseSession
 
@@ -50,6 +51,87 @@ def test_si_size_uses_decimal_units() -> None:
     assert si_size(JSON_BUSY_BYTES) == "5 MB"
     assert si_size(JSON_PROGRESS_BYTES) == "20 MB"
     assert si_size(JSON_WARNING_BYTES) == "100 MB"
+
+
+def test_si_size_labels_use_one_decimal_and_roll_over_at_1000() -> None:
+    """One decimal on every unit, and 1000 of a unit rolls over (#155).
+
+    2,950,000 and 3,000,000 both round to 3.0 MB, so they read the same.
+    999,999 bytes round to 1000.0 KB and read as 1.0 MB. KB, MB, GB, and
+    TB use that same decimal, including the 999.95 and exact-1000 boundaries.
+    """
+    assert si_size(999_999) == "1.0 MB"
+    assert si_size(2_950_000) == "3.0 MB"
+    assert si_size(3_000_000) == "3.0 MB"
+    assert si_size(2_950_000) == si_size(3_000_000)
+
+    # 999.95 of a unit rounds to 1000.0 and rolls over. 999.94 stays put.
+    assert si_size(999_950) == "1.0 MB"
+    assert si_size(999_940) == "999.9 KB"
+    assert si_size(999_950_000) == "1.0 GB"
+    assert si_size(999_940_000) == "999.9 MB"
+    assert si_size(999_950_000_000) == "1.0 TB"
+    assert si_size(999_940_000_000) == "999.9 GB"
+    # TB is the largest unit, so both sides of that boundary read the same.
+    assert si_size(999_950_000_000_000) == "1000.0 TB"
+    assert si_size(1_000_000_000_000_000) == "1000.0 TB"
+
+    # Exactly 1000 of a unit is 1.0 of the next unit, with the same decimal.
+    assert si_size(1_000) == "1.0 KB"
+    assert si_size(1_000_000) == "1.0 MB"
+    assert si_size(1_000_000_000) == "1.0 GB"
+    assert si_size(1_000_000_000_000) == "1.0 TB"
+    for amount, label in (
+        (1_200, "1.2 KB"),
+        (1_200_000, "1.2 MB"),
+        (1_200_000_000, "1.2 GB"),
+        (1_200_000_000_000, "1.2 TB"),
+        (3_000, "3.0 KB"),
+        (3_000_000, "3.0 MB"),
+        (3_000_000_000, "3.0 GB"),
+        (3_000_000_000_000, "3.0 TB"),
+    ):
+        assert si_size(amount) == label
+
+
+def test_si_size_up_uses_the_same_decimal_and_rollover() -> None:
+    """Rounding up keeps #155's labels and still never rounds down (#148)."""
+    assert si_size_up(999_999) == "1.0 MB"
+    assert si_size_up(2_950_000) == "3.0 MB"
+    assert si_size_up(3_000_000) == "3.0 MB"
+    assert si_size_up(2_950_000) == si_size_up(3_000_000)
+
+    # Ceiling hits 1000.0 KB once the size is past an exact 999.9 KB.
+    assert si_size_up(999_900) == "999.9 KB"
+    assert si_size_up(999_901) == "1.0 MB"
+    assert si_size_up(999_940) == "1.0 MB"
+    assert si_size_up(999_950) == "1.0 MB"
+    assert si_size_up(999_950_000) == "1.0 GB"
+    assert si_size_up(999_950_000_000) == "1.0 TB"
+    assert si_size_up(999_950_000_000_000) == "1000.0 TB"
+    assert si_size_up(1_000_000_000_000_000) == "1000.0 TB"
+
+    assert si_size_up(1_000) == "1.0 KB"
+    assert si_size_up(1_000_000) == "1.0 MB"
+    assert si_size_up(1_000_000_000) == "1.0 GB"
+    assert si_size_up(1_000_000_000_000) == "1.0 TB"
+    for amount, label in (
+        (1_200, "1.2 KB"),
+        (1_200_000, "1.2 MB"),
+        (1_200_000_000, "1.2 GB"),
+        (1_200_000_000_000, "1.2 TB"),
+        (3_000, "3.0 KB"),
+        (3_000_000, "3.0 MB"),
+        (3_000_000_000, "3.0 GB"),
+        (3_000_000_000_000, "3.0 TB"),
+    ):
+        assert si_size_up(amount) == label
+
+    # A size just over a whole unit still reads above it (Bill, #148).
+    assert si_size_up(2_000_001) == "2.1 MB"
+    assert si_size_up(2_048_023) == "2.1 MB"
+    assert si_size_up(1_000_001) == "1.1 MB"
+    assert si_size_up(192_001) == "192.1 KB"
 
 
 def test_fast_run_shows_no_indicator(qtbot, monkeypatch) -> None:
