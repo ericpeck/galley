@@ -9,7 +9,11 @@ from PySide6.QtCore import QPoint
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QMenu, QToolTip
 
-from galley.app.actions import set_not_available
+from galley.app.actions import (
+    NOT_AVAILABLE_WHILE_COMPARING,
+    ActionHold,
+    set_not_available,
+)
 from galley.app.theme import is_dark
 
 _ORIGINAL_TIP = "Sort object keys"
@@ -93,3 +97,41 @@ def test_clearing_the_reason_keeps_tips_changed_while_available(
     shown(_XML_REASON, _XML_REASON, "unavailable again")
     set_not_available(action, "")
     shown(_CHANGED_TIP, _CHANGED_STATUS, "available after the tip change")
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_clearing_during_compare_does_not_keep_the_comparing_tip(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """A sync that clears a reason while Compare is held must not save that text.
+
+    ActionHold puts "Not available while comparing" back on the action's
+    changed signal. Saving tips at that moment would make the next clear
+    show the comparing text on an available action.
+    """
+    palette = install_scheme(scheme)
+    assert is_dark(palette) == (scheme == "dark")
+    window, menu, action = _window(qtbot)
+    assert is_dark(window.palette()) == (scheme == "dark")
+
+    set_not_available(action, _XML_REASON)
+    action.setEnabled(False)
+    assert (action.toolTip(), action.statusTip()) == (_XML_REASON, _XML_REASON)
+
+    hold = ActionHold([action], parent=window)
+    hold.set_held(True)
+    assert action.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
+    assert action.statusTip() == NOT_AVAILABLE_WHILE_COMPARING
+
+    set_not_available(action, "")
+    assert action.toolTip() == NOT_AVAILABLE_WHILE_COMPARING
+    assert action.statusTip() == NOT_AVAILABLE_WHILE_COMPARING
+
+    hold.set_held(False)
+    assert (action.toolTip(), action.statusTip()) == (_XML_REASON, _XML_REASON)
+
+    set_not_available(action, "")
+    action.setEnabled(True)
+    seen = (action.toolTip(), action.statusTip())
+    assert seen == (_ORIGINAL_TIP, _ORIGINAL_STATUS), "available after Compare"
+    assert _shown_tips(qtbot, window, menu, action) == seen
