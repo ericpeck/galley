@@ -266,14 +266,16 @@ def test_one_line_document_is_timed(qtbot, qapp) -> None:
         _print_one_line_timings(samples)
 
 
-def test_indicators_follow_the_json_size_thresholds(qtbot, monkeypatch) -> None:
+def test_indicators_follow_the_json_size_thresholds(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
     """Busy, progress, and the size warning follow the JSON byte thresholds."""
     assert JSON_BUSY_BYTES == 5_000_000
     assert JSON_PROGRESS_BYTES == 20_000_000
     assert JSON_WARNING_BYTES == 100_000_000
-    assert si_size(JSON_BUSY_BYTES) == "5 MB"
-    assert si_size(JSON_PROGRESS_BYTES) == "20 MB"
-    assert si_size(JSON_WARNING_BYTES) == "100 MB"
+    assert si_size(JSON_BUSY_BYTES) == "5.0 MB"
+    assert si_size(JSON_PROGRESS_BYTES) == "20.0 MB"
+    assert si_size(JSON_WARNING_BYTES) == "100.0 MB"
     assert _BYTES["2 MB"] < JSON_BUSY_BYTES < JSON_PROGRESS_BYTES < JSON_WARNING_BYTES
 
     clock = {"now": 1_000.0}

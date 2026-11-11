@@ -246,13 +246,13 @@ def test_convert_refuses_one_byte_over_the_limit(
         (
             "YAML",
             250_000,
-            "This document is too large to convert from Python (250 KB). "
+            "This document is too large to convert from Python (250.0 KB). "
             "The limit is about 1 MB for JSON or about 192 KB for YAML.",
         ),
     ],
 )
 def test_size_message_names_the_size_and_both_limits(
-    qtbot, monkeypatch, target, size, message
+    qtbot, monkeypatch, target, size, message, scheme_palette
 ) -> None:
     window, editor, output, status = _convert_window(qtbot, target)
     output.setPlainText("previous\n")

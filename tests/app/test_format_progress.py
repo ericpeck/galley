@@ -42,15 +42,15 @@ _FORMATTED = '{\n  "a": 1\n}\n'
 def test_si_size_uses_decimal_units() -> None:
     assert si_size(0) == "0 B"
     assert si_size(999) == "999 B"
-    assert si_size(YAML_BUSY_BYTES) == "192 KB"
-    assert si_size(YAML_TAB_BUSY_BYTES) == "96 KB"
-    assert si_size(YAML_WARNING_BYTES) == "352 KB"
-    assert si_size(YAML_TAB_PROGRESS_BYTES) == "352 KB"
-    assert si_size(YAML_PROGRESS_BYTES) == "704 KB"
+    assert si_size(YAML_BUSY_BYTES) == "192.0 KB"
+    assert si_size(YAML_TAB_BUSY_BYTES) == "96.0 KB"
+    assert si_size(YAML_WARNING_BYTES) == "352.0 KB"
+    assert si_size(YAML_TAB_PROGRESS_BYTES) == "352.0 KB"
+    assert si_size(YAML_PROGRESS_BYTES) == "704.0 KB"
     assert si_size(1_200_000) == "1.2 MB"
-    assert si_size(JSON_BUSY_BYTES) == "5 MB"
-    assert si_size(JSON_PROGRESS_BYTES) == "20 MB"
-    assert si_size(JSON_WARNING_BYTES) == "100 MB"
+    assert si_size(JSON_BUSY_BYTES) == "5.0 MB"
+    assert si_size(JSON_PROGRESS_BYTES) == "20.0 MB"
+    assert si_size(JSON_WARNING_BYTES) == "100.0 MB"
 
 
 def test_si_size_labels_use_one_decimal_and_roll_over_at_1000() -> None:
@@ -234,13 +234,15 @@ def test_yaml_limits_follow_whether_the_document_has_a_tab() -> None:
     assert YAML_WARNING_BYTES == 352 * 1000
 
 
-def test_yaml_document_size_picks_the_indicator(qtbot, monkeypatch) -> None:
+def test_yaml_document_size_picks_the_indicator(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
     window, _clock = _held(qtbot, monkeypatch)
     editor, _output, status, spinner, bar, cancel, _button = _parts(window)
     _as_yaml(window)
 
     tab_free = "a" * (200 * 1000)
-    assert si_size(len(tab_free.encode())) == "200 KB"
+    assert si_size(len(tab_free.encode())) == "200.0 KB"
     assert "\t" not in tab_free
     editor.setPlainText(tab_free)
     window._actions.format.trigger()
@@ -252,7 +254,7 @@ def test_yaml_document_size_picks_the_indicator(qtbot, monkeypatch) -> None:
     window._cancel_format()
 
     with_tab = "\t" + "b" * (100 * 1000 - 1)
-    assert si_size(len(with_tab.encode())) == "100 KB"
+    assert si_size(len(with_tab.encode())) == "100.0 KB"
     assert "\t" in with_tab
     editor.setPlainText(with_tab)
     window._actions.format.trigger()
@@ -266,12 +268,12 @@ def test_yaml_document_size_picks_the_indicator(qtbot, monkeypatch) -> None:
     over_warning = "\t" + "c" * (353 * 1000 - 1)
     assert len(over_warning.encode()) == 353 * 1000
     assert len(over_warning.encode()) > YAML_WARNING_BYTES
-    assert si_size(len(over_warning.encode())) == "353 KB"
+    assert si_size(len(over_warning.encode())) == "353.0 KB"
     editor.setPlainText(over_warning)
     window._actions.format.trigger()
     warning = _visible_warning(window)
     assert warning is not None
-    assert warning.text() == "Format this 353 KB document?"
+    assert warning.text() == "Format this 353.0 KB document?"
     assert not window._formatting
     warning.defaultButton().click()
     qtbot.waitUntil(lambda: window._formatting)
@@ -444,7 +446,9 @@ def test_submit_noop_unlocks_editors_and_shows_an_error(qtbot) -> None:
         window.shutdown_parse_worker()
 
 
-def test_size_warning_asks_once_and_cancel_aborts(qtbot, monkeypatch) -> None:
+def test_size_warning_asks_once_and_cancel_aborts(
+    qtbot, monkeypatch, scheme_palette
+) -> None:
     window, _clock = _held(qtbot, monkeypatch)
     editor, _output, _status, spinner, _bar, _cancel, _button = _parts(window)
     _as_yaml(window)
@@ -459,7 +463,7 @@ def test_size_warning_asks_once_and_cancel_aborts(qtbot, monkeypatch) -> None:
     warning = _visible_warning(window)
     assert warning is not None
     assert warning.windowModality() == Qt.WindowModality.WindowModal
-    assert warning.text() == "Format this 352 KB document?"
+    assert warning.text() == "Format this 352.0 KB document?"
     assert warning.informativeText() == SIZE_WARNING_DETAIL
     assert warning.informativeText() == (
         "Large documents can take a while to format. You can cancel while it runs."

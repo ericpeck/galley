@@ -2625,23 +2625,25 @@ def _format_limit_bytes(source: str) -> int | None:
     return None
 
 
+# Largest first, so a value that rounds to 1000 of a unit can step up.
+_SI_UNITS: tuple[tuple[int, str], ...] = (
+    (1_000_000_000_000, "TB"),
+    (1_000_000_000, "GB"),
+    (_SI_MB, "MB"),
+    (_SI_KB, "KB"),
+)
+
+
 def si_size(num_bytes: int) -> str:
-    """Return ``num_bytes`` in SI units, such as ``1.2 MB``."""
-    if num_bytes < _SI_KB:
-        return f"{num_bytes} B"
-    for scale, label in (
-        (1_000_000_000_000, "TB"),
-        (1_000_000_000, "GB"),
-        (_SI_MB, "MB"),
-        (_SI_KB, "KB"),
-    ):
-        if num_bytes < scale:
-            continue
-        value = num_bytes / scale
-        if abs(value - round(value)) < 1e-9:
-            return f"{int(round(value))} {label}"
-        return f"{value:.1f} {label}"
-    return f"{num_bytes} B"
+    """Return ``num_bytes`` in SI units, one decimal from KB up, such as ``1.2 MB``.
+
+    Every KB and larger value shows one decimal, so a size that rounds to a
+    whole number reads the same as that number (``3.0 MB``, not ``3 MB``).
+    Rounding to 1000 of a unit rolls over to the next (999,999 bytes is
+    ``1.0 MB``). Bytes under 1 KB stay whole numbers, such as ``999 B``.
+    Halves round away from zero.
+    """
+    return _si_label(num_bytes, round_up=False)
 
 
 def si_size_up(num_bytes: int) -> str:
@@ -2649,23 +2651,28 @@ def si_size_up(num_bytes: int) -> str:
 
     A too-large message shows the size this way, so a size just over a
     limit never reads as the limit itself: 2,048,023 bytes is ``2.1 MB``
-    against a 2 MB limit, not ``2.0 MB`` (Bill, #148). An exact size stays
-    as it is, such as ``3.3 MB`` or ``250 KB``.
+    against a 2.0 MB limit, not ``2.0 MB`` (Bill, #148). An exact size uses
+    the same one decimal, such as ``3.3 MB`` or ``250.0 KB``. Rounding up
+    to 1000 of a unit rolls over, as in :func:`si_size`.
     """
+    return _si_label(num_bytes, round_up=True)
+
+
+def _si_label(num_bytes: int, *, round_up: bool) -> str:
+    """One decimal from KB up. 1000.0 of a unit is 1.0 of the next unit."""
     if num_bytes < _SI_KB:
         return f"{num_bytes} B"
-    for scale, label in (
-        (1_000_000_000_000, "TB"),
-        (1_000_000_000, "GB"),
-        (_SI_MB, "MB"),
-        (_SI_KB, "KB"),
-    ):
+    for index, (scale, label) in enumerate(_SI_UNITS):
         if num_bytes < scale:
             continue
-        if num_bytes % scale == 0:
-            return f"{num_bytes // scale} {label}"
-        tenths = -(-num_bytes * 10 // scale)
-        return f"{tenths // 10}.{tenths % 10} {label}"
+        if round_up:
+            tenths = -(-num_bytes * 10 // scale)
+        else:
+            tenths = (num_bytes * 10 + scale // 2) // scale
+        if tenths >= 10_000 and index > 0:
+            return f"1.0 {_SI_UNITS[index - 1][1]}"
+        whole, frac = divmod(tenths, 10)
+        return f"{whole}.{frac} {label}"
     return f"{num_bytes} B"
 
 
