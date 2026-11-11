@@ -3,8 +3,9 @@
 While Output is empty it follows the pickers. Once a Format or Minify
 writes Output, it names that result's direction until Output changes
 result or empties. A picker change after a result leaves it alone; the
-Stale cue for that is D2. Convert from Python, Escape as String and
-Unescape String name their own sources, as Bill chose on #91.
+Stale cue for that is D2. Convert from Python names Python as its
+source. Escape as String and Unescape String name the formats they read
+and wrote (Bill, #91 and #207).
 """
 
 import pytest
@@ -143,7 +144,7 @@ def test_convert_from_python_names_python_as_its_source(
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_escape_as_string_names_text_as_its_source(
+def test_escape_as_string_names_the_input_format(
     qtbot, install_scheme, scheme: str
 ) -> None:
     window = _show(qtbot)
@@ -153,7 +154,8 @@ def test_escape_as_string_names_text_as_its_source(
     window._input_pane.editor.setPlainText("name: Ada Example\nid: 7\n")
     _action(window, "Escape as String").trigger()
     assert window._output_pane.own_editor.toPlainText().startswith('"')
-    _assert_label(window, "Text → JSON")
+    # Escape parses Input as YAML and writes one JSON string (Bill, #207).
+    _assert_label(window, "YAML → JSON")
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])

@@ -39,7 +39,6 @@ def test_the_status_reserve_covers_every_format() -> None:
     names = ("JSON", "YAML", "XML", "HTML", "Python")
     assert INFO_RESERVE == (
         *(f"{left} → {right}" for left in names for right in names),
-        "Text → JSON",
         "Ln 99999, Col 999",
     )
 

@@ -1295,8 +1295,8 @@ class MainWindow(QMainWindow):
                 escape_too_large_message(si_size_up(size), si_size(limit))
             )
             return
-        # Bill's wording (#91): the result is one JSON string.
-        self._show_string_result(escape_input(text, source), "Text → JSON")
+        # Escape parses Input as ``source`` and writes one JSON string (Bill, #207).
+        self._show_string_result(escape_input(text, source), f"{source} → JSON")
 
     def _unescape_string(self) -> None:
         """Format the JSON inside an escaped Input string into Output.
@@ -2540,9 +2540,9 @@ class MainWindow(QMainWindow):
     def _show_result_direction(self, direction: str) -> None:
         """Name the direction of the result just written to Output.
 
-        Format and Minify name the formats. Convert from Python, Escape as
-        String and Unescape String name their own sources, as Bill chose on
-        #91. "" makes the label follow the pickers.
+        Format, Minify, Escape as String and Unescape String name the
+        formats they read and wrote. Convert from Python names Python as its
+        source (Bill, #91 and #207). "" makes the label follow the pickers.
         """
         self._result_direction = direction
         self._sync_direction()

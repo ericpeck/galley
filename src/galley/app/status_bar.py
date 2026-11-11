@@ -41,9 +41,6 @@ COUNTS_RESERVE = ("99999 differences",)
 _FORMAT_NAMES = (*FORMAT_LABELS, "Python")
 INFO_RESERVE = (
     *(f"{left} → {right}" for left in _FORMAT_NAMES for right in _FORMAT_NAMES),
-    # Escape as String's direction (Bill, #91). Convert from Python's
-    # "Python → JSON" and "Python → YAML" are among the pairs above.
-    "Text → JSON",
     "Ln 99999, Col 999",
 )
 
