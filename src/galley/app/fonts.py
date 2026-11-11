@@ -2,7 +2,8 @@
 
 The UI font is the platform system font from
 ``QFontDatabase.systemFont(GeneralFont)``. The family is not named and
-no font file is bundled. Editor text stays monospace.
+no font file is bundled. Editor text uses the platform's fixed-width
+system font from ``QFontDatabase.systemFont(FixedFont)``, by name.
 """
 
 from PySide6.QtGui import QFont, QFontDatabase
@@ -18,10 +19,19 @@ def ui_font(point_size: int = UI_POINT_SIZE) -> QFont:
     return font
 
 
+def code_family() -> str:
+    """The platform's fixed-width system font family, such as Menlo on macOS.
+
+    Naming a family the machine has keeps Qt from scanning every family
+    for an alias. The generic "monospace" cost about 120 ms at startup.
+    """
+    return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+
+
 def code_font(point_size: int = CODE_POINT_SIZE) -> QFont:
     """Return the monospace font used for editor text and line numbers."""
     font = QFont()
-    font.setFamilies(["monospace"])
+    font.setFamilies([code_family()])
     font.setStyleHint(QFont.StyleHint.Monospace)
     font.setFixedPitch(True)
     font.setPointSize(point_size)
