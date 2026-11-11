@@ -165,8 +165,8 @@ Right: direction `JSON → JSON` etc.
 Removed. Galley v1 has no pop-out windows; both panes stay in the main window.
 
 ### 5.10 Search (find bar)
-- **Output find** (4a): field with search icon, `2 of 3`, prev/next arrows, scope segmented toggle `Keys` / `Values` / `Path`, close `×`. Search only, no Replace. Path scope uses dotted form with zero-based indexes (`order.items[2].price`), jumps to the match, and opens folded parents. Current match: `selection` fill with accent outline.
-- **Input find and replace** (4b): plain text search; count, prev/next, Match case, close. Second row: replace field, `Replace`, `Replace All`. No Keys/Values/Path scope (raw input may not parse).
+- **Output find** (4a, as built): field with search icon, `2 of 3`, prev/next arrows, `Match case`, a `Keys only` checkbox, close `×`. Search only, no Replace. `Keys only` matches object keys and not values; its tooltip is `Match only object keys, not values`. When Output is XML or HTML it greys out and keeps its check, with the tooltip `Keys only doesn't apply to XML` (or `HTML`). Current match: `selection` fill with accent outline. No match: the count reads `No results` in muted text and the field gets a 2 px error border, so the border is never the only cue.
+- **Input find and replace** (4b): plain text search; count, prev/next, Match case, close. Second row: replace field, `Replace`, `Replace All`. No `Keys only` (raw input may not parse).
 - **Regex and Whole word** (both bars, as built): two checkable text buttons right of the find field, `Regex` and `Whole word`, no icons. When on, they show the Output Options link's pressed fill and edge. Accessible names `Use regular expression` and `Match whole word`; tooltips add ⌥⌘R / ⌥⌘W (Alt+R / Alt+W on Windows and Linux), which work only while a find bar has focus. Both bars share their state for the session; it is not saved. Tab order: find field, Regex, Whole word, replace field, Replace, Replace All. The search runs in its own process with a 2 s limit, timed by that process; one with no answer after 3 s is stopped. An invalid pattern reads `Invalid pattern` with the red field border, no highlights, and the engine's error (`Col N: …`) as the field's tooltip and spoken text. A search past the limit reads `Search timed out` the same way, and screen readers hear `Search timed out. Try a simpler pattern.` Neither opens a dialog or moves focus. With Regex on, a replacement can put in `$0` to `$9`; `$$` is `$`, and `\n` and `\1` stay as typed. A `$N` the pattern has no group for reads `Invalid replacement` with the red border on the replace field, whose tooltip and spoken text say `The pattern has no group N.`; the highlights stay and Replace and Replace All grey out.
 - During a large write (6d): find works as plain text; count reads `1 so far`; `Path` toggle greyed out with tooltip `Available when formatting finishes`.
 
@@ -227,11 +227,10 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 
 ### 4a — Output find (default), View menu open (ref: 4a)
 - Input holds minified one-line JSON; Output holds formatted JSON with breadcrumb `… › items › [1] › price`, `Copy path`.
-- Find bar open on Output: query `price`, `2 of 3`, scope `Keys` selected. Current match at line 23 highlighted. Line 8 folded (`{ … } 3 keys`); line 14 annotated `3 items`.
+- Find bar open on Output: query `price`, `2 of 3`, `Keys only` on. Current match at line 23 highlighted. Line 8 folded (`{ … } 3 keys`); line 14 annotated `3 items`.
 - View menu open.
-- Path-scope variant: query `order.items[2].price`, `1 match`, `Path` selected; jumps and unfolds parents.
 - Status bar: `✓ Valid JSON · formatted in 3 ms · 34 lines`. Output footer `34 lines`, Copy.
-- Empty query: count hidden. No matches: show `No matches` in muted text (proposal, not in mocks) and keep field focused; do not color the field red.
+- Empty query: count hidden. No matches: `No results` in muted text, with the 2 px error border on the field (as built); the field keeps focus.
 - Keyboard: ⌘F opens/focuses; ↵/⇧↵ next/prev; Esc closes and returns focus to editor.
 
 ### 4b — Input find and replace (ref: 4b)
