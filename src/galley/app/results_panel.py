@@ -285,6 +285,7 @@ class ResultsPanel(QWidget):
     minimize_requested = Signal()
     expand_requested = Signal()
     width_changed = Signal(int)
+    tabs_changed = Signal()
 
     def __init__(self, prefix: str, parent: QWidget | None = None) -> None:
         """``prefix`` starts every object name, as in ``problemsBadge``."""
@@ -315,6 +316,7 @@ class ResultsPanel(QWidget):
 
         header = QWidget()
         header.setObjectName(f"{prefix}Header")
+        self._header = header
         header_row = QHBoxLayout(header)
         header_row.setContentsMargins(8, 4, 4, 4)
         header_row.setSpacing(8)
@@ -391,6 +393,16 @@ class ResultsPanel(QWidget):
     def tab_bar(self) -> QTabBar:
         return self._tab_bar
 
+    def tabs_width(self) -> int:
+        """The width the header needs to show every tab whole, or 0 with one.
+
+        With one tab the header shows a title and badge instead, which may
+        clip, so the panel can still shrink to its minimum (#91 D2).
+        """
+        if len(self._tabs) < 2:
+            return 0
+        return self._header.sizeHint().width()
+
     def current_page(self) -> QWidget | None:
         return self._stack.currentWidget()
 
@@ -450,6 +462,7 @@ class ResultsPanel(QWidget):
         self._title.setVisible(not tabbed)
         self._badge.setVisible(not tabbed)
         self._sync_badge()
+        self.tabs_changed.emit()
 
     def _sync_badge(self) -> None:
         tab = self._current_tab()
