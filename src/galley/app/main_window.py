@@ -365,6 +365,8 @@ class MainWindow(QMainWindow):
         self._format_target = "JSON"
         self._format_sorted = False
         self._format_minify = False
+        # What the running job was started with, for the Stale cue (#91 D2).
+        self._format_settings: tuple[str, str, bool, str] | None = None
         self._format_validate = False
         self._format_idle_text = ""
         self._format_idle_tooltip = ""
@@ -1248,6 +1250,14 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
         self._apply_deferred_reveal()
         self._accepted_job_id = None
+        # The controls stay live while the job runs, so the result is
+        # recorded with what the job read, not what they show when it lands.
+        self._format_settings = (
+            self._format_source,
+            self._format_target,
+            self._actions.sort_keys.isChecked(),
+            self._toolbar.indent_choice(),
+        )
         self._session.start()
         # Sort keys is greyed out for XML but keeps its check for JSON and YAML.
         # Minify keeps Input's key order: Sort keys is for Format (Bill).
@@ -1283,6 +1293,7 @@ class MainWindow(QMainWindow):
         if _is_blank(text):
             return
         target = self._output_pane.format_name()
+        settings = self._result_inputs()
         size = _utf8_size(text)
         yaml_target = target.casefold() == "yaml"
         limit = PYTHON_TO_YAML_BYTES if yaml_target else PYTHON_TO_JSON_BYTES
@@ -1301,7 +1312,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._status.set_state(f"Converted to {target}.")
-        self._record_result("Convert from Python")
+        self._record_result("Convert from Python", settings)
 
     def _escape_string(self) -> None:
         """Write Input as one escaped JSON string to Output. Input is unchanged.
@@ -1315,6 +1326,7 @@ class MainWindow(QMainWindow):
         if text == "":
             return
         source = self._input_pane.format_name()
+        settings = self._result_inputs()
         size = _utf8_size(text)
         limit = _busy_progress_bytes(source, text)[0]
         if size >= limit:
@@ -1324,7 +1336,10 @@ class MainWindow(QMainWindow):
             return
         # Escape parses Input as ``source`` and writes one JSON string (Bill, #207).
         self._show_string_result(
-            escape_input(text, source), f"{source} → JSON", "Escape as String"
+            escape_input(text, source),
+            f"{source} → JSON",
+            "Escape as String",
+            settings,
         )
 
     def _unescape_string(self) -> None:
@@ -1339,6 +1354,7 @@ class MainWindow(QMainWindow):
         if text == "":
             return
         target = self._output_pane.format_name()
+        settings = self._result_inputs()
         size = _utf8_size(text)
         limit = _busy_progress_bytes(target, text)[0]
         if size >= limit:
@@ -1347,11 +1363,18 @@ class MainWindow(QMainWindow):
             )
             return
         self._show_string_result(
-            unescape_input(text, target), f"JSON → {target}", "Unescape String"
+            unescape_input(text, target),
+            f"JSON → {target}",
+            "Unescape String",
+            settings,
         )
 
     def _show_string_result(
-        self, result: StringResult, direction: str, action: str
+        self,
+        result: StringResult,
+        direction: str,
+        action: str,
+        settings: tuple[str, str, bool, str],
     ) -> None:
         if result.problems:
             self._apply_problems(result.problems)
@@ -1363,7 +1386,7 @@ class MainWindow(QMainWindow):
         self._show_result_direction(direction)
         self._clear_problems()
         self._status.set_state(result.status)
-        self._record_result(action)
+        self._record_result(action, settings)
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker.
@@ -1475,7 +1498,9 @@ class MainWindow(QMainWindow):
         self._finish_format(self._success_status())
         if self._format_minify:
             self._show_minify_status(MINIFIED_MESSAGE)
-        self._record_result("Minify" if self._format_minify else "Format")
+        self._record_result(
+            "Minify" if self._format_minify else "Format", self._format_settings
+        )
 
     def _show_valid(self) -> None:
         """Input passed Format's checks. Output is not touched (Chief's brief).
@@ -2532,15 +2557,22 @@ class MainWindow(QMainWindow):
 
     # --- Stale output (#91 D2) ---------------------------------------------
 
-    def _record_result(self, action: str) -> None:
-        """Output now holds a fresh result made by ``action``: nothing is stale."""
+    def _record_result(
+        self, action: str, settings: tuple[str, str, bool, str] | None
+    ) -> None:
+        """Output now holds a result ``action`` made with ``settings``.
+
+        ``settings`` is what the command read when it started. If a control
+        changed while it ran, Output is stale as soon as it lands (Erik).
+        """
         self._result_action = action
-        self._result_settings = self._result_inputs()
+        self._result_settings = settings or self._result_inputs()
         self._result_status = self._status.state_text()
         self._result_made = QDateTime.currentDateTime()
         self._stale = False
         self._stale_banner = ""
         self._sync_stale_cue()
+        self._on_result_setting_changed()
 
     def _forget_result(self) -> None:
         """Output is empty, so there is no result to be stale."""

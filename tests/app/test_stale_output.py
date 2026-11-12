@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QComboBox, QLabel
 from tests.app.compare_inline import inline_compare as inline_compare
 
 from galley.app.main import create_main_window
+from galley.app.parse_session import ParseSession
 from galley.app.stale_cue import banner_text, stale_tooltip, stale_when
 from galley.app.style import stale_style
 from galley.app.theme import contrast_ratio, stale_colors
@@ -342,3 +343,90 @@ def test_entering_and_leaving_compare_leaves_a_fresh_result_fresh(
     compare.trigger()
     assert not compare.isChecked()
     _assert_fresh(window)
+
+
+# --- Settings are the job's, not the controls' at the end (Erik, #208) ------
+
+_FORMATTED = '{\n  "name": "Ada Example",\n  "id": 7\n}\n'
+
+
+def _held_format(qtbot, window, monkeypatch) -> None:
+    """Start a Format whose job finishes only when ``_finish_held`` says so."""
+    monkeypatch.setattr(ParseSession, "active_job_id", property(lambda _self: 1))
+    window._session.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    _input(window).setPlainText(_JSON)
+    _action(window, "Format").trigger()
+    assert window._formatting
+
+
+def _finish_held(qtbot, window) -> None:
+    window._session.finished_job_id = 1
+    window._session.succeeded.emit(_FORMATTED)
+    qtbot.waitUntil(lambda: not window._formatting)
+    assert _output_text(window) == _FORMATTED
+
+
+def _change_output_picker(window) -> None:
+    _child(window, QComboBox, "outputFormat").setCurrentText("YAML")
+
+
+def _change_input_picker(window) -> None:
+    _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
+
+
+def _toggle_sort_keys(window) -> None:
+    _action(window, "Sort keys").trigger()
+
+
+def _change_indent(window) -> None:
+    indent = _child(window, QComboBox, "indentSize")
+    indent.setCurrentIndex((indent.currentIndex() + 1) % indent.count())
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+@pytest.mark.parametrize(
+    "change",
+    [_change_output_picker, _change_input_picker, _toggle_sort_keys, _change_indent],
+    ids=["outputFormat", "inputFormat", "sortKeys", "indent"],
+)
+def test_a_setting_changed_during_format_leaves_output_stale(
+    qtbot, install_scheme, monkeypatch, scheme: str, change
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _held_format(qtbot, window, monkeypatch)
+    change(window)
+    _finish_held(qtbot, window)
+    _assert_stale(window)
+    assert _state(window) == "Ready"
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_setting_changed_and_back_during_format_leaves_output_fresh(
+    qtbot, install_scheme, monkeypatch, scheme: str
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _held_format(qtbot, window, monkeypatch)
+    _toggle_sort_keys(window)
+    _toggle_sort_keys(window)
+    _finish_held(qtbot, window)
+    _assert_fresh(window)
+    assert _state(window) == "Valid JSON"
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_an_input_edit_after_convert_notices_shows_ready(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """Notices count as a success status, so they give way to Ready (Bill)."""
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _input(window).setPlainText("{'nums': (1, 2), 3: 'x'}")
+    _run(qtbot, window, "Convert from Python")
+    notices = _state(window)
+    assert "tuple" in notices
+    _assert_fresh(window)
+    _input(window).insertPlainText(" ")
+    _assert_stale(window, "Convert from Python")
+    assert _state(window) == "Ready"
