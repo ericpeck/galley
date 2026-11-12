@@ -23,6 +23,7 @@ from galley.app.find_bar import FindBar
 from galley.app.fonts import ui_font
 from galley.app.format_picker import FormatComboBox
 from galley.app.open_file import InputDocument
+from galley.app.stale_cue import StaleBanner, StaleTag
 from galley.app.style import (
     link_button_style,
     muted_text_style,
@@ -113,6 +114,13 @@ class PaneWidget(QWidget):
 
         self.tab_strip = QWidget()
         self.tab_strip.setObjectName(f"{spec.name}TabStrip")
+        # Output's Stale cue (#91 D2): a tag after the title, and the 6a
+        # banner between the strip and the editor. Both start hidden.
+        self.stale_tag: StaleTag | None = None
+        self.stale_banner: StaleBanner | None = None
+        if spec.kind is PaneKind.RESULT:
+            self.stale_tag = StaleTag(f"{spec.name}StaleTag")
+            self.stale_banner = StaleBanner(f"{spec.name}StaleBanner")
         self._build_tab_strip()
 
         self.empty_overlay = self._build_empty_state()
@@ -128,6 +136,8 @@ class PaneWidget(QWidget):
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         layout.addWidget(self.tab_strip)
+        if self.stale_banner is not None:
+            layout.addWidget(self.stale_banner)
         layout.addWidget(self.find_bar)
         layout.addWidget(self.editor, 1)
         layout.addWidget(footer)
@@ -253,6 +263,9 @@ class PaneWidget(QWidget):
             _text_width(self._tab_title, title or self._title) + title_extra,
             _hint_width(self.format_combo),
         ]
+        # The Stale tag is state, not chrome, so it never sheds (Bill, Q4).
+        if self.stale_tag is not None and not self.stale_tag.isHidden():
+            parts.append(_hint_width(self.stale_tag))
         if shed < StripShed.CAPTION:
             parts.append(_hint_width(self._format_caption))
         row = self.tab_strip.layout()
@@ -286,6 +299,26 @@ class PaneWidget(QWidget):
                 return elided
             room -= 1
         return "…"
+
+    def set_stale(self, stale: bool, tooltip: str = "") -> bool:
+        """Show or hide the Stale tag. True when that changed the strip."""
+        tag = self.stale_tag
+        if tag is None:
+            return False
+        tag.set_tooltip(tooltip)
+        if tag.isHidden() is not stale:
+            return False
+        tag.setVisible(stale)
+        self.fit_tab_strip()
+        return True
+
+    def set_stale_banner(self, text: str) -> None:
+        """Show the 6a banner with ``text``, or hide it for ""."""
+        banner = self.stale_banner
+        if banner is None:
+            return
+        banner.set_text(text)
+        banner.setVisible(bool(text))
 
     def set_empty_visible(self, visible: bool) -> None:
         self.empty_overlay.setVisible(visible)
@@ -342,6 +375,8 @@ class PaneWidget(QWidget):
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(4)
         row.addWidget(tab)
+        if self.stale_tag is not None:
+            row.addWidget(self.stale_tag)
         row.addStretch(1)
         row.addWidget(format_caption)
         row.addWidget(self.format_combo)

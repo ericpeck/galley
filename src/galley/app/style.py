@@ -9,7 +9,10 @@ from collections.abc import Callable
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
-from galley.app.theme import ACCENT, pane_edge_colors, segment_colors
+from galley.app.theme import ACCENT, pane_edge_colors, segment_colors, stale_colors
+
+# The clock glyph's width plus its gap, left of the Stale text (#91 D2).
+STALE_ICON_ROOM = 20
 
 
 def primary_button_style() -> str:
@@ -249,6 +252,33 @@ def muted_text_style() -> str:
     return "color: palette(placeholder-text);"
 
 
+def stale_style(object_name: str) -> str:
+    """The Stale tag, or the 6a banner when the name ends in ``StaleBanner``.
+
+    The colors are written out (see :func:`stale_colors`), so a scheme
+    switch rebuilds this. Left padding leaves room for the clock, which the
+    label paints itself.
+    """
+    app = QApplication.instance()
+    palette = app.palette() if isinstance(app, QApplication) else QPalette()
+    fill, text, edge = stale_colors(palette)
+    if object_name.endswith("StaleBanner"):
+        shape = (
+            "border: none; "
+            f"border-bottom: 1px solid {edge.name()}; "
+            f"padding: 6px 8px 6px {STALE_ICON_ROOM + 8}px;"
+        )
+    else:
+        shape = (
+            f"border: 1px solid {edge.name()}; border-radius: 4px; "
+            f"padding: 1px 6px 1px {STALE_ICON_ROOM + 6}px;"
+        )
+    return (
+        f"QLabel#{object_name} {{ background-color: {fill.name()}; "
+        f"color: {text.name()}; {shape} }}"
+    )
+
+
 def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
     """Builders for stylesheets that write palette colors out as values.
 
@@ -261,6 +291,7 @@ def palette_baked_styles() -> tuple[Callable[[QWidget], str], ...]:
         _pane_style_for,
         _segment_style_for,
         _find_toggle_style_for,
+        _stale_style_for,
     )
 
 
@@ -278,3 +309,7 @@ def _segment_style_for(_widget: QWidget) -> str:
 
 def _find_toggle_style_for(_widget: QWidget) -> str:
     return find_toggle_style()
+
+
+def _stale_style_for(widget: QWidget) -> str:
+    return stale_style(widget.objectName())
