@@ -62,7 +62,7 @@ jobs:
           GALLEY_BIGCOMPARE_LOG: ${{ runner.temp }}/bigcompare.log
         # -rfEP keeps failure reports and prints the informational timing table.
         run: |
-          uv run pytest -rfEP --junitxml="${RUNNER_TEMP}/pytest.xml"
+          uv run pytest -rfEP --durations=25 --durations-min=1 --junitxml="${RUNNER_TEMP}/pytest.xml"
           uv run python - "${RUNNER_TEMP}/pytest.xml" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
@@ -117,7 +117,7 @@ jobs:
           # step. The passing-compare audit (GALLEY_BIGCOMPARE_AUDIT) is off.
           GALLEY_BIGCOMPARE_LOG: ${{ runner.temp }}/bigcompare.log
         # -rfEP keeps failure reports and prints the informational timing table.
-        run: uv run --no-sync pytest -rfEP
+        run: uv run --no-sync pytest -rfEP --durations=25 --durations-min=1
 
       - name: Show big-text compares and regex worker times
         if: always()
