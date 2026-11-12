@@ -37,6 +37,11 @@ def toolbar_icon(name: str, *, pad: bool = False) -> QIcon:
     return icon
 
 
+def glyph(name: str, color: QColor) -> QPixmap | None:
+    """Draw glyph ``name`` in ``color``, such as the Stale clock (#91 D2)."""
+    return _draw(name, color)
+
+
 def _ink(name: str, palette: QPalette, group: QPalette.ColorGroup) -> QColor:
     if name == "Format":
         # Dark mode moves the Accent role off the brand blue, but the
@@ -77,6 +82,11 @@ def _draw(name: str, color: QColor) -> QPixmap | None:
 
 
 def _stroke(painter: QPainter, name: str) -> bool:
+    if name == "Clock":
+        painter.drawEllipse(2, 2, 12, 12)
+        painter.drawLine(8, 8, 8, 4)
+        painter.drawLine(8, 8, 11, 10)
+        return True
     if name == "Paste":
         painter.drawRoundedRect(4, 3, 8, 10, 1, 1)
         painter.drawLine(6, 3, 6, 5)

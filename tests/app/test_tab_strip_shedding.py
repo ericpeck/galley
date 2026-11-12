@@ -378,6 +378,37 @@ def test_900_px_with_problems_open_clips_nothing(
     _assert_problems_give_way_first(window, problems)
 
 
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_900_px_with_problems_open_and_output_stale(
+    qtbot, install_scheme, strip_font: str, scheme: str
+) -> None:
+    """#91 D2: the Stale tag never sheds and the D1 order holds around it."""
+    del strip_font
+    window = _show(qtbot, 900)
+    install_scheme(scheme)
+    surface = window.palette().color(QPalette.ColorRole.Window)
+    assert (surface.lightness() < 128) is (scheme == "dark")
+    # Fake data only.
+    window._input_pane.editor.setPlainText('{"name": "Ada Example"}')
+    _action(window, "Format").trigger()
+    qtbot.waitUntil(lambda: not window._formatting, timeout=15000)
+    window._input_pane.editor.insertPlainText(" ")
+    output = _panes(window)[1]
+    tag = output.findChild(QLabel, "outputStaleTag")
+    assert isinstance(tag, QLabel)
+    assert tag.isVisibleTo(window)
+    problems = _open_problems(qtbot, window)
+    qtbot.waitUntil(lambda: window.width() == 900)
+    expected = _expected_problems_width(window, DEFAULT_WIDTH)
+    _wait_problems(qtbot, window, problems, expected)
+    _assert_problems_give_way_first(window, problems)
+    # Right after the title, whatever else has shed.
+    parts = sorted(_strip_parts(output), key=lambda item: item.x())
+    assert parts[parts.index(_title(output)) + 1] is tag
+    assert tag.isVisibleTo(window)
+    assert tag.width() >= tag.sizeHint().width()
+
+
 def test_1280_px_with_problems_open(qtbot, strip_font: str) -> None:
     window = _show(qtbot, 1280)
     problems = _open_problems(qtbot, window)

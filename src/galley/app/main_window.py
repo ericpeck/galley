@@ -6,7 +6,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QDateTime,
+    QEvent,
+    QLocale,
+    QObject,
+    QPoint,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
@@ -164,6 +174,7 @@ from galley.app.regex_session import RegexSession
 from galley.app.shortcuts import COLLAPSE_ALL, EXPAND_ALL, FOLD, UNFOLD
 from galley.app.shortcuts import native_chord_text as chord_text
 from galley.app.splitter import PaneSplitter
+from galley.app.stale_cue import banner_text, stale_tooltip, stale_when
 
 # Re-exported: tests and callers import the slot widths from here.
 from galley.app.status_bar import PROGRESS_WIDTH_PX as PROGRESS_WIDTH_PX
@@ -342,6 +353,14 @@ class MainWindow(QMainWindow):
         # The direction of the result in Output, such as "JSON → YAML", or ""
         # while the direction label follows the pickers (#91 D4).
         self._result_direction = ""
+        # What made the result in Output ("Format", "Escape as String", …),
+        # or "" while Output holds none, and what it was made with (#91 D2).
+        self._result_action = ""
+        self._result_settings: tuple[str, str, bool, str] | None = None
+        self._result_status = ""
+        self._result_made = QDateTime()
+        self._stale = False
+        self._stale_banner = ""
         self._format_source = "JSON"
         self._format_target = "JSON"
         self._format_sorted = False
@@ -461,6 +480,7 @@ class MainWindow(QMainWindow):
             self._follow_editor_palette()
             self._sync_indent_units()
             self._update_caption()
+            self._sync_stale_cue()
 
         def _resync() -> None:
             self._sync_input_state()
@@ -983,6 +1003,12 @@ class MainWindow(QMainWindow):
         self._input_pane.format_changed.connect(self._sync_direction)
         self._output_pane.format_changed.connect(self._remember_output_format)
         self._output_pane.format_changed.connect(self._sync_direction)
+        # Any change to what Format would read makes a result stale (#91 D2).
+        self._input_pane.editor.textChanged.connect(self._on_input_edited)
+        self._input_pane.format_changed.connect(self._on_result_setting_changed)
+        self._output_pane.format_changed.connect(self._on_result_setting_changed)
+        self._actions.sort_keys.toggled.connect(self._on_result_setting_changed)
+        self._toolbar.indent_choice_changed.connect(self._on_result_setting_changed)
         self._input_pane.format_changed.connect(self._sync_indent_units)
         self._output_pane.format_changed.connect(self._sync_indent_units)
         self._toolbar.indent_choice_changed.connect(self._on_indent_choice)
@@ -1273,8 +1299,9 @@ class MainWindow(QMainWindow):
             self._status.set_state(
                 " ".join(notice.message for notice in result.notices)
             )
-            return
-        self._status.set_state(f"Converted to {target}.")
+        else:
+            self._status.set_state(f"Converted to {target}.")
+        self._record_result("Convert from Python")
 
     def _escape_string(self) -> None:
         """Write Input as one escaped JSON string to Output. Input is unchanged.
@@ -1296,7 +1323,9 @@ class MainWindow(QMainWindow):
             )
             return
         # Escape parses Input as ``source`` and writes one JSON string (Bill, #207).
-        self._show_string_result(escape_input(text, source), f"{source} → JSON")
+        self._show_string_result(
+            escape_input(text, source), f"{source} → JSON", "Escape as String"
+        )
 
     def _unescape_string(self) -> None:
         """Format the JSON inside an escaped Input string into Output.
@@ -1317,9 +1346,13 @@ class MainWindow(QMainWindow):
                 unescape_too_large_message(si_size_up(size), si_limit(limit))
             )
             return
-        self._show_string_result(unescape_input(text, target), f"JSON → {target}")
+        self._show_string_result(
+            unescape_input(text, target), f"JSON → {target}", "Unescape String"
+        )
 
-    def _show_string_result(self, result: StringResult, direction: str) -> None:
+    def _show_string_result(
+        self, result: StringResult, direction: str, action: str
+    ) -> None:
         if result.problems:
             self._apply_problems(result.problems)
             return
@@ -1330,6 +1363,7 @@ class MainWindow(QMainWindow):
         self._show_result_direction(direction)
         self._clear_problems()
         self._status.set_state(result.status)
+        self._record_result(action)
 
     def _cancel_format(self) -> None:
         """Drop the result, restore the previous output, then kill the worker.
@@ -1441,6 +1475,7 @@ class MainWindow(QMainWindow):
         self._finish_format(self._success_status())
         if self._format_minify:
             self._show_minify_status(MINIFIED_MESSAGE)
+        self._record_result("Minify" if self._format_minify else "Format")
 
     def _show_valid(self) -> None:
         """Input passed Format's checks. Output is not touched (Chief's brief).
@@ -1492,6 +1527,7 @@ class MainWindow(QMainWindow):
             self._status.set_state(message)
             return
         self._finish_format(message)
+        self._show_stale_banner()
 
     def _on_problems(self, problems: object) -> None:
         if not self._formatting or not isinstance(problems, tuple):
@@ -1506,6 +1542,7 @@ class MainWindow(QMainWindow):
         count = sum(1 for row in rows if not row.is_note())
         self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
+        self._show_stale_banner()
         if self._format_minify:
             # Bill's error points at Problems, so it opens even when closed.
             self._set_problems_state(STATE_OPEN)
@@ -2483,10 +2520,97 @@ class MainWindow(QMainWindow):
         self._output_pane.set_empty_visible(empty)
         if self._result_direction and self._output_pane.own_editor.document().isEmpty():
             self._show_result_direction("")
+        if self._result_action and self._output_pane.own_editor.document().isEmpty():
+            self._forget_result()
         if empty:
             self._output_pane.count_label.setText("")
             return
+        if self._stale_cue_shown():
+            self._output_pane.count_label.setText("Last good result")
+            return
         self._output_pane.count_label.setText(_line_label(editor.blockCount()))
+
+    # --- Stale output (#91 D2) ---------------------------------------------
+
+    def _record_result(self, action: str) -> None:
+        """Output now holds a fresh result made by ``action``: nothing is stale."""
+        self._result_action = action
+        self._result_settings = self._result_inputs()
+        self._result_status = self._status.state_text()
+        self._result_made = QDateTime.currentDateTime()
+        self._stale = False
+        self._stale_banner = ""
+        self._sync_stale_cue()
+
+    def _forget_result(self) -> None:
+        """Output is empty, so there is no result to be stale."""
+        self._result_action = ""
+        self._result_settings = None
+        self._stale = False
+        self._stale_banner = ""
+        self._sync_stale_cue()
+
+    def _result_inputs(self) -> tuple[str, str, bool, str]:
+        """The settings Format reads: both pickers, Sort keys and Indent."""
+        return (
+            self._input_pane.format_name(),
+            self._output_pane.format_name(),
+            self._actions.sort_keys.isChecked(),
+            self._toolbar.indent_choice(),
+        )
+
+    def _on_input_edited(self) -> None:
+        self._mark_stale()
+
+    def _on_result_setting_changed(self, *_args: object) -> None:
+        """A picker, Sort keys or Indent changed. Compare's swaps don't count."""
+        if self._compare_on() or not self._result_action:
+            return
+        if self._result_inputs() != self._result_settings:
+            self._mark_stale()
+
+    def _mark_stale(self) -> None:
+        """Output no longer matches. It stays stale until the next good run (Q2).
+
+        Only a success status turns into Ready. A problem count, a busy or
+        Cancel status stays (Bill, Q3).
+        """
+        if not self._result_action or self._stale:
+            return
+        self._stale = True
+        if not self._formatting and self._status.state_text() == self._result_status:
+            self._status.set_state("Ready")
+        self._sync_stale_cue()
+
+    def _show_stale_banner(self) -> None:
+        """A Format failed while Output holds an earlier result: the 6a banner."""
+        if not self._result_action or self._format_minify or self._format_validate:
+            return
+        now = QDateTime.currentDateTime()
+        self._stale = True
+        self._stale_banner = banner_text(
+            stale_when(self._result_made, now, QLocale.system())
+        )
+        self._sync_stale_cue()
+        # Announced once, when it appears (Bill, Q6). The tag never is.
+        self._status.announce(self._stale_banner)
+
+    def _stale_cue_shown(self) -> bool:
+        """Compare replaces Output, so the cue waits until it ends (Bill, Q1)."""
+        return self._stale and not self._compare_on()
+
+    def _compare_on(self) -> bool:
+        compare = getattr(self, "_compare", None)
+        return compare is not None and compare.is_on()
+
+    def _sync_stale_cue(self) -> None:
+        shown = self._stale_cue_shown()
+        tip = stale_tooltip(self._result_action or "Format")
+        if self._output_pane.set_stale(shown, tip):
+            # The tag widens the strip, so Problems may give way (#91 D2).
+            self._layout_problems()
+        self._output_pane.set_stale_banner(self._stale_banner if shown else "")
+        self._sync_output_state()
 
     def _not_available_reason(self) -> str:
         """Why the JSON and YAML commands are greyed out, or "" (B2 on #63).

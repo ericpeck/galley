@@ -176,6 +176,22 @@ def pane_edge_colors(palette: QPalette) -> tuple[QColor, QColor]:
     return edge, ring
 
 
+def stale_colors(palette: QPalette) -> tuple[QColor, QColor, QColor]:
+    """Fill, text and edge of the Stale tag and banner (#91 D2).
+
+    The fill is AlternateBase, the spec's tag token. The text is
+    WindowText, and the edge starts from ``Mid`` and is lifted toward the
+    text until it is 3:1 on the fill and on the window around it.
+    """
+    window = palette.color(QPalette.ColorRole.Window)
+    fill = composite(palette.color(QPalette.ColorRole.AlternateBase), window)
+    text = composite(palette.color(QPalette.ColorRole.WindowText), fill)
+    edge = visible_edge(
+        composite(palette.color(QPalette.ColorRole.Mid), window), (window, fill), text
+    )
+    return fill, text, edge
+
+
 def selected_problem_palette(palette: QPalette) -> QPalette:
     """Problem selection fill on the highlight role.
 
