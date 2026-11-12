@@ -145,16 +145,28 @@ def array_closes_later(text: str, pos: int) -> bool:
     A ``"key":`` inside an array reads as the object's key only when the
     array never closes (#195 B6). Otherwise the colon is a missing comma.
     """
-    depth = 0
+    return _closer_after(text, pos, {}) == "]"
+
+
+def _closer_after(text: str, pos: int, closers: dict[int, str]) -> str:
+    """The first ``]`` or ``}`` after ``pos`` that closes nothing opened
+    after ``pos``, or "" when the text ends first.
+
+    Each bracket opened on the way goes into ``closers`` with the closer
+    that ends it, or "" if none does, so the scan never reads it again.
+    """
+    opened: list[int] = []
     for match in _STRING_OR_BRACKET.finditer(text, pos):
         token = match.group()
         if token == "[" or token == "{":
-            depth += 1
+            opened.append(match.start())
         elif token == "]" or token == "}":
-            if depth == 0:
-                return token == "]"
-            depth -= 1
-    return False
+            if not opened:
+                return token
+            closers.setdefault(opened.pop(), token)
+    for start in opened:
+        closers.setdefault(start, "")
+    return ""
 
 
 def scan_json(text: str, limit: int = MAX_FINDINGS) -> Scan:
@@ -183,6 +195,9 @@ class _Scanner:
         self.extra_seen = False
         # The last value read was a string, so a colon after it makes it a key.
         self.after_string = False
+        # Where each open bracket closes, "]" or "}", or "" if it never
+        # does. B6 looks ahead once per array, not once per key (#210).
+        self.closers: dict[int, str] = {}
 
     def run(self) -> None:
         index = 0
@@ -368,7 +383,7 @@ class _Scanner:
             and len(kinds) >= 2
             and kinds[-1] == "["
             and kinds[-2] == "{"
-            and not array_closes_later(self.text, index)
+            and not self.closes_later(index)
         ):
             return False
         self.slip(EXPECT_COMMA, index, array_key=True)
@@ -376,6 +391,15 @@ class _Scanner:
         del self.opens[-1:]
         del self.keys[-1:]
         return True
+
+    def closes_later(self, index: int) -> bool:
+        """True when a ``]`` after ``index`` closes the innermost array."""
+        opened = self.opens[-1]
+        closer = self.closers.get(opened)
+        if closer is None:
+            closer = _closer_after(self.text, index, self.closers)
+            self.closers[opened] = closer
+        return closer == "]"
 
     def key(self, index: int, state: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_KEY)
