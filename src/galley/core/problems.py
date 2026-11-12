@@ -25,13 +25,16 @@ from galley.core.errors import (
     JSONDuplicateKeyError,
     XMLSyntaxError,
 )
-from galley.core.json_recover import Scan, Slip, scan_json
+from galley.core.json_recover import Scan, Slip, array_closes_later, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
 # linear, and strings are skipped so brackets inside them do not count.
 _STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[][{}]', re.DOTALL)
 _CLOSERS = {"[": "]", "{": "}"}
 _NEWLINE = re.compile("\n")
+# Python's spellings of JSON's literals. The word must end there, so
+# ``Nonexistent`` is not ``None`` (#195 B9).
+_PYTHON_LITERAL = re.compile(r"(True|False|None)(?![A-Za-z0-9_])")
 
 # Every code the XML check reports. A type checker sees the app's sentence
 # for each one, since that function ends in ``assert_never`` (#135).
@@ -60,6 +63,9 @@ ProblemCode = Literal[
     "unexpected_close",
     "unquoted_key",
     "single_quotes",
+    "python_literal",
+    "python_tuple",
+    "json_comment",
     "missing_close",
     "incomplete",
     "json_duplicate",
@@ -101,6 +107,9 @@ class Problem:
 
     ``json_stopped`` is not a problem: it ends the list when the scan
     stopped at ``MAX_FINDINGS``, on the line where it stopped.
+
+    ``python_literal`` names ``True``, ``False`` or ``None`` in ``token``.
+    ``python_tuple`` is a ``(`` where a list's ``[`` belongs.
 
     Problems compare by code, line, token, and found, the parts a sentence
     says.
@@ -238,6 +247,10 @@ def classify_failure(exc: BaseException, text: str) -> Problem | None:
 
 
 def _classify_json(exc: json.JSONDecodeError, text: str) -> Problem:
+    array = _array_with_a_key(text, exc.msg, exc.pos)
+    if array is not None:
+        lines = _Lines(text)
+        return Problem("missing_close", lines.line_of(array), "[", lines.column(array))
     quote = text.rfind('"', 0, exc.pos) if exc.pos > 0 else -1
     return _json_problem(
         text,
@@ -250,6 +263,15 @@ def _classify_json(exc: json.JSONDecodeError, text: str) -> Problem:
 
 
 def _slip_problem(slip: Slip, text: str, lines: "_Lines") -> Problem:
+    if slip.array_key and slip.opened is not None:
+        # "key": inside an array: the array never closed (#195 B6).
+        return Problem(
+            "missing_close",
+            lines.line_of(slip.opened),
+            "[",
+            lines.column(slip.opened),
+            slip.after_guess,
+        )
     return _json_problem(
         text,
         lines,
@@ -284,6 +306,18 @@ def _json_problem(
             code, lines.line_of(index), token, lines.column(index), uncertain
         )
 
+    if char == "/" and _char_at(text, pos + 1) in {"/", "*"}:
+        return at("json_comment", pos)
+    if message == "Expecting value":
+        literal = _PYTHON_LITERAL.match(text, pos)
+        if literal is not None:
+            return at("python_literal", pos, literal.group(1))
+        if char == "(":
+            return at("python_tuple", pos, char)
+        if _at_end(text, pos) and _last_mark(text, pos) == ":":
+            # Cut off mid-value: the end of the text is the one cause, so
+            # the brackets still open get no rows of their own (#195 B7).
+            return _missing_close(lines, pos, lambda: None, uncertain)
     if message.startswith("Unterminated string"):
         return at("unclosed_quote", pos)
     if message.startswith("Invalid control character") and char in {"\n", "\r"}:
@@ -341,6 +375,11 @@ def _missing_close(
 
 
 def _innermost_open(text: str, end: int) -> int | None:
+    stack = _open_brackets(text, end)
+    return stack[-1] if stack else None
+
+
+def _open_brackets(text: str, end: int) -> list[int]:
     stack: list[int] = []
     for match in _STRING_OR_BRACKET.finditer(text, 0, end):
         token = match.group()
@@ -348,7 +387,25 @@ def _innermost_open(text: str, end: int) -> int | None:
             stack.append(match.start())
         elif token in {"]", "}"} and stack:
             stack.pop()
-    return stack[-1] if stack else None
+    return stack
+
+
+def _array_with_a_key(text: str, message: str, pos: int) -> int | None:
+    """The array a ``"key":`` stands in, when that array sits in an object.
+
+    The scan's ``Slip.array_key`` finds the same case; this is for the one
+    error ``json.loads`` names (#195 B6).
+    """
+    if message != "Expecting ',' delimiter" or _char_at(text, pos) != ":":
+        return None
+    if _last_mark(text, pos) != '"':
+        return None
+    stack = _open_brackets(text, pos)
+    if len(stack) < 2 or text[stack[-1]] != "[" or text[stack[-2]] != "{":
+        return None
+    if array_closes_later(text, pos):
+        return None
+    return stack[-1]
 
 
 def _word_start(char: str) -> bool:
@@ -479,6 +536,14 @@ def _char_at(text: str, pos: int) -> str:
     if pos < 0 or pos >= len(text):
         return ""
     return text[pos]
+
+
+def _last_mark(text: str, pos: int) -> str:
+    """The last character before ``pos`` that is not whitespace, or ""."""
+    index = pos - 1
+    while index >= 0 and text[index] in " \t\r\n":
+        index -= 1
+    return text[index] if index >= 0 else ""
 
 
 def _comma_before(text: str, pos: int) -> int | None:

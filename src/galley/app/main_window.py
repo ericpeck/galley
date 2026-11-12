@@ -149,6 +149,7 @@ from galley.app.parse_session import ParseSession
 from galley.app.problem_text import (
     DisplayProblem,
     announcement_text,
+    message_for,
     problem_count_text,
 )
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
@@ -187,17 +188,24 @@ from galley.app.style import (
 )
 from galley.app.tab_repair import replace_leading_tabs
 from galley.app.toolbar import MainToolbar
-from galley.core.convert_python import ConvertError, convert_python
+from galley.core.convert_python import NOT_PYTHON, ConvertError, convert_python
 from galley.core.folds import FoldRange, unpack_ranges
 from galley.core.format import _has_tab
 from galley.core.formats import HTML, XML, YAML, format_named, targets_for
 from galley.core.load import LoadedDocument, LoadError
 from galley.core.mask import CopyAsMode, CopyAsResult
+from galley.core.problems import Problem
 from galley.core.worker import CopyAsEvent, CopyAsFailureEvent, CopyAsJob, run_copy_as
 
 NOT_YET_MESSAGE = "Not yet available."
+# Rows that mean Input is a Python dictionary, so the status bar offers
+# Convert from Python (Bill, #195 B9).
+CONVERT_OFFER_CODES = frozenset({"python_literal", "python_tuple", "single_quotes"})
+# A Convert from Python error's row code. It has its own sentence.
+CONVERT_PROBLEM_CODE = "python_convert"
 NOTHING_TO_FOLD = "nothing to fold"
-CANCELLED_MESSAGE = "Formatting canceled."
+# Format and Minify both put the previous result back (Bill, D9).
+CANCELLED_MESSAGE = "Canceled. Showing the previous result."
 FORMATTING_MESSAGE = "Formatting…"
 # Words, not only the pressed Sort keys button, say the output was sorted.
 SORTED_KEYS_SUFFIX = "· keys sorted A–Z"
@@ -220,7 +228,7 @@ MINIFY_NOT_AVAILABLE = "Minify works on JSON."
 MINIFY_STATUS_MS = OPENED_STATUS_MS
 # A Minify job's busy words. The busy state is on Minify, not Format.
 MINIFYING_MESSAGE = "Minifying…"
-MINIFY_CANCELLED_MESSAGE = "Minifying canceled."
+MINIFY_CANCELLED_MESSAGE = CANCELLED_MESSAGE
 MINIFY_BUSY_TOOLTIP = "Minifying… press Cancel to stop"
 MINIFY_BUSY_DESCRIPTION = "Minify is running. Press Cancel to stop."
 # Format's size question in Minify's words.
@@ -981,6 +989,7 @@ class MainWindow(QMainWindow):
         self._output_pane.editor.folds_changed.connect(self._sync_fold_actions)
         self._output_pane.editor.fold_toggled.connect(self._announce_fold)
         self._status.cancel_clicked.connect(self._cancel_format)
+        self._status.convert_clicked.connect(self._actions.convert_python.trigger)
         self._session.write_progress.connect(self._on_write_progress)
         self._session.succeeded.connect(self._on_format_succeeded)
         self._session.failed.connect(self._on_format_failed)
@@ -1250,6 +1259,7 @@ class MainWindow(QMainWindow):
         self._sync_format_button()
         self._apply_deferred_reveal()
         self._accepted_job_id = None
+        self._status.set_convert_offer(False)
         # The controls stay live while the job runs, so the result is
         # recorded with what the job read, not what they show when it lands.
         self._format_settings = (
@@ -1292,6 +1302,8 @@ class MainWindow(QMainWindow):
         text = self._input_pane.editor.toPlainText()
         if _is_blank(text):
             return
+        # The offer is spent once Convert runs, whatever the result (Bill).
+        self._status.set_convert_offer(False)
         target = self._output_pane.format_name()
         settings = self._result_inputs()
         size = _utf8_size(text)
@@ -1302,17 +1314,38 @@ class MainWindow(QMainWindow):
             return
         result = convert_python(text, target)
         if isinstance(result, ConvertError):
-            self._status.set_state(result.message)
+            self._show_convert_error(result)
             return
         self._output_pane.editor.setPlainText(result.text)
         self._show_result_direction(f"Python → {target}")
-        if result.notices:
-            self._status.set_state(
-                " ".join(notice.message for notice in result.notices)
-            )
-        else:
-            self._status.set_state(f"Converted to {target}.")
+        self._clear_problems()
+        # "Converted to YAML." then the notes (Bill, D9).
+        status = " ".join(
+            (f"Converted to {target}.", *(notice.message for notice in result.notices))
+        )
+        self._status.set_state(status)
         self._record_result("Convert from Python", settings)
+
+    def _show_convert_error(self, error: ConvertError) -> None:
+        """A Problems row and a gutter marker, as Format's errors get (D5).
+
+        The row is one sentence with no column; its place label shows it.
+        Text that isn't Python at all also gets 6l's status sentence.
+        """
+        message = error.message
+        if error.opener:
+            # The same sentence as JSON's (Bill, #195 E7).
+            message = message_for(Problem("missing_close", error.lineno, error.opener))
+        row = DisplayProblem(
+            error.lineno,
+            message,
+            f"Line {error.lineno}: {message}",
+            CONVERT_PROBLEM_CODE,
+            error.colno,
+        )
+        self._apply_problems((row,))
+        if error.syntax:
+            self._status.set_state(NOT_PYTHON)
 
     def _escape_string(self) -> None:
         """Write Input as one escaped JSON string to Output. Input is unchanged.
@@ -1568,6 +1601,10 @@ class MainWindow(QMainWindow):
         self._finish_format(problem_count_text(count))
         self._apply_problems(rows)
         self._show_stale_banner()
+        if not self._format_minify and not self._format_validate:
+            self._status.set_convert_offer(
+                any(row.code in CONVERT_OFFER_CODES for row in rows)
+            )
         if self._format_minify:
             # Bill's error points at Problems, so it opens even when closed.
             self._set_problems_state(STATE_OPEN)
@@ -2592,6 +2629,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_input_edited(self) -> None:
+        self._status.set_convert_offer(False)
         self._mark_stale()
 
     def _on_result_setting_changed(self, *_args: object) -> None:

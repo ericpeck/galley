@@ -19,6 +19,7 @@ from galley.app.limits import PYTHON_TO_JSON_BYTES, PYTHON_TO_YAML_BYTES
 from galley.app.main import create_main_window
 from galley.app.main_window import si_size, si_size_up
 from galley.app.parse_session import ParseSession
+from galley.app.problems_pane import ProblemsPane
 from galley.core.convert_python import ConvertResult, convert_python
 
 # D6: Convert from Python runs on the UI thread, so at its limit the convert
@@ -70,7 +71,9 @@ def test_convert_from_python_shows_the_notice_and_keeps_the_result(qtbot) -> Non
     assert isinstance(result, ConvertResult)
     assert output.toPlainText() == result.text
     assert json.loads(output.toPlainText()) == {"nums": [1, 2], "3": "x"}
-    assert status.text() == " ".join(notice.message for notice in result.notices)
+    # "Converted to JSON." then the notes (Bill, D9).
+    notes = " ".join(notice.message for notice in result.notices)
+    assert status.text() == f"Converted to JSON. {notes}"
     assert "tuple" in status.text()
     assert "key" in status.text()
     assert editor.toPlainText() == source
@@ -79,9 +82,12 @@ def test_convert_from_python_shows_the_notice_and_keeps_the_result(qtbot) -> Non
     editor.setPlainText("__import__('os')")
     convert.trigger()
     assert output.toPlainText() == "previous\n"
-    assert "line 1" in status.text()
-    assert "column 1" in status.text()
-    assert "Function calls" in status.text()
+    # The error is a Problems row now, and the status counts it (D5).
+    assert status.text() == "1 problem"
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(pane, ProblemsPane)
+    assert pane.messages() == ["Function calls can't be converted."]
+    assert pane.lines() == [1]
 
 
 def test_convert_is_in_the_edit_menu_beside_format_without_a_shortcut(qtbot) -> None:

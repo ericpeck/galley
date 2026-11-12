@@ -367,8 +367,9 @@ def test_cancel_discards_the_result_and_shows_the_status(qtbot, monkeypatch) -> 
     assert editor.toPlainText() == '{"a": 1}'
     assert not editor.isReadOnly()
     assert not output.isReadOnly()
-    assert CANCELLED_MESSAGE == "Formatting canceled."
-    assert status.text() == "Formatting canceled."
+    # The spec's words, in US spelling (Bill, D9).
+    assert CANCELLED_MESSAGE == "Canceled. Showing the previous result."
+    assert status.text() == "Canceled. Showing the previous result."
     assert window._cancel_status_timer.isActive()
     assert window._cancel_status_timer.interval() == CANCELED_STATUS_MS
     assert not bar.isVisible()

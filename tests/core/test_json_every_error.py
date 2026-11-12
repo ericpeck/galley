@@ -117,11 +117,9 @@ def test_a_mistyped_closer_closes_the_inner_bracket() -> None:
 
 
 def test_cascades_after_an_unclosed_array_stay_short() -> None:
+    # "b": inside the array closes it: one sure row, no comma row (#195 B6).
     text = '{\n  "a": [1, 2,\n  "b": 3\n}\n'
-    assert _rows(text) == [
-        ("missing_close", 2, 8, "[", True),
-        ("missing_comma", 3, 6, "", False),
-    ]
+    assert _rows(text) == [("missing_close", 2, 8, "[", False)]
 
 
 def test_repeated_keys_and_syntax_errors_share_text_order() -> None:
@@ -161,12 +159,13 @@ def test_a_bom_is_reported_and_the_rest_is_checked() -> None:
 
 
 def test_comments_are_skipped_after_their_error() -> None:
-    # A comment after a value reads as a missing comma, as it does today.
+    # Each comment is its own row, and the real missing comma between
+    # them still is one (#195 B10).
     text = '{\n  // note\n  "a": 1\n  "b": 2 /* why */\n}\n'
     assert _rows(text) == [
-        ("json_other", 2, 3, "", False),
+        ("json_comment", 2, 3, "", False),
         ("missing_comma", 3, 9, "", False),
-        ("missing_comma", 4, 9, "", False),
+        ("json_comment", 4, 10, "", False),
     ]
 
 
@@ -201,9 +200,9 @@ def test_one_line_of_junk_is_one_problem_per_token() -> None:
     assert [row[0] for row in _rows(text)] == [
         "single_quotes",
         "single_quotes",
-        "json_other",
+        "python_literal",
         "single_quotes",
-        "json_other",
+        "python_literal",
     ]
 
 

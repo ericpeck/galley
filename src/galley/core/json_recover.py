@@ -70,8 +70,13 @@ _LITERALS = {
 _JUNK = re.compile(r"""[^ \t\n\r,:\[\]{}"'/]+""")
 _SINGLE_QUOTED = re.compile(r"'(?:[^'\\\n\r]|\\[^\n\r])*'")
 _LINE_END = re.compile(r"[^\n\r]*")
-_CLOSER = {"[": "]", "{": "}"}
+# ``(`` is a Python tuple. It is read as a list, so its items do not read
+# as object keys (#195 B9).
+_CLOSER = {"[": "]", "{": "}", "(": ")"}
 _ESCAPES = frozenset('"\\/bfnrt')
+# A string, even one cut off at a line end, or one bracket. Used to find
+# where an array closes.
+_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\\n\r]|\\.)*"?|[][{}]')
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
 _ITEM_START = frozenset("\"'{[-0123456789_$")
@@ -86,6 +91,8 @@ class Slip:
     ``opened`` is the innermost bracket still open at ``pos``, or None.
     ``start`` is the opening quote for a string error, otherwise ``pos``.
     ``after_guess`` is True when an earlier repair was a guess.
+    ``array_key`` is True when ``"key":`` stood inside an array, in an
+    object: the array at ``opened`` was never closed (#195 B6).
     """
 
     message: str
@@ -93,6 +100,7 @@ class Slip:
     opened: int | None
     start: int
     after_guess: bool
+    array_key: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +139,36 @@ def _reject_repeated_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
 _DECODER = json.JSONDecoder(object_pairs_hook=_reject_repeated_keys)
 
 
+def array_closes_later(text: str, pos: int) -> bool:
+    """True when a ``]`` closes the array open at ``pos`` before a ``}``.
+
+    A ``"key":`` inside an array reads as the object's key only when the
+    array never closes (#195 B6). Otherwise the colon is a missing comma.
+    """
+    return _closer_after(text, pos, {}) == "]"
+
+
+def _closer_after(text: str, pos: int, closers: dict[int, str]) -> str:
+    """The first ``]`` or ``}`` after ``pos`` that closes nothing opened
+    after ``pos``, or "" when the text ends first.
+
+    Each bracket opened on the way goes into ``closers`` with the closer
+    that ends it, or "" if none does, so the scan never reads it again.
+    """
+    opened: list[int] = []
+    for match in _STRING_OR_BRACKET.finditer(text, pos):
+        token = match.group()
+        if token == "[" or token == "{":
+            opened.append(match.start())
+        elif token == "]" or token == "}":
+            if not opened:
+                return token
+            closers.setdefault(opened.pop(), token)
+    for start in opened:
+        closers.setdefault(start, "")
+    return ""
+
+
 def scan_json(text: str, limit: int = MAX_FINDINGS) -> Scan:
     """Return every syntax error and repeated key in ``text``."""
     scanner = _Scanner(text, limit)
@@ -155,6 +193,11 @@ class _Scanner:
         # An unclosed string that ended in a comma already separated items.
         self.implied_comma = False
         self.extra_seen = False
+        # The last value read was a string, so a colon after it makes it a key.
+        self.after_string = False
+        # Where each open bracket closes, "]" or "}", or "" if it never
+        # does. B6 looks ahead once per array, not once per key (#210).
+        self.closers: dict[int, str] = {}
 
     def run(self) -> None:
         index = 0
@@ -173,7 +216,7 @@ class _Scanner:
         if state == _AFTER:
             return self.after(index)
         if state == _VALUE or state == _FIRST_VALUE:
-            if state == _FIRST_VALUE and self.char(index) == "]":
+            if state == _FIRST_VALUE and self.char(index) == _CLOSER[self.kinds[-1]]:
                 return self.close(index)
             return self.value(index)
         if state == _COLON:
@@ -184,13 +227,22 @@ class _Scanner:
 
     # Findings
 
-    def slip(self, message: str, pos: int, start: int | None = None) -> None:
+    def slip(
+        self,
+        message: str,
+        pos: int,
+        start: int | None = None,
+        *,
+        array_key: bool = False,
+    ) -> None:
         if self.quiet:
             return
         self.count_one(pos)
         opened = self.opens[-1] if self.opens else None
         place = pos if start is None else start
-        self.slips.append(Slip(message, pos, opened, place, self.guessed))
+        self.slips.append(
+            Slip(message, pos, opened, place, self.guessed, array_key=array_key)
+        )
         self.quiet = True
 
     def repeat(self, key: str, pos: int) -> None:
@@ -225,8 +277,14 @@ class _Scanner:
 
     def value(self, index: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_VALUE)
+        self.after_string = char == '"'
         if char == '"':
             return self.string(index)[0], self.after_value()
+        if char == "(":
+            # A Python tuple. Its items are read as a list's.
+            self.slip(EXPECT_VALUE, index)
+            self.push(char, index)
+            return index + 1, _FIRST_VALUE
         if char == "{" or char == "[":
             end = self.decoded_end(index)
             self.parsed()
@@ -271,8 +329,9 @@ class _Scanner:
 
     def bad_value(self, index: int, char: str) -> tuple[int, int]:
         """Repair a value that does not parse, after its error."""
-        if char in "]}" or char == ",":
-            # A missing value. The comma or bracket is read next.
+        if char in "]}," or (char == ")" and self.kinds and self.kinds[-1] == "("):
+            # A missing value. The comma or bracket is read next. A ")" with
+            # no tuple open is junk, read past below, or the scan would stop.
             return index, self.after_value()
         if char == ":":
             self.guess()
@@ -289,22 +348,58 @@ class _Scanner:
         kind = self.kinds[-1]
         if char == _CLOSER[kind]:
             return self.close(index)
+        listed = _VALUE if kind != "{" else _KEY
         if char == ",":
             self.parsed()
-            return index + 1, _VALUE if kind == "[" else _KEY
+            self.after_string = False
+            return index + 1, listed
         if implied and _starts_item(char):
-            return index, _VALUE if kind == "[" else _KEY
+            return index, listed
+        if char == ":" and self.array_key(index):
+            return index, _COLON
+        self.after_string = False
         self.slip(EXPECT_COMMA, index)
-        if char in "]}":
+        if char in "]})":
             return self.mismatch(index, char)
         if _starts_item(char):
-            return index, _VALUE if kind == "[" else _KEY
+            return index, listed
         if char == ":":
             self.guess()
             return index + 1, _AFTER
         if char == "/" and self.char(index + 1) in ("/", "*"):
             return self.comment(index), _AFTER
         return self.junk(index), _AFTER
+
+    def array_key(self, index: int) -> bool:
+        """``"key":`` inside an array that sits in an object (#195 B6).
+
+        The array is missing its closer, and the key belongs to the
+        object. The array closes here and the colon is read as the
+        object's. Otherwise the colon is an ordinary missing comma.
+        """
+        kinds = self.kinds
+        if not (
+            self.after_string
+            and len(kinds) >= 2
+            and kinds[-1] == "["
+            and kinds[-2] == "{"
+            and not self.closes_later(index)
+        ):
+            return False
+        self.slip(EXPECT_COMMA, index, array_key=True)
+        del kinds[-1:]
+        del self.opens[-1:]
+        del self.keys[-1:]
+        return True
+
+    def closes_later(self, index: int) -> bool:
+        """True when a ``]`` after ``index`` closes the innermost array."""
+        opened = self.opens[-1]
+        closer = self.closers.get(opened)
+        if closer is None:
+            closer = _closer_after(self.text, index, self.closers)
+            self.closers[opened] = closer
+        return closer == "]"
 
     def key(self, index: int, state: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_KEY)
@@ -369,6 +464,8 @@ class _Scanner:
 
     def close(self, index: int) -> tuple[int, int]:
         self.parsed()
+        # A bracket was read last, not a string.
+        self.after_string = False
         return self.pop_to(index, 1)
 
     def pop_to(self, index: int, count: int) -> tuple[int, int]:
@@ -472,6 +569,11 @@ class _Scanner:
         return _LINE_END.match(self.text, index).end()
 
     def comment(self, index: int) -> int:
+        """Skip a comment after its error. It is a sure repair (#195 B10).
+
+        So the next error is reported, such as a second comment.
+        """
+        self.parsed()
         if self.text[index + 1] == "/":
             return _LINE_END.match(self.text, index).end()
         end = self.text.find("*/", index + 2)
