@@ -25,7 +25,7 @@ from galley.core.errors import (
     JSONDuplicateKeyError,
     XMLSyntaxError,
 )
-from galley.core.json_recover import Scan, Slip, scan_json
+from galley.core.json_recover import Scan, Slip, array_closes_later, scan_json
 
 # A complete JSON string or one bracket. The unrolled string body stays
 # linear, and strings are skipped so brackets inside them do not count.
@@ -402,6 +402,8 @@ def _array_with_a_key(text: str, message: str, pos: int) -> int | None:
         return None
     stack = _open_brackets(text, pos)
     if len(stack) < 2 or text[stack[-1]] != "[" or text[stack[-2]] != "{":
+        return None
+    if array_closes_later(text, pos):
         return None
     return stack[-1]
 

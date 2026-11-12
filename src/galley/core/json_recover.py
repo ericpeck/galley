@@ -74,6 +74,9 @@ _LINE_END = re.compile(r"[^\n\r]*")
 # as object keys (#195 B9).
 _CLOSER = {"[": "]", "{": "}", "(": ")"}
 _ESCAPES = frozenset('"\\/bfnrt')
+# A string, even one cut off at a line end, or one bracket. Used to find
+# where an array closes.
+_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\\n\r]|\\.)*"?|[][{}]')
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
 _ITEM_START = frozenset("\"'{[-0123456789_$")
@@ -134,6 +137,24 @@ def _reject_repeated_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 _DECODER = json.JSONDecoder(object_pairs_hook=_reject_repeated_keys)
+
+
+def array_closes_later(text: str, pos: int) -> bool:
+    """True when a ``]`` closes the array open at ``pos`` before a ``}``.
+
+    A ``"key":`` inside an array reads as the object's key only when the
+    array never closes (#195 B6). Otherwise the colon is a missing comma.
+    """
+    depth = 0
+    for match in _STRING_OR_BRACKET.finditer(text, pos):
+        token = match.group()
+        if token == "[" or token == "{":
+            depth += 1
+        elif token == "]" or token == "}":
+            if depth == 0:
+                return token == "]"
+            depth -= 1
+    return False
 
 
 def scan_json(text: str, limit: int = MAX_FINDINGS) -> Scan:
@@ -315,11 +336,13 @@ class _Scanner:
         listed = _VALUE if kind != "{" else _KEY
         if char == ",":
             self.parsed()
+            self.after_string = False
             return index + 1, listed
         if implied and _starts_item(char):
             return index, listed
         if char == ":" and self.array_key(index):
             return index, _COLON
+        self.after_string = False
         self.slip(EXPECT_COMMA, index)
         if char in "]})":
             return self.mismatch(index, char)
@@ -345,6 +368,7 @@ class _Scanner:
             and len(kinds) >= 2
             and kinds[-1] == "["
             and kinds[-2] == "{"
+            and not array_closes_later(self.text, index)
         ):
             return False
         self.slip(EXPECT_COMMA, index, array_key=True)
@@ -416,6 +440,8 @@ class _Scanner:
 
     def close(self, index: int) -> tuple[int, int]:
         self.parsed()
+        # A bracket was read last, not a string.
+        self.after_string = False
         return self.pop_to(index, 1)
 
     def pop_to(self, index: int, count: int) -> tuple[int, int]:

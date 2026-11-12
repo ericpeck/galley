@@ -243,33 +243,51 @@ def _syntax_error(exc: SyntaxError, text: str) -> ConvertError:
     """The sentence for text that isn't one Python value (Bill, #195 E7, E8).
 
     A bracket that never closes names its opener, for JSON's sentence in
-    the app. An assignment such
-    as ``config = {...}`` names what to remove. Anything else gets 6l's
-    sentence: the parser's own words are never shown.
+    the app. Valid Python that isn't one value, such as ``config = {...}``
+    or ``import os``, says what to change. Only text that isn't Python at
+    all gets 6l's sentence: the parser's own words are never shown.
     """
     line = exc.lineno if isinstance(exc.lineno, int) else 1
     column = exc.offset if isinstance(exc.offset, int) and exc.offset > 0 else 1
     unclosed = _NEVER_CLOSED.match(exc.msg or "")
     if unclosed is not None:
         return ConvertError("", line, column, syntax=True, opener=unclosed.group(1))
-    assigned = _assignment(text)
-    if assigned is not None:
-        return assigned
+    statement = _statement_error(text)
+    if statement is not None:
+        return statement
     return ConvertError(NOT_PYTHON, line, column, syntax=True)
 
 
-def _assignment(text: str) -> ConvertError | None:
-    """``name = value`` where only the value is wanted, or None.
+def _statement_error(text: str) -> ConvertError | None:
+    """The row for valid Python that isn't one value, or None.
 
-    The text is only parsed, as a statement this time. Nothing runs.
+    The text is only parsed, as statements this time. Nothing runs.
     """
     try:
         module = ast.parse(text, mode="exec")
     except (SyntaxError, RecursionError, ValueError):
         return None
-    if len(module.body) != 1:
+    body = module.body
+    if not body:
         return None
-    statement = module.body[0]
+    assigned = _assignment(body)
+    if assigned is not None:
+        return assigned
+    # The first statement that isn't a value, else the second value.
+    statement = next(
+        (item for item in body if not isinstance(item, ast.Expr)),
+        body[1] if len(body) > 1 else body[0],
+    )
+    line = statement.lineno
+    message = f"Convert from Python reads a value, not a statement, on line {line}."
+    return ConvertError(message, line, statement.col_offset + 1)
+
+
+def _assignment(body: list[ast.stmt]) -> ConvertError | None:
+    """``name = value`` where only the value is wanted, or None."""
+    if len(body) != 1:
+        return None
+    statement = body[0]
     if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
         return None
     target = statement.targets[0]
@@ -283,7 +301,7 @@ def _assignment(text: str) -> ConvertError | None:
         f'Remove "{name} =" on line {line}. '
         "Convert from Python reads a value, not an assignment."
     )
-    return ConvertError(message, line, target.col_offset + 1, syntax=True)
+    return ConvertError(message, line, target.col_offset + 1)
 
 
 def _render(value: object, target: str, depth: int) -> str:
