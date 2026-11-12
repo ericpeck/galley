@@ -24,6 +24,7 @@ KEY_DISPLAY_LIMIT = 40
 # After the scan guessed at a repair, a later problem may come from the guess.
 UNCERTAIN_SUFFIX = "(may be caused by an earlier error)"
 STOPPED_TEXT = "Galley stopped checking after this point."
+_JSON_LITERALS = {"True": "true", "False": "false", "None": "null"}
 
 
 def message_for(problem: Problem) -> str:
@@ -43,9 +44,17 @@ def message_for(problem: Problem) -> str:
         return f"Put double quotes around the key on line {line}."
     if code == "single_quotes":
         return f"Use double quotes instead of single quotes on line {line}."
+    if code == "python_literal":
+        # Python's True, False and None are JSON's true, false and null (#195).
+        written = _JSON_LITERALS.get(problem.token, "null")
+        return f"Use {written} instead of {problem.token or 'None'} on line {line}."
+    if code == "python_tuple":
+        return f"Use [ and ] instead of ( and ) for a list on line {line}."
+    if code == "json_comment":
+        return f"JSON doesn't allow comments. Remove the comment on line {line}."
     if code == "missing_close":
         opener = problem.token if problem.token else "{"
-        closer = "]" if opener == "[" else "}"
+        closer = {"[": "]", "(": ")"}.get(opener, "}")
         return f"Missing {closer} for the {opener} opened on line {line}."
     if code == "incomplete":
         return f"The text ends on line {line} before the JSON document finishes."

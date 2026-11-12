@@ -70,7 +70,9 @@ _LITERALS = {
 _JUNK = re.compile(r"""[^ \t\n\r,:\[\]{}"'/]+""")
 _SINGLE_QUOTED = re.compile(r"'(?:[^'\\\n\r]|\\[^\n\r])*'")
 _LINE_END = re.compile(r"[^\n\r]*")
-_CLOSER = {"[": "]", "{": "}"}
+# ``(`` is a Python tuple. It is read as a list, so its items do not read
+# as object keys (#195 B9).
+_CLOSER = {"[": "]", "{": "}", "(": ")"}
 _ESCAPES = frozenset('"\\/bfnrt')
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
@@ -86,6 +88,8 @@ class Slip:
     ``opened`` is the innermost bracket still open at ``pos``, or None.
     ``start`` is the opening quote for a string error, otherwise ``pos``.
     ``after_guess`` is True when an earlier repair was a guess.
+    ``array_key`` is True when ``"key":`` stood inside an array, in an
+    object: the array at ``opened`` was never closed (#195 B6).
     """
 
     message: str
@@ -93,6 +97,7 @@ class Slip:
     opened: int | None
     start: int
     after_guess: bool
+    array_key: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,8 @@ class _Scanner:
         # An unclosed string that ended in a comma already separated items.
         self.implied_comma = False
         self.extra_seen = False
+        # The last value read was a string, so a colon after it makes it a key.
+        self.after_string = False
 
     def run(self) -> None:
         index = 0
@@ -173,7 +180,7 @@ class _Scanner:
         if state == _AFTER:
             return self.after(index)
         if state == _VALUE or state == _FIRST_VALUE:
-            if state == _FIRST_VALUE and self.char(index) == "]":
+            if state == _FIRST_VALUE and self.char(index) == _CLOSER[self.kinds[-1]]:
                 return self.close(index)
             return self.value(index)
         if state == _COLON:
@@ -184,13 +191,22 @@ class _Scanner:
 
     # Findings
 
-    def slip(self, message: str, pos: int, start: int | None = None) -> None:
+    def slip(
+        self,
+        message: str,
+        pos: int,
+        start: int | None = None,
+        *,
+        array_key: bool = False,
+    ) -> None:
         if self.quiet:
             return
         self.count_one(pos)
         opened = self.opens[-1] if self.opens else None
         place = pos if start is None else start
-        self.slips.append(Slip(message, pos, opened, place, self.guessed))
+        self.slips.append(
+            Slip(message, pos, opened, place, self.guessed, array_key=array_key)
+        )
         self.quiet = True
 
     def repeat(self, key: str, pos: int) -> None:
@@ -225,8 +241,14 @@ class _Scanner:
 
     def value(self, index: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_VALUE)
+        self.after_string = char == '"'
         if char == '"':
             return self.string(index)[0], self.after_value()
+        if char == "(":
+            # A Python tuple. Its items are read as a list's.
+            self.slip(EXPECT_VALUE, index)
+            self.push(char, index)
+            return index + 1, _FIRST_VALUE
         if char == "{" or char == "[":
             end = self.decoded_end(index)
             self.parsed()
@@ -271,8 +293,9 @@ class _Scanner:
 
     def bad_value(self, index: int, char: str) -> tuple[int, int]:
         """Repair a value that does not parse, after its error."""
-        if char in "]}" or char == ",":
-            # A missing value. The comma or bracket is read next.
+        if char in "]}," or (char == ")" and self.kinds and self.kinds[-1] == "("):
+            # A missing value. The comma or bracket is read next. A ")" with
+            # no tuple open is junk, read past below, or the scan would stop.
             return index, self.after_value()
         if char == ":":
             self.guess()
@@ -289,22 +312,46 @@ class _Scanner:
         kind = self.kinds[-1]
         if char == _CLOSER[kind]:
             return self.close(index)
+        listed = _VALUE if kind != "{" else _KEY
         if char == ",":
             self.parsed()
-            return index + 1, _VALUE if kind == "[" else _KEY
+            return index + 1, listed
         if implied and _starts_item(char):
-            return index, _VALUE if kind == "[" else _KEY
+            return index, listed
+        if char == ":" and self.array_key(index):
+            return index, _COLON
         self.slip(EXPECT_COMMA, index)
-        if char in "]}":
+        if char in "]})":
             return self.mismatch(index, char)
         if _starts_item(char):
-            return index, _VALUE if kind == "[" else _KEY
+            return index, listed
         if char == ":":
             self.guess()
             return index + 1, _AFTER
         if char == "/" and self.char(index + 1) in ("/", "*"):
             return self.comment(index), _AFTER
         return self.junk(index), _AFTER
+
+    def array_key(self, index: int) -> bool:
+        """``"key":`` inside an array that sits in an object (#195 B6).
+
+        The array is missing its closer, and the key belongs to the
+        object. The array closes here and the colon is read as the
+        object's. Otherwise the colon is an ordinary missing comma.
+        """
+        kinds = self.kinds
+        if not (
+            self.after_string
+            and len(kinds) >= 2
+            and kinds[-1] == "["
+            and kinds[-2] == "{"
+        ):
+            return False
+        self.slip(EXPECT_COMMA, index, array_key=True)
+        del kinds[-1:]
+        del self.opens[-1:]
+        del self.keys[-1:]
+        return True
 
     def key(self, index: int, state: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_KEY)
@@ -472,6 +519,11 @@ class _Scanner:
         return _LINE_END.match(self.text, index).end()
 
     def comment(self, index: int) -> int:
+        """Skip a comment after its error. It is a sure repair (#195 B10).
+
+        So the next error is reported, such as a second comment.
+        """
+        self.parsed()
         if self.text[index + 1] == "/":
             return _LINE_END.match(self.text, index).end()
         end = self.text.find("*/", index + 2)

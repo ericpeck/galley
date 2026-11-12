@@ -6,11 +6,16 @@ an allowlist. Values are built from those nodes. Nothing in the text is run.
 ``format_json`` rejects documents nested past ``MAX_DEPTH`` and does not cap
 the number of characters. This walk uses that same depth limit. A
 ``RecursionError`` from the parser or a dump becomes a :class:`ConvertError`.
+
+Each error is one sentence that names the line at most, never the column
+(Bill, #195). The Problems row shows the place. Python's own parser text
+is never shown.
 """
 
 import ast
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import assert_never
 
@@ -34,11 +39,22 @@ class ConvertNotice:
 
 @dataclass(frozen=True)
 class ConvertError:
-    """A located problem. ``message`` names it and includes the line and column."""
+    """A located problem. ``message`` is the sentence for its Problems row.
+
+    ``syntax`` is True when the text isn't valid Python at all, so the
+    status says so (6l). Otherwise the text parsed but holds something
+    that has no JSON or YAML value.
+
+    ``opener`` is the bracket that never closed, such as ``{``. The app
+    words that row as it words JSON's, so ``message`` is empty then:
+    bracket sentences live in ``galley.app``.
+    """
 
     message: str
     lineno: int
     colno: int
+    syntax: bool = False
+    opener: str = ""
 
 
 @dataclass(frozen=True)
@@ -74,8 +90,8 @@ class _ReduceDict:
 _Step = _Visit | _ReduceList | _ReduceTuple | _ReduceDict
 
 _CALL = "Function calls can't be converted"
-_DATE_HINT = '. Use a string instead, such as "2026-10-18".'
-_TIME_HINT = '. Use a string instead, such as "12:30".'
+_DATE_HINT = ' Use a string instead, such as "2026-10-18".'
+_TIME_HINT = ' Use a string instead, such as "12:30".'
 _CALL_HINTS = {"datetime": _DATE_HINT, "date": _DATE_HINT, "time": _TIME_HINT}
 
 _REJECTED: dict[type[ast.AST], str] = {
@@ -90,7 +106,7 @@ _REJECTED: dict[type[ast.AST], str] = {
     ast.Lambda: "Lambda expressions can't be converted",
     ast.JoinedStr: "F-strings can't be converted",
     ast.FormattedValue: "F-strings can't be converted",
-    ast.BinOp: "Binary operators can't be converted",
+    ast.BinOp: "Arithmetic can't be converted. Write the result instead",
     ast.BoolOp: "Boolean operators can't be converted",
     ast.Compare: "Comparison operators can't be converted",
     ast.IfExp: "Conditional expressions can't be converted",
@@ -110,6 +126,25 @@ _BYTES = "Bytes can't be converted"
 _COMPLEX = "Complex numbers can't be converted"
 _UNKNOWN = "This expression can't be converted"
 _VALUE = "This value can't be converted"
+# 6l's sentence, for text that isn't Python at all (Bill, D5).
+NOT_PYTHON = "This isn't valid Python, so it can't be converted."
+_LOOKS_LIKE_JSON = "This looks like JSON, not Python. Use Format instead"
+_JSON_NAMES = frozenset({"true", "false", "null"})
+# How Python prints a float that isn't finite, and what float() reads.
+_NONFINITE_NAMES = {"nan": math.nan, "inf": math.inf}
+_NONFINITE_TEXT = {
+    "nan": math.nan,
+    "inf": math.inf,
+    "+inf": math.inf,
+    "-inf": -math.inf,
+    "infinity": math.inf,
+    "+infinity": math.inf,
+    "-infinity": -math.inf,
+}
+_NEVER_CLOSED = re.compile(r"^'([\[{(])' was never closed$")
+# A long name is cut like a long key in the Problems pane
+# (``KEY_DISPLAY_LIMIT`` in ``galley.app.problem_text``).
+NAME_DISPLAY_LIMIT = 40
 
 
 def convert_python(text: str, target: str = "json") -> ConvertResult | ConvertError:
@@ -130,7 +165,7 @@ def convert_python(text: str, target: str = "json") -> ConvertResult | ConvertEr
     except RecursionError:
         return _depth_error(1, 1)
     except SyntaxError as exc:
-        return _syntax_error(exc)
+        return _syntax_error(exc, text)
     walker = _Walker(kind)
     try:
         error = walker.evaluate(parsed.body)
@@ -157,11 +192,7 @@ def _normalize_target(target: str) -> str:
 
 
 def _problem(problem: str, line: int, column: int) -> ConvertError:
-    return ConvertError(
-        message=f"{problem}: line {line} column {column}",
-        lineno=line,
-        colno=column,
-    )
+    return ConvertError(message=f"{problem}.", lineno=line, colno=column)
 
 
 def _located(node: ast.AST, problem: str) -> ConvertError:
@@ -172,9 +203,7 @@ def _located(node: ast.AST, problem: str) -> ConvertError:
     if not hint:
         return error
     return ConvertError(
-        message=error.message + hint,
-        lineno=error.lineno,
-        colno=error.colno,
+        message=error.message + hint, lineno=error.lineno, colno=error.colno
     )
 
 
@@ -210,11 +239,51 @@ def _depth_error(line: int, column: int) -> ConvertError:
     )
 
 
-def _syntax_error(exc: SyntaxError) -> ConvertError:
+def _syntax_error(exc: SyntaxError, text: str) -> ConvertError:
+    """The sentence for text that isn't one Python value (Bill, #195 E7, E8).
+
+    A bracket that never closes names its opener, for JSON's sentence in
+    the app. An assignment such
+    as ``config = {...}`` names what to remove. Anything else gets 6l's
+    sentence: the parser's own words are never shown.
+    """
     line = exc.lineno if isinstance(exc.lineno, int) else 1
     column = exc.offset if isinstance(exc.offset, int) and exc.offset > 0 else 1
-    detail = exc.msg or "This isn't valid Python"
-    return _problem(detail, line, column)
+    unclosed = _NEVER_CLOSED.match(exc.msg or "")
+    if unclosed is not None:
+        return ConvertError("", line, column, syntax=True, opener=unclosed.group(1))
+    assigned = _assignment(text)
+    if assigned is not None:
+        return assigned
+    return ConvertError(NOT_PYTHON, line, column, syntax=True)
+
+
+def _assignment(text: str) -> ConvertError | None:
+    """``name = value`` where only the value is wanted, or None.
+
+    The text is only parsed, as a statement this time. Nothing runs.
+    """
+    try:
+        module = ast.parse(text, mode="exec")
+    except (SyntaxError, RecursionError, ValueError):
+        return None
+    if len(module.body) != 1:
+        return None
+    statement = module.body[0]
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    if not isinstance(target, ast.Name):
+        return None
+    name = target.id
+    if len(name) > NAME_DISPLAY_LIMIT:
+        name = name[:NAME_DISPLAY_LIMIT] + "…"
+    line = target.lineno
+    message = (
+        f'Remove "{name} =" on line {line}. '
+        "Convert from Python reads a value, not an assignment."
+    )
+    return ConvertError(message, line, target.col_offset + 1, syntax=True)
 
 
 def _render(value: object, target: str, depth: int) -> str:
@@ -295,6 +364,9 @@ class _Walker:
 
     def _visit(self, step: _Visit, work: list[_Step]) -> ConvertError | None:
         node = step.node
+        special = self._special(node)
+        if special is not None:
+            return special if isinstance(special, ConvertError) else None
         rejected = _REJECTED.get(type(node))
         if rejected is not None:
             return _located(node, rejected)
@@ -309,6 +381,26 @@ class _Walker:
         if isinstance(node, ast.Dict):
             return self._open_dict(node, step.depth, work)
         return _located(node, _UNKNOWN)
+
+    def _special(self, node: ast.AST) -> ConvertError | bool | None:
+        """Names, calls and sums that have a clearer answer (Bill, #195).
+
+        Returns an error, True once a value is pushed, or None when the
+        ordinary rules apply.
+        """
+        if isinstance(node, ast.Name):
+            if node.id in _JSON_NAMES:
+                return _located(node, _LOOKS_LIKE_JSON)
+            if node.id in _NONFINITE_NAMES:
+                return self._float(node, _NONFINITE_NAMES[node.id]) or True
+            return None
+        nonfinite = _nonfinite_value(node)
+        if nonfinite is not None:
+            return self._float(node, nonfinite) or True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
+            if _is_complex(node.left) or _is_complex(node.right):
+                return _located(node, _COMPLEX)
+        return None
 
     def _constant(self, node: ast.Constant) -> ConvertError | None:
         value = node.value
@@ -426,6 +518,41 @@ class _Walker:
             built[text] = value
         self.values.append(built)
         return None
+
+
+def _nonfinite_value(node: ast.AST) -> float | None:
+    """NaN or infinity spelled ``-inf``, ``float('nan')`` or ``float('-inf')``.
+
+    Only a ``float`` call on one string constant counts, and only the
+    spellings in ``_NONFINITE_TEXT``. Nothing is called.
+    """
+    if (
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, (ast.USub, ast.UAdd))
+        and isinstance(node.operand, ast.Name)
+        and node.operand.id in _NONFINITE_NAMES
+    ):
+        value = _NONFINITE_NAMES[node.operand.id]
+        return -value if isinstance(node.op, ast.USub) else value
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "float"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return None
+    arg = node.args[0]
+    if not isinstance(arg, ast.Constant) or type(arg.value) is not str:
+        return None
+    return _NONFINITE_TEXT.get(arg.value.strip().lower())
+
+
+def _is_complex(node: ast.AST) -> bool:
+    """A complex literal such as ``4j``, or ``-4j``."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        node = node.operand
+    return isinstance(node, ast.Constant) and type(node.value) is complex
 
 
 def _pop_sequence(values: list[object], count: int) -> list[object]:

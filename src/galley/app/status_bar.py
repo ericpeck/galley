@@ -9,6 +9,8 @@ Left to right:
   Text too long for the slot is elided, with the full text in its tooltip.
 - **counts:** a short tally such as ``5 differences``.
 - **progress:** the write progress bar and Cancel.
+- **convert:** the Convert from Python button, after a Format that found
+  Python's ``True``, ``None``, a tuple or single quotes (#195 B9).
 - **info:** permanent facts on the right. Today that is the format
   direction; the cursor position joins it later.
 
@@ -35,6 +37,10 @@ STATUS_FONT_PX = 13
 CHECK_ICON_PX = 16
 SPINNER_ACCESSIBLE_NAME = "Formatting"
 PROGRESS_ACCESSIBLE_NAME = "Formatting progress"
+# Bill's B9 button (#195). It runs Convert from Python at once, so it has
+# no "…" until the 6i–6l preview dialog lands.
+CONVERT_TEXT = "Convert from Python"
+CONVERT_TOOLTIP = "Convert this Python dictionary to JSON or YAML"
 
 # The widest text each slot expects. The slot reserves that width up front.
 COUNTS_RESERVE = ("99999 differences",)
@@ -92,6 +98,7 @@ class StatusBar(QStatusBar):
 
     state_clicked = Signal()
     cancel_clicked = Signal()
+    convert_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -122,6 +129,14 @@ class StatusBar(QStatusBar):
         self._cancel.setAccessibleName("Cancel")
         self._cancel.hide()
         self._cancel.clicked.connect(self.cancel_clicked)
+        # Text beside the icon, never icon-only (Bill, #195 B9).
+        self._convert = QPushButton(CONVERT_TEXT)
+        self._convert.setObjectName("convertPythonButton")
+        self._convert.setAccessibleName(CONVERT_TEXT)
+        self._convert.setToolTip(CONVERT_TOOLTIP)
+        self._convert.setIcon(toolbar_icon(CONVERT_TEXT))
+        self._convert.hide()
+        self._convert.clicked.connect(self.convert_clicked)
         self._direction = _text_slot("directionLabel", font, INFO_RESERVE)
         self._announcement = ""
         self.addWidget(self._spinner)
@@ -130,7 +145,10 @@ class StatusBar(QStatusBar):
         self.addWidget(self._counts)
         self.addWidget(self._progress)
         self.addWidget(self._cancel)
+        self.addWidget(self._convert)
         self.addPermanentWidget(self._direction)
+        # The footer's last control, so Tab reaches it after Cancel.
+        QWidget.setTabOrder(self._cancel, self._convert)
         # Adding a widget rebuilds the layout, so set the margins last.
         layout = self.layout()
         if layout is not None:
@@ -159,16 +177,26 @@ class StatusBar(QStatusBar):
         self._check.hide()
         self._message.show_problem_count(count)
 
+    def set_convert_offer(self, shown: bool) -> None:
+        """Show or hide the Convert from Python button (#195 B9)."""
+        self._convert.setVisible(shown)
+
+    def convert_offered(self) -> bool:
+        return not self._convert.isHidden()
+
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
-        if (
-            event.type()
-            in (
-                QEvent.Type.PaletteChange,
-                QEvent.Type.ApplicationPaletteChange,
-            )
-            and self.check_shown()
+        if event.type() not in (
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
         ):
+            return
+        # The icon is drawn in the palette's text color, so redraw it. The
+        # stylesheet sends this event before the button is built.
+        convert = getattr(self, "_convert", None)
+        if convert is not None:
+            convert.setIcon(toolbar_icon(CONVERT_TEXT))
+        if self.check_shown():
             self._draw_check()
 
     def _draw_check(self) -> None:
