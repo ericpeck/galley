@@ -212,8 +212,12 @@ class StatusBar(QStatusBar):
         return self._counts.text()
 
     def set_info(self, text: str) -> None:
-        """Show the right-hand info text, today the format direction."""
+        """Show the right-hand info text, today the format direction.
+
+        Screen readers hear the same text (Bill, #91).
+        """
         self._direction.setText(text)
+        self._direction.setAccessibleName(text)
 
     def info_text(self) -> str:
         return self._direction.text()
