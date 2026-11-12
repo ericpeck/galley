@@ -15,6 +15,7 @@ from galley.core.convert_python import (
     ConvertResult,
     convert_python,
 )
+from galley.core.json_recover import scan_json
 from galley.core.problems import collect_problems
 
 _B6 = '{\n"items": [1, 2, 3,\n"done": true\n}'
@@ -50,6 +51,20 @@ def _error(text: str, target: str = "json") -> ConvertError:
 
 def test_b6_a_key_inside_an_unclosed_array_is_one_missing_bracket() -> None:
     assert _rows(_B6) == [("missing_close", 2, 10, "[", False)]
+
+
+def test_b6_does_not_apply_when_a_bracket_closes_the_array_later() -> None:
+    """The ``]`` is there, so the keys are missing commas, as on main."""
+    assert _rows('{"a": [1, "x" : 2, "y" : 3]}') == [
+        ("missing_comma", 1, 14, "", False),
+        ("missing_comma", 1, 23, "", True),
+    ]
+
+
+def test_b6_needs_a_string_right_before_the_colon() -> None:
+    """A string inside a closed inner array is not a key of the object."""
+    scan = scan_json('{"a": [[1 2, "y"] : 3}')
+    assert not any(slip.array_key for slip in scan.slips)
 
 
 def test_b7_text_cut_off_mid_value_is_one_text_ends_problem() -> None:
@@ -116,7 +131,22 @@ def test_e8_an_assignment_names_what_to_remove() -> None:
         "Convert from Python reads a value, not an assignment."
     )
     assert (error.lineno, error.colno) == (1, 1)
-    assert error.syntax
+    # The text is valid Python, so the status keeps the problem count.
+    assert not error.syntax
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [("import os", 1), ("x = 1; y = 2", 1), ("a.b = 1", 1), ("{'a': 1}\n{'b': 2}", 2)],
+    ids=["import", "two statements", "attribute", "two values"],
+)
+def test_e8_other_valid_python_says_it_is_a_statement(source: str, line: int) -> None:
+    error = _error(source)
+    assert error.message == (
+        f"Convert from Python reads a value, not a statement, on line {line}."
+    )
+    assert (error.lineno, error.colno) == (line, 1)
+    assert not error.syntax
 
 
 def test_e8_a_long_name_is_cut_like_a_long_key() -> None:
@@ -184,6 +214,7 @@ def test_e11_other_arithmetic_says_to_write_the_result(value: str) -> None:
     "source",
     [
         "config = {'debug': True}",
+        "import os",
         "{'a': <x>}",
         '{"a": true}',
         "{'a': float('nan')}",

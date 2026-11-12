@@ -8,8 +8,11 @@ import pytest
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
 
+from galley.app import main_window as main_window_module
 from galley.app.editor import CodeEditor
+from galley.app.escape_string import convert_python_too_large_message
 from galley.app.main import create_main_window
+from galley.app.main_window import si_size_up
 from galley.app.parse_session import ParseSession
 from galley.app.problem_text import place_text
 from galley.app.problems_pane import ProblemsPane
@@ -65,7 +68,25 @@ _CONVERT_CASES = {
         'Remove "config =" on line 1. '
         "Convert from Python reads a value, not an assignment.",
         "Line 1, Col 1",
-        _NOT_PYTHON,
+        "1 problem",
+    ),
+    "E8 import": (
+        "import os",
+        "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
+    ),
+    "E8 two statements": (
+        "x = 1; y = 2",
+        "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
+    ),
+    "E8 attribute": (
+        "a.b = 1",
+        "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
     ),
     "E8 other": (
         "{'owner': <Customer object at 0x10>}",
@@ -212,6 +233,20 @@ def test_a_plain_json_error_offers_nothing(qtbot, install_scheme, scheme) -> Non
     assert not _offer(window).isVisibleTo(window)
 
 
+@pytest.mark.parametrize("scheme", _SCHEMES)
+@pytest.mark.parametrize("command", ["Minify", "Validate"])
+def test_minify_or_validate_on_python_rows_offers_nothing(
+    qtbot, install_scheme, scheme: str, command: str
+) -> None:
+    """Only Format offers Convert from Python (Bill, #195 B9)."""
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _input(window).setPlainText(_B9)
+    _run(qtbot, window, command)
+    assert "Use true instead of True on line 1." in _pane(window).messages()
+    assert not _offer(window).isVisibleTo(window)
+
+
 def test_the_offer_is_after_the_footers_last_control(qtbot) -> None:
     window = _show(qtbot)
     cancel = window.findChild(QPushButton, "cancelButton")
@@ -266,6 +301,21 @@ def test_the_offer_goes_away_when_convert_fails(
     _offer(window).click()
     assert not _offer(window).isVisibleTo(window)
     assert _pane(window).messages() == [_NOT_PYTHON]
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+def test_the_offer_goes_away_when_convert_is_too_large(
+    qtbot, install_scheme, monkeypatch, scheme: str
+) -> None:
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _format(qtbot, window, _B9)
+    assert _offer(window).isVisibleTo(window)
+    monkeypatch.setattr(main_window_module, "PYTHON_TO_JSON_BYTES", 10)
+    _offer(window).click()
+    assert not _offer(window).isVisibleTo(window)
+    size = si_size_up(len(_B9.encode("utf-8")))
+    assert _state(window) == convert_python_too_large_message(size)
 
 
 # --- Convert from Python errors are Problems rows (D5) ------------------------
