@@ -67,6 +67,29 @@ def test_b6_needs_a_string_right_before_the_colon() -> None:
     assert not any(slip.array_key for slip in scan.slips)
 
 
+# Each "x" : 1 pair is 9 characters, so 200 000 pairs are about 1.8 MB.
+_KEY_PAIRS = 200_000
+
+
+@pytest.mark.perf
+def test_b6_checks_each_array_once_not_each_key(perf_budget) -> None:
+    """``"x" :`` pairs in one array that closes: B6 looks ahead once.
+
+    Looking ahead from every pair read the rest of the text each time, so
+    the cost grew with pairs times size (Erik, #210). The limit of 1 000
+    findings still applies, so the scan reads to that limit.
+    """
+    text = '{"a": [' + '"x" : 1, ' * _KEY_PAIRS + "1]}"
+    assert 1_700_000 < len(text) < 1_900_000
+    error = _decode_error(text)
+
+    def check() -> None:
+        found = collect_problems(text, "JSON", error)
+        assert found[0].code == "missing_comma"
+
+    perf_budget.within(0.25, check, fixture="1.8 MB of key pairs in one array")
+
+
 def test_b7_text_cut_off_mid_value_is_one_text_ends_problem() -> None:
     assert _rows(_B7) == [("incomplete", 5, 22, "", False)]
 
