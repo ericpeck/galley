@@ -542,7 +542,8 @@ def test_esc_cancels_a_minify_like_format(qtbot, monkeypatch) -> None:
     assert output.toPlainText() == "keep\n"
     assert source.toPlainText() == _PRETTY
     assert not source.isReadOnly()
-    assert MINIFY_CANCELLED_MESSAGE == "Minifying canceled."
+    # Minify puts the previous result back too (Bill, D9).
+    assert MINIFY_CANCELLED_MESSAGE == "Canceled. Showing the previous result."
     assert _status(window) == MINIFY_CANCELLED_MESSAGE
     assert window._cancel_status_timer.isActive()
 
@@ -561,7 +562,7 @@ def test_a_format_job_keeps_formats_busy_face(qtbot, monkeypatch) -> None:
     assert button.accessibleDescription() == ""
     assert not _minify(window).isEnabled()
     window._cancel_format()
-    assert _status(window) == "Formatting canceled."
+    assert _status(window) == "Canceled. Showing the previous result."
 
 
 def test_minify_runs_on_the_worker_like_format(qtbot, monkeypatch) -> None:

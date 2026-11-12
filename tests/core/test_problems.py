@@ -82,7 +82,8 @@ def test_missing_bracket_names_the_open_curly_bracket() -> None:
     assert _json_problem(text) == Problem("missing_close", 2, "{")
     assert _json_problem('{"a": 1') == Problem("missing_close", 1, "{")
     assert _json_problem("{") == Problem("missing_close", 1, "{")
-    assert _json_problem('{"a":') == Problem("missing_close", 1, "{")
+    # Cut off mid-value, the end of the text is the one cause (#195 B7).
+    assert _json_problem('{"a":') == Problem("incomplete", 1)
     nested = '{\n  "a": {\n    "b": 1\n  }\n'
     assert _json_problem(nested) == Problem("missing_close", 1, "{")
 

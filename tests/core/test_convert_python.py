@@ -185,9 +185,7 @@ def test_infinity_is_rejected_for_json_and_kept_for_yaml() -> None:
     error = _error(source, "json")
     assert error.lineno == 2
     assert error.colno == 3
-    assert error.message == (
-        "NaN and Infinity can't be converted to JSON: line 2 column 3"
-    )
+    assert error.message == "NaN and Infinity can't be converted to JSON."
 
     loaded = _load_yaml(_convert(source, "yaml").text)
     assert isinstance(loaded, list)
@@ -209,9 +207,7 @@ def test_nan_constant_is_rejected_for_json_and_kept_for_yaml(
     error = _error("0", "json")
     assert error.lineno == 3
     assert error.colno == 5
-    assert "NaN and Infinity" in error.message
-    assert "line 3" in error.message
-    assert "column 5" in error.message
+    assert error.message == "NaN and Infinity can't be converted to JSON."
     loaded = _load_yaml(_convert("0", "yaml").text)
     assert isinstance(loaded, float)
     assert math.isnan(loaded)
@@ -274,7 +270,7 @@ def test_nan_constant_is_rejected_for_json_and_kept_for_yaml(
             "{\n  'a': 9 ** 9,\n}\n",
             2,
             8,
-            "Binary operators can't be converted",
+            "Arithmetic can't be converted. Write the result instead",
         ),
         (
             "{\n  'a': True and False,\n}\n",
@@ -328,7 +324,9 @@ def test_rejected_node_names_line_and_column(
     error = _error(source)
     assert error.lineno == line
     assert error.colno == column
-    assert error.message == f"{problem}: line {line} column {column}"
+    # One sentence; the Problems row shows the place (Bill, #195).
+    assert error.message == f"{problem}."
+    assert not error.syntax
 
 
 def test_datetime_call_is_rejected_with_a_string_hint() -> None:
@@ -336,7 +334,7 @@ def test_datetime_call_is_rejected_with_a_string_hint() -> None:
     assert error.lineno == 2
     assert error.colno == 3
     assert error.message == (
-        "Function calls can't be converted: line 2 column 3. "
+        "Function calls can't be converted. "
         'Use a string instead, such as "2026-10-18".'
     )
 
@@ -353,8 +351,7 @@ def test_datetime_call_is_rejected_with_a_string_hint() -> None:
 def test_date_and_datetime_calls_include_the_date_example(source: str) -> None:
     error = _error(source)
     assert error.message == (
-        "Function calls can't be converted: "
-        f"line {error.lineno} column {error.colno}. "
+        "Function calls can't be converted. "
         'Use a string instead, such as "2026-10-18".'
     )
     assert "12:30" not in error.message
@@ -370,9 +367,7 @@ def test_date_and_datetime_calls_include_the_date_example(source: str) -> None:
 def test_time_calls_include_the_clock_example(source: str) -> None:
     error = _error(source)
     assert error.message == (
-        "Function calls can't be converted: "
-        f"line {error.lineno} column {error.colno}. "
-        'Use a string instead, such as "12:30".'
+        'Function calls can\'t be converted. Use a string instead, such as "12:30".'
     )
     assert "2026-10-18" not in error.message
 
@@ -391,16 +386,16 @@ def test_other_calls_omit_the_date_example(source: str) -> None:
     error = _error(source)
     assert "2026-10-18" not in error.message
     assert "12:30" not in error.message
-    assert error.message == (
-        f"Function calls can't be converted: line {error.lineno} column {error.colno}"
-    )
+    assert error.message == "Function calls can't be converted."
 
 
-def test_syntax_error_names_line_and_column() -> None:
+def test_syntax_error_has_the_6l_sentence_and_a_place() -> None:
+    """Python's own parser text is never shown (Bill, #195)."""
     error = _error("{\n  'a': <Customer object at 0x10>,\n}\n")
     assert error.lineno == 2
     assert error.colno == 8
-    assert error.message == "invalid syntax: line 2 column 8"
+    assert error.message == "This isn't valid Python, so it can't be converted."
+    assert error.syntax
 
 
 def test_hostile_inputs_are_rejected_without_running(
@@ -488,7 +483,7 @@ def test_input_past_the_parser_nesting_limit_is_an_error() -> None:
     error = _error(source)
     assert error.lineno == 1
     assert error.colno == 201
-    assert error.message == "too many nested parentheses: line 1 column 201"
+    assert error.message == "This isn't valid Python, so it can't be converted."
 
 
 def test_nesting_at_max_depth_round_trips(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -510,8 +505,7 @@ def test_nesting_past_max_depth_is_an_error(monkeypatch: pytest.MonkeyPatch) -> 
     assert error.lineno == 1
     assert error.colno == MAX_DEPTH + 1
     assert error.message == (
-        f"This document is nested more than {MAX_DEPTH} levels deep: "
-        f"line 1 column {MAX_DEPTH + 1}"
+        f"This document is nested more than {MAX_DEPTH} levels deep."
     )
 
 
@@ -544,8 +538,8 @@ def test_recursion_error_becomes_an_error_result(
     monkeypatch.setattr(convert_python_module, "_render", explode_render)
     rendered = _error("[1]")
     assert rendered.lineno == 1
-    assert "line 1" in rendered.message
-    assert "column 1" in rendered.message
+    assert rendered.colno == 1
+    assert "nested more than" in rendered.message
 
 
 def test_unsupported_target_is_rejected() -> None:

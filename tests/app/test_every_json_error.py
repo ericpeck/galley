@@ -142,20 +142,21 @@ def test_one_marker_per_line_lists_every_message(qtbot) -> None:
 
 
 def test_a_row_after_a_guess_carries_the_muted_suffix(qtbot) -> None:
-    text = '{\n  "a": [1, 2,\n  "b": 3\n}\n'
+    # Where the unclosed string ends is a guess, so the comma after it may
+    # come from that guess. (A key inside an open array was this case until
+    # #195 B6 made it one sure row.)
+    text = '{\n  "b": "x\n  "c": 3,\n}\n'
     _window, editor, pane, _status = _format(qtbot, text, "2 problems")
     first, second = _row(pane, 0), _row(pane, 1)
     assert pane.lines() == [2, 3]
-    message = f"Missing ] for the [ opened on line 2. {UNCERTAIN_SUFFIX}"
-    assert _texts(first)[1:] == ["Error · Line 2, Col 8", message]
-    assert first.accessibleName() == f"Line 2: {message}"
-    assert _texts(second)[2] == "Missing comma at the end of line 3."
+    assert _texts(first)[2] == "Unclosed quote on line 2."
+    message = f"Trailing comma at the end of line 3. {UNCERTAIN_SUFFIX}"
+    assert _texts(second)[1:] == ["Error · Line 3, Col 9", message]
+    assert second.accessibleName() == f"Line 3: {message}"
     # The suffix is in the muted message label: no colour of its own.
-    for selected, row in ((1, first), (0, second)):
+    for selected, row, word in ((1, first, "Unclosed"), (0, second, "Trailing")):
         pane.list_widget().setCurrentRow(selected)
-        label = next(
-            item for item in row.findChildren(QLabel) if "Missing" in item.text()
-        )
+        label = next(item for item in row.findChildren(QLabel) if word in item.text())
         assert label.styleSheet() == muted_text_style()
     assert UNCERTAIN_SUFFIX in editor.line_number_area().accessibleDescription()
 
