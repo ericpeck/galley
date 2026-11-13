@@ -80,7 +80,8 @@ _ESCAPES = frozenset('"\\/bfnrt')
 # reads it, or one bracket. A string ends at its quote, at a line end, or at
 # a backslash before a line end. A ``'`` with no closing quote and a ``//``
 # comment run to the line end; ``/*`` runs to ``*/`` or the end of the text.
-# A ``(`` counts only in value position, where the scanner reads a tuple.
+# A ``(`` counts only in value position, where the scanner reads a tuple:
+# not where an object's key goes (#212 B3).
 _LOOKAHEAD = re.compile(
     r"""
     "(?:[^"\\\n\r]|\\[^\n\r])*"?
@@ -97,7 +98,8 @@ NEVER_CLOSES = -1
 # An open tuple among the open brackets, where an open "[" holds its row
 # and an open "{" holds NEVER_CLOSES.
 _TUPLE = -2
-# Where a value can start, so a "(" right after one opens a tuple.
+# Where a value can start outside an object, so a "(" right after one
+# opens a tuple. Inside an object only a colon starts a value.
 _VALUE_START = frozenset("[(,:")
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
@@ -167,35 +169,40 @@ def array_closes_later(text: str, pos: int) -> bool:
     A ``"key":`` inside an array reads as the object's key only when the
     array never closes (#195 B6). Otherwise the colon is a missing comma.
     """
-    # True for each open tuple, False for each open "[" or "{".
-    tuples: list[bool] = []
+    # The brackets opened after ``pos`` that are still open, innermost last.
+    kinds: list[str] = []
     for match in _LOOKAHEAD.finditer(text, pos):
         token = match.group()
         if token == "[" or token == "{":
-            tuples.append(False)
+            kinds.append(token)
         elif token == "(":
-            if _value_position(text, match.start()):
-                tuples.append(True)
+            in_object = bool(kinds) and kinds[-1] == "{"
+            if _value_position(text, match.start(), in_object):
+                kinds.append(token)
         elif token == ")":
-            if tuples and tuples[-1]:
-                tuples.pop()
+            if kinds and kinds[-1] == "(":
+                kinds.pop()
         elif token == "]" or token == "}":
-            if not tuples:
+            if not kinds:
                 return token == "]"
-            tuples.pop()
+            kinds.pop()
     return False
 
 
-def _value_position(text: str, index: int) -> bool:
+def _value_position(text: str, index: int, in_object: bool) -> bool:
     """True when the last non-blank character before ``index`` starts a value.
 
-    The scanner reads a ``(`` there as a Python tuple (#195 B9). Junk such
-    as ``f(x`` opens nothing.
+    The scanner reads a ``(`` there as a Python tuple (#195 B9). That is
+    after a colon or at the start, or after ``[``, ``(`` or a comma outside
+    an object. After a comma inside an object a key comes next, so a ``(``
+    there is junk (#212 B3), like ``f(x``.
     """
     cursor = index - 1
     while cursor >= 0 and text[cursor] in " \t\n\r":
         cursor -= 1
-    return cursor < 0 or text[cursor] in _VALUE_START
+    if cursor < 0 or text[cursor] == ":":
+        return True
+    return not in_object and text[cursor] in _VALUE_START
 
 
 def array_closers(text: str) -> tuple[array, array]:
@@ -223,7 +230,8 @@ def array_closers(text: str) -> tuple[array, array]:
         elif token == "{":
             open_rows.append(NEVER_CLOSES)
         elif token == "(":
-            if _value_position(text, match.start()):
+            in_object = bool(open_rows) and open_rows[-1] == NEVER_CLOSES
+            if _value_position(text, match.start(), in_object):
                 open_rows.append(_TUPLE)
         elif token == ")":
             if open_rows and open_rows[-1] == _TUPLE:
