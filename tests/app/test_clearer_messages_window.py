@@ -110,6 +110,18 @@ _CONVERT_CASES = {
         "Line 1, Col 1",
         "1 problem",
     ),
+    "E8 a dict and a semicolon": (
+        "{'a': 1};",
+        "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
+    ),
+    "E8 a number and a semicolon": (
+        "1;",
+        "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
+    ),
     "E8 other": (
         "{'owner': <Customer object at 0x10>}",
         _NOT_PYTHON,
@@ -251,6 +263,26 @@ def test_a_closer_in_a_string_or_comment_gives_two_sure_rows(
     assert [row.full_message() for row in rows] == messages
     assert [row.uncertain for row in rows] == [False, False]
     assert [row.lineno for row in rows] == [1, 1]
+    assert _state(window) == "2 problems"
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+def test_a_tuple_closed_with_a_square_bracket_in_an_array_gives_two_sure_rows(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """Erik's B1 (#212): the tuple's "]" doesn't close the array."""
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _format(qtbot, window, '{"a": [(1, 2], "x": 1}')
+    rows = _pane(window).shown()
+    assert [row.full_message() for row in rows] == [
+        "Missing ] for the [ opened on line 1.",
+        "Use [ and ] instead of ( and ) for a list on line 1.",
+    ]
+    assert [row.uncertain for row in rows] == [False, False]
+    assert [(row.lineno, row.colno) for row in rows] == [(1, 7), (1, 8)]
+    # No stale missing-comma row at the second key's colon.
+    assert (1, 19) not in [(row.lineno, row.colno) for row in rows]
     assert _state(window) == "2 problems"
 
 

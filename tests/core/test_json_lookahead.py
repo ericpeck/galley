@@ -17,7 +17,8 @@ from galley.core import json_recover
 from galley.core.problems import collect_problems
 
 # Pieces the generated inputs are built from: brackets, closed and cut-off
-# strings in both quotes, escapes, both comment kinds, and line ends.
+# strings in both quotes, escapes, both comment kinds, line ends, and
+# tuples, with junk such as f( that opens none (#212 B1).
 _PIECES = (
     "[",
     "]",
@@ -42,6 +43,11 @@ _PIECES = (
     "*",
     "\n",
     "\r\n",
+    "(",
+    ")",
+    "f(",
+    "[(",
+    ", (",
     ", ",
     "1",
     ":",
@@ -49,6 +55,8 @@ _PIECES = (
 )
 _SEED = 195
 _INPUTS = 500
+# The seeded inputs close 48 tuples with "]" or "}"; at least this many.
+_TUPLES_CLOSED = 40
 
 
 def _rows(text: str) -> list[tuple[str, int, int, str, bool]]:
@@ -111,11 +119,33 @@ def _skip(text: str, index: int) -> int | None:
     return None
 
 
-def _reference_closers(text: str) -> list[tuple[int, int]]:
+def _value_position(text: str, index: int) -> bool:
+    """True when the last non-blank character before ``index`` starts a value.
+
+    That is ``[``, ``(``, ``,`` or ``:``, or there is none, so a ``(`` there
+    opens a Python tuple and junk such as ``f(x`` opens nothing.
+    """
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] in " \t\n\r":
+        cursor -= 1
+    return cursor < 0 or text[cursor] in "[(,:"
+
+
+# An open "{" and an open tuple, where an open "[" holds its row.
+_OBJECT = -1
+_TUPLE = -2
+
+
+def _reference_closers(
+    text: str, tuples_closed: list[int] | None = None
+) -> list[tuple[int, int]]:
     """A slow walk, one character at a time, of what the lookahead records.
 
     Each ``[``, in text order, with the position of the ``]`` or ``}`` that
-    closes it, or -1. Any closer closes the innermost open bracket.
+    closes it, or -1. A ``(`` in value position opens a tuple, which only
+    ``)`` or a closer of its own closes. ``)`` closes only a tuple, and
+    ``]`` or ``}`` closes the innermost open bracket of any kind (#212 B1).
+    Each tuple a ``]`` or ``}`` closes is added to ``tuples_closed``.
     """
     found: list[list[int]] = []
     opened: list[int] = []
@@ -130,11 +160,19 @@ def _reference_closers(text: str) -> list[tuple[int, int]]:
             opened.append(len(found))
             found.append([index, -1])
         elif char == "{":
-            opened.append(-1)
+            opened.append(_OBJECT)
+        elif char == "(":
+            if _value_position(text, index):
+                opened.append(_TUPLE)
+        elif char == ")":
+            if opened and opened[-1] == _TUPLE:
+                opened.pop()
         elif char in "]}" and opened:
             row = opened.pop()
             if row >= 0:
                 found[row][1] = index
+            elif row == _TUPLE and tuples_closed is not None:
+                tuples_closed.append(index)
         index += 1
     return [(start, end) for start, end in found]
 
@@ -152,15 +190,21 @@ def test_the_reference_walker_reads_strings_and_comments() -> None:
     assert _reference_closers("[ 'cut ]\n]") == [(0, 9)]
     assert _reference_closers('[ "cut ]\n]') == [(0, 9)]
     assert _reference_closers("[{]") == [(0, -1)]
+    # A tuple closed with "]" doesn't close the array around it (#195 B1).
+    assert _reference_closers("[(1, 2], 3]") == [(0, 10)]
+    assert _reference_closers("[f(x], 3]") == [(0, 4)]
+    assert _reference_closers("[(1)]") == [(0, 4)]
 
 
 def test_recorded_closers_match_a_slow_walk_of_the_text() -> None:
     """About 500 seeded inputs: the recorded closers equal the slow walk's."""
+    tuples_closed: list[int] = []
     for text in _generated():
         openers, closers = json_recover.array_closers(text)
-        assert list(zip(openers, closers, strict=True)) == _reference_closers(text), (
-            repr(text)
-        )
+        expected = _reference_closers(text, tuples_closed)
+        assert list(zip(openers, closers, strict=True)) == expected, repr(text)
+    # The inputs include tuples closed with "]" or "}" (#212 B1).
+    assert len(tuples_closed) >= _TUPLES_CLOSED
 
 
 # Erik's two examples (#210): a "]" inside a string or a comment doesn't
@@ -187,6 +231,34 @@ def test_recorded_closers_match_a_slow_walk_of_the_text() -> None:
     ids=["single quotes", "comment"],
 )
 def test_a_closer_in_a_string_or_comment_does_not_close_the_array(
+    text: str, rows: list[tuple[str, int, int, str, bool]]
+) -> None:
+    assert _rows(text) == rows
+
+
+# Erik's B1 (#212): the scanner closes a tuple with "]", so that "]"
+# doesn't close the array around it. B6 applies at the key's colon.
+@pytest.mark.parametrize(
+    ("text", "rows"),
+    [
+        (
+            '{"a": [(1, 2], "x": 1}',
+            [
+                ("missing_close", 1, 7, "[", False),
+                ("python_tuple", 1, 8, "(", False),
+            ],
+        ),
+        (
+            '{"a": [1, "b": (2]}',
+            [
+                ("missing_close", 1, 7, "[", False),
+                ("python_tuple", 1, 16, "(", False),
+            ],
+        ),
+    ],
+    ids=["tuple in the array", "tuple after the key"],
+)
+def test_a_tuple_closed_with_a_square_bracket_does_not_close_the_array(
     text: str, rows: list[tuple[str, int, int, str, bool]]
 ) -> None:
     assert _rows(text) == rows

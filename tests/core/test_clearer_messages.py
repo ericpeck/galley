@@ -203,8 +203,23 @@ def test_e8_an_assignment_names_what_to_remove() -> None:
 
 @pytest.mark.parametrize(
     ("source", "line"),
-    [("import os", 1), ("x = 1; y = 2", 1), ("a.b = 1", 1), ("1\nimport os", 2)],
-    ids=["import", "two statements", "attribute", "a value then a statement"],
+    [
+        ("import os", 1),
+        ("x = 1; y = 2", 1),
+        ("a.b = 1", 1),
+        ("1\nimport os", 2),
+        # One value and a ";" is one statement, not two values (#212 B2).
+        ("{'a': 1};", 1),
+        ("1;", 1),
+    ],
+    ids=[
+        "import",
+        "two statements",
+        "attribute",
+        "a value then a statement",
+        "a dict and a semicolon",
+        "a number and a semicolon",
+    ],
 )
 def test_e8_other_valid_python_says_it_is_a_statement(source: str, line: int) -> None:
     error = _error(source)
