@@ -2,7 +2,7 @@
 
 Status: draft for review. Built from the 18 approved mock PNGs (screens 3a, 4a, 4b, 5a, 5b, 6a–6m). Text only; no images are committed. Reference placeholders like `(ref: 6k)` mark where a mock would help, pending Eric's call on whether to commit reference PNGs.
 
-Refreshed against `main` at `5aec22d` (#91 PR E) for the #91 decisions D1–D10 and #195: dark mode (§2, §13), the results panel (§5.14), the status bar slots (§5.7), the gutter lanes (§5.5), Stale output (§6a) and the Convert from Python limits (§10). Where the app differs from the mocks on something not yet decided, §14 lists it for Bill.
+Refreshed against `main` at `5aec22d` (#91 PR E) for the #91 decisions D1–D10 and #195: dark mode (§2, §13), the results panel (§5.14), the status bar slots (§5.7), the gutter lanes (§5.5), Stale output (§6a) and the Convert from Python limits (§10). Where the app differs from the mocks on something undecided, §14 lists it for Bill.
 
 Stack: Python + PySide6 (Qt 6). Galley targets macOS and Windows. It is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 12).
 
@@ -75,7 +75,7 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 Allowed (Eric, #91 D10). View › Appearance ▸ offers `System`, `Light` and `Dark`, one checked at a time; `System` is the default and follows the system's light or dark setting live. The choice is saved and applied before the first window shows.
 
 - The hex values above are the light scheme. The dark scheme starts from the platform's dark palette and replaces only what it must: AlternateBase (gutter, Stale tag, banner), muted text (the first mix that reaches 4.5:1 on window, editor and gutter), Mid edges (3:1), Link and the accent role (`#4DB8DB`).
-- The Format button keeps the brand accent `#0080A6` fill in both schemes, with the palette's highlighted-text label. The Find highlight is the accent at 40% over the editor, outlined in `#0080A6` (light) or `#4DB8DB` (dark).
+- The Format button keeps the brand accent `#0080A6` fill in both schemes, with the palette's highlighted-text label. Only the current Find match is the accent at 40% over the editor. The other matches are a neutral 25% of Text over Base. Every match is outlined in `#0080A6` (light) or `#4DB8DB` (dark).
 - Syntax colors switch with the editor's background. Dark: keys `#7CC7E8`, strings `#E6C07B`, numbers and literals `#C3A6FF`, punctuation `#A8A4A4`.
 - The error hue is `#AA0B56` in light and `#FF7B72` in dark. Error line tint in dark is 20% of `#FF7B72` over the editor.
 - Disabled text is an opaque blend that reaches 3:1 in both schemes.
@@ -161,7 +161,7 @@ Caption below: `Editing Input` / `Editing Output` (bold pane name).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` right after `Copy`, and the fold commands at the end (#66).
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
-- Tab types spaces, 2 up to the next 2-column stop, in JSON and YAML (#91 D7). Over several lines Tab indents them. Undo removes the spaces in one step. Ctrl+Tab moves focus out of the editor. A tab character pasted into YAML is reported, not rewritten.
+- Tab follows the Indent picker (#91 D7): spaces up to the next 2-column stop by default, up to the next 4-column stop when 4 spaces is picked, and a tab character in JSON when Tab is picked. Over several lines Tab indents them. Undo removes the spaces in one step. Ctrl+Tab moves focus out of the editor. A tab character pasted into YAML is reported, not rewritten.
 
 ### 5.5 Gutter
 `gutter.bg` (AlternateBase), in lanes from left to right:
@@ -186,7 +186,7 @@ Slots as built, left to right:
 3. **State message**, muted. It elides with `…` and keeps the full text as its tooltip and accessible description. With problems it reads `1 problem` / `N problems` and is a link that opens the results panel (accessible name `N problems. Show problems.`).
 4. **Counts**, Compare's tally only (`5 differences`, `No differences`).
 5. **Progress bar**, shown 2 s after a Format starts (`PROGRESS_BAR_REVEAL_MS`), or at once for a large document.
-6. **Cancel**, shown with the progress bar. Esc anywhere in the window also cancels, except in the Output options popover.
+6. **Cancel**, shown with the progress bar, and beside the spinner for Compare. Esc anywhere in the window also cancels, except in the Output options popover.
 7. **Convert from Python** button (#195 B9), shown after a Format whose problems include a Python value (`True`, `False`, `None`), a tuple, or single quotes. The label is text beside the `</>` icon, never icon-only, with no `…`, because it runs Convert from Python at once. Tooltip `Convert this Python dictionary to JSON or YAML`; its accessible name matches the label. It comes after Cancel in the Tab order and has no shortcut of its own. It goes away on the next Format, on an Input edit, or once Convert runs, whether that succeeds or fails. Minify and Validate never show it.
 8. **Direction**, on the right (#91 D4): the direction of the result on screen, set when a result arrives: `JSON → YAML` for Format, `Python → YAML` for Convert, `<Input> → JSON` for Escape as String, `JSON → <Output>` for Unescape String. While Output is empty it follows the pickers. Validate doesn't change it. Changing a picker after a result marks Output stale (§6a) instead.
 
@@ -194,7 +194,7 @@ Decided copy (#91 D9, #195):
 - Format or Minify canceled: `Canceled. Showing the previous result.` for 3 s, and Output keeps the result it had. Validate canceled: `Validating canceled.`
 - Convert from Python: `Converted to JSON.` or `Converted to YAML.`, followed by any notes as sentences.
 - Convert from Python errors: one Problems row with a gutter marker (#91 D5). Text that isn't valid Python shows `This isn't valid Python, so it can't be converted.` in the status. Valid Python that can't be converted shows the count, `1 problem`. The 6l dialog is not built yet.
-- Convert from Python over its size limit: `This document is too large to convert from Python (3.3 MB). The limit is 1 MB.` (`The limit is 192 KB.` when Output is YAML). Output stays unchanged (§10).
+- Convert from Python over its size limit: `This document is too large to convert from Python (3.3 MB). The limit is about 1 MB for JSON or about 192 KB for YAML.` Output stays unchanged (§10).
 
 ### 5.8 Splitter and rail
 `QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
@@ -420,7 +420,7 @@ Architecture:
 - No hard file-size cap.
 - Large-file adaptations seen: wrap off for very long lines, syntax colors off with `Turn on anyway`, streamed output with `so far` counts, path features disabled until done.
 - Thresholds (performance bands) are TBD by benchmarks. Open. The thresholds tied to long lines (#93) stay out of this spec until #93 resumes.
-- Convert from Python runs on the UI thread, so it has size limits (#91 D6; ADR 0001 §6): 1 MB of Input when Output is JSON and 192 KB when it is YAML. In general terms (Bill): "Files over about 1 MB (JSON) or about 192 KB (YAML) open without live formatting." Above the limit, Output stays unchanged and the status says `This document is too large to convert from Python (3.3 MB). The limit is 1 MB.` (`192 KB` for YAML).
+- Convert from Python runs on the UI thread, so it has size limits (#91 D6; ADR 0001 §6): 1 MB of Input when Output is JSON and 192 KB when it is YAML. Above the limit, Output stays unchanged and the status says `This document is too large to convert from Python (3.3 MB). The limit is about 1 MB for JSON or about 192 KB for YAML.`
 - Formatting runs off the UI thread (QThread / worker); UI stays responsive; Cancel always available.
 
 ---
@@ -483,12 +483,16 @@ Isolate behind a `platform` module for macOS and Windows:
 13. Performance bands and thresholds (wrap-off line length, colors-off size, when to show 6m) — TBD by benchmarks.
 14. Whether to commit reference PNGs alongside this spec (currently text only).
 15. Mock set count: the instructions list 18 PNGs including a separate 6d Cancel crop; in the received set the Cancel state appears inside the 6d image ("After Cancel while the output is filling in"). Confirm nothing is missing.
-16. **App differs from the mocks, not yet decided (Bill).** Found while refreshing this spec at `5aec22d`; none of these is changed here.
+16. **App differs from the mocks, undecided (Bill).** Found while refreshing this spec at `5aec22d`; none of these is changed here.
     - Format success reads `Valid JSON` (or `Converted`) with no check icon, period or line count; only Validate shows the check, as `Valid JSON.` (§5.7, 4a, 6e, §2).
-    - The progress bar has no percentage, and Cancel appears only with the bar (§5.7, 6d).
+    - The progress bar has no percentage. During Format, Cancel appears only with the bar; Compare also shows it beside the spinner (§5.7, 6d, 6m).
     - The status bar shows the problem count, not the first error as a link with `‹ 1 of 3 ›`; Problems and Next/Previous Problem take that role. Repair is not built (6a, 6b).
     - The Input footer count never includes problems (§5.6, 6a: `6 lines · 3 problems`).
     - `Edited` and the 6f dialog are not built (§2, §5.6, 6f).
     - The empty Input reads `Paste JSON, YAML, XML, or HTML, or drop a file here. ⌘O to open.` (6c).
     - The toolbar adds `Convert from Python` after `Validate` and a `»` overflow; Find reads `Find…` (§5.1).
     - Menus add items not listed in §5.13: File › Open Right Document…; Edit › Indent, Outdent, Find Next, Find Previous, Format, Convert from Python (no `…`); View › the Compare group, Expand all, Collapse all, Fold, Unfold, Stack Panes. On macOS, Enter Full Screen is the system's item, not Galley's.
+    - The line-number color role.
+    - The chevron icon.
+    - The ⓘ in 6d.
+    - Font ▸ holds Bigger, Smaller and Actual Size (§5.13).

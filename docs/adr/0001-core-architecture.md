@@ -82,14 +82,14 @@ macOS measurements are in `docs/benchmarks/macos-size-bench.md` (commit `46d7ddc
 
 UI spec §10 sets no file-size cap. Thresholds for word wrap, syntax colors, indent guides, and warning sizes stay open for a later UI PR. This record sets no file-size numbers for Format.
 
-Convert from Python is the exception (#91 PR C1, #104). It runs on the UI thread with no busy indicator, so it refuses Input over a size limit to keep the window from freezing for more than about 0.5 s. The limits are UTF-8 bytes of Input, in SI units, and live in `src/galley/app/limits.py`:
+Convert from Python has its own limit (#91 PR C1, #104). It runs on the UI thread with no busy indicator, so it refuses Input over a size limit to keep the window from freezing for more than about 0.5 s. The limits are UTF-8 bytes of Input, in SI units, and live in `src/galley/app/limits.py`:
 
 | Output format | Limit | Constant |
 |---|---|---|
 | JSON | 1 MB | `PYTHON_TO_JSON_BYTES` |
 | YAML | 192 KB | `PYTHON_TO_YAML_BYTES` (equal to `YAML_BUSY_BYTES`) |
 
-The size bench rows `python_to_json` and `python_to_yaml` time them. Above the limit, Output stays unchanged and the status names the size and the limit for the target format (UI spec §10).
+The size bench rows `python_to_json` and `python_to_yaml` time them. Above the limit, Output stays unchanged and the status names the size and both limits (UI spec §10).
 
 ## Options considered
 
