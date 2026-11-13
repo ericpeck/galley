@@ -217,8 +217,10 @@ def test_the_lookahead_keeps_memory_under_four_times_the_text(perf_budget) -> No
     assert found[0].code == "missing_comma"
     assert peak <= 4 * len(text), f"peak {peak / 1e6:.1f} MB"
 
+    # CI medians at a87d5cf: 2.3 s on macOS and 2.7 s on Windows, so the
+    # nightly strict run keeps about 1.9 times headroom.
     perf_budget.within(
-        3.0,
+        5.0,
         lambda: collect_problems(text, "JSON", error),
         fixture="4 MB of [], {} pieces after one B6 colon",
     )
