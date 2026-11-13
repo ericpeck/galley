@@ -2,6 +2,8 @@
 
 Status: draft for review. Built from the 18 approved mock PNGs (screens 3a, 4a, 4b, 5a, 5b, 6a–6m). Text only; no images are committed. Reference placeholders like `(ref: 6k)` mark where a mock would help, pending Eric's call on whether to commit reference PNGs.
 
+Refreshed against `main` at `5aec22d` (#91 PR E) for the #91 decisions D1–D10 and #195: dark mode (§2, §13), the results panel (§5.14), the status bar slots (§5.7), the gutter lanes (§5.5), Stale output (§6a) and the Convert from Python limits (§10). Where the app differs from the mocks on something undecided, §14 lists it for Bill.
+
 Stack: Python + PySide6 (Qt 6). Galley targets macOS and Windows. It is a cross-platform Qt app with a print-inspired visual style. It is **not** a macOS-native app and must not be described as one. Everything platform-specific (menu bar, shortcuts, window chrome) sits behind a swappable layer (section 12).
 
 Brand owner: Eric. Do not invent logos, taglines, icons, colors, or names beyond what is written here.
@@ -16,9 +18,9 @@ Main window, top to bottom (ref: 6c):
 
 1. **Title bar** — centered window title `Galley`. The mocks show `Formatter`; menus and window titles use Galley.
 2. **Toolbar** (one row, ~56 px at 1x): left group of actions, `Find` and the **Format** button at the right end. Under Format, a small caption: `Editing <b>Input</b>` (names the pane that has focus / is the Format target).
-3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes.
+3. **Pane area**: a horizontal `QSplitter` with two panes, Input (left) and Output (right), separated by a narrow **splitter rail** carrying a reset button and a `50 / 50` ratio readout. Layout is View › Stack Panes. The **results panel** (§5.14) sits to the left of both panes while it has rows.
 4. Each pane holds one document: **tab strip** (the pane title, `Input` / `Output`) with a format picker (`Input as` / `Output as`) on the right; the **editor** (gutter + text); a **pane footer** row.
-5. **Status bar** (one row, full width): message on the left, conversion direction on the right (e.g. `JSON → JSON`, `JSON → YAML`, `YAML → JSON`).
+5. **Status bar** (one row, full width): message on the left, the direction of the result on screen on the right (e.g. `JSON → JSON`, `JSON → YAML`, `Python → YAML`). Slots in §5.7.
 
 Default split is 50/50 (Input / Output). The rail readout shows `50` over `50`. The mocks printed `40` over `60` while the panes looked near equal; the default ratio is 50/50.
 
@@ -68,15 +70,26 @@ Measured from the PNGs (1x pixel sampling of the 2x mocks). "Confirmed" = given 
 - `accent.disabled` `#86BFD0` is the disabled Format face: `round(0.45 × #0080A6 + 0.55 × #F3F2F2)` per channel. White text on `#86BFD0` is 2.02:1. Disabled controls are exempt from the 4.5:1 text contrast target.
 - `pane.edge` vs `window.bg`: 3.85:1 (meets 3:1 for UI component boundaries).
 
+### Dark mode
+
+Allowed (Eric, #91 D10). View › Appearance ▸ offers `System`, `Light` and `Dark`, one checked at a time; `System` is the default and follows the system's light or dark setting live. The choice is saved and applied before the first window shows.
+
+- The hex values above are the light scheme. The dark scheme starts from the platform's dark palette and replaces only what it must: AlternateBase (gutter, Stale tag, banner), muted text (the first mix that reaches 4.5:1 on window, editor and gutter), Mid edges (3:1), Link and the accent role (`#4DB8DB`).
+- The Format button keeps the brand accent `#0080A6` fill in both schemes, with the palette's highlighted-text label. Only the current Find match is the accent at 40% over the editor. The other matches are a neutral 25% of Text over Base. Every match is outlined in `#0080A6` (light) or `#4DB8DB` (dark).
+- Syntax colors switch with the editor's background. Dark: keys `#7CC7E8`, strings `#E6C07B`, numbers and literals `#C3A6FF`, punctuation `#A8A4A4`.
+- The error hue is `#AA0B56` in light and `#FF7B72` in dark. Error line tint in dark is 20% of `#FF7B72` over the editor.
+- Disabled text is an opaque blend that reaches 3:1 in both schemes.
+- Every contrast target in this section applies to both schemes. Tests set the scheme themselves, since offscreen CI ignores the system setting.
+
 ### Second cue rule (color never alone)
 
 Every place color carries meaning also has an icon or words:
 
-- Error lines: magenta tint **plus** a gutter error icon (`!` in a circle) **plus** wavy underline **plus** a plain-words message. Status bar error text is prefixed with the same icon and underlined as a link.
+- Error lines: magenta tint **plus** a gutter error marker (`⊗`, §5.5) **plus** a plain-words Problems row (§5.14). The status bar names the count in words (`1 problem`, `3 problems`).
 - Info notes: blue `i` icon plus text (6e, 6l, 6j banner).
 - Diff preview: changed = blue chip, **and** the margin names the change (`quotes`, `True → true`, `None → null`, `tuple → list · comma`, `trailing comma`). Removed = a small marked glyph with strike, plus a legend row (`"a" changed`, `"a" removed`).
 - 6k amber items: amber fill **plus** a margin tag with a quote icon and the words `to string`, plus a legend entry `"a" source text kept as a string`.
-- Stale output: banner text plus a `Stale` tag with an icon on the tab.
+- Stale output: a `Stale` tag with a clock icon and the word on the Output tab, and `Last good result` in the Output footer. After a failed Format, also the 6a banner text.
 - Edited output: `Edited` in the output footer (6f).
 - Valid: check icon plus `Valid JSON` text in the status bar.
 - Selected segments/scope toggles: filled accent **plus** checked state exposed to accessibility.
@@ -109,7 +122,7 @@ Measured at 1x, approximate:
 - Window outer padding around pane area: ~16 px left/right.
 - Toolbar: ~56 px tall; buttons are icon + label, ~28 px tall, 8 px icon–label gap, ~24 px between groups. Undo/Redo sit in a shared rounded tray (slightly darker fill).
 - Tab strip: ~30 px; one row with the pane title and the format picker.
-- Gutter: ~50 px wide; numbers right-aligned with fold arrows (`▾`/`▸`) immediately right of the number.
+- Gutter: at least 50 px wide, in lanes (§5.5): a 16 px marker lane, right-aligned numbers, then a 16 px fold lane on Output; 8 px right padding.
 - Editor: ~10 px left text inset.
 - Pane footer: ~24 px; status bar: ~24 px.
 - Dialogs: ~16 px padding; rows inside dialogs ~8 px padding on `card.bg`, 6–8 px gap between rows; buttons bottom-right, ~32 px tall.
@@ -137,6 +150,8 @@ Caption below: `Editing Input` / `Editing Output` (bold pane name).
 - Galley v1 has no tabs. Each pane holds one document, and the strip has no close `×`, no new tab `+`, and no right-click menu.
 - Left side of strip: the bold pane title (`Input`, `Output`).
 - Right side of strip: `Input as` / `Output as` label + format dropdown (`JSON`, `YAML`).
+- Output's title is followed by the `Stale` tag while Output is stale (§6a). The tag never gives way.
+- At narrow widths (#91 D1), the strip gives way in order: the `Input as` / `Output as` caption hides first (the picker keeps it as its accessible name and tooltip), then the title shortens with `…` and shows the full title as its tooltip. Nothing clips or overlaps at the 900 px minimum window width. The results panel gives way before the strips do (§5.14).
 
 ### 5.4 Editor (QPlainTextEdit subclass)
 - Background `editor.bg`; current line `line.current`.
@@ -146,17 +161,40 @@ Caption below: `Editing Input` / `Editing Output` (bold pane name).
 - Right-click menu: `Undo`, `Redo` | `Cut`, `Copy`, `Paste`, `Select All`. Output's menu adds `Copy As ▸` right after `Copy`, and the fold commands at the end (#66).
 - Inline notes: a note box inserted between lines (not over text), with icon + message (6a error, 6e info, 6l info).
 - Horizontal scrollbar when wrap is off.
+- Tab follows the Indent picker (#91 D7): spaces up to the next 2-column stop by default, up to the next 4-column stop when 4 spaces is picked, and a tab character in JSON when Tab is picked. Over several lines Tab indents them. Undo removes the spaces in one step. Ctrl+Tab moves focus out of the editor. A tab character pasted into YAML is reported, not rewritten.
 
 ### 5.5 Gutter
-`gutter.bg`, muted right-aligned numbers, fold arrows. Error lines: number turns magenta, error icon after the number, the whole line row tinted `error.tint`. Info lines: blue `i` icon.
+`gutter.bg` (AlternateBase), in lanes from left to right:
+
+1. **Marker lane**, 16 px, always reserved so text never shifts when a marker appears. A problem shows a drawn `⊗` (a 12 px ring with ×) in the error hue, and its whole line is tinted `error.tint`. The line number keeps its usual color. Clicking the marker selects that row in Problems without moving the caret. In Compare, change markers (`+`, `−`, `~`, `⇄`) use the same lane; a problem wins on a shared line.
+2. **Numbers**, right-aligned, `text.muted` (`#908C89` in dark).
+3. **Fold lane**, 16 px, Output only, present only while something can fold. `▾` open and `▸` folded; Text color on hover with a pointing-hand cursor. Click toggles; Option-click (Alt-click) toggles nested blocks too.
+
+The gutter's accessible name is `Line numbers`, and its accessible description lists the problem messages. A marker's tooltip is its message. Info lines (6e): blue `i` icon, not built yet.
 
 ### 5.6 Pane footer
 - Input: `Paste`, `Clear` (accent links with icons; `Clear` disabled when empty) … right: count (`Empty`, `1 line · 318 characters`, `34 lines · 612 characters`, `6 lines · 3 problems`, `1 line · 4.8 MB`).
-- Output: `Options` (opens popover 6h) … right: status (`34 lines`, `22 lines · 1 note`, `Edited`, `Last good result`, `1,284 lines so far`) then `Copy` (disabled when empty).
+- Output: `Options` (opens popover 6h) … right: status (`34 lines`, `22 lines · 1 note`, `Edited`, `Last good result`, `1,284 lines so far`) then `Copy` (disabled when empty). `Last good result` shows whenever Output is stale (§6a), not only after a failed Format.
 
 ### 5.7 Status bar
-Left: state message with icon. Examples: `Ready`; `✓ Valid JSON · 34 lines`; `✓ Valid JSON · formatted in 3 ms · 34 lines`; `Converted · 1 note`; `Cancelled. Showing the previous result.`; error link `! Expected a comma after "price": 4.5 (line 3, column 38)` + `‹ 1 of 3 ›` + `Repair…` button + `2 of 3 fixable`; Python hint: error link + `</> Convert from Python…` button; working: spinner + `Formatting… 4.8 MB` (+ `· writing output`, progress bar and `62%` only during write) + `✕ Cancel`.
-Right: direction `JSON → JSON` etc.
+Mocked examples: `Ready`; `✓ Valid JSON · 34 lines`; `✓ Valid JSON · formatted in 3 ms · 34 lines`; `Converted · 1 note`; `Canceled. Showing the previous result.`; error link `! Expected a comma after "price": 4.5 (line 3, column 38)` + `‹ 1 of 3 ›` + `Repair…` button + `2 of 3 fixable`; working: spinner + `Formatting… 4.8 MB` (+ `· writing output`, progress bar and `62%` only during write) + `✕ Cancel`.
+
+Slots as built, left to right:
+
+1. **Spinner**, shown 500 ms after a job starts (`SPINNER_REVEAL_MS`), or at once for a large document.
+2. **Check icon**, for Validate's success only.
+3. **State message**, muted. It elides with `…` and keeps the full text as its tooltip and accessible description. With problems it reads `1 problem` / `N problems` and is a link that opens the results panel (accessible name `N problems. Show problems.`).
+4. **Counts**, Compare's tally only (`5 differences`, `No differences`).
+5. **Progress bar**, shown 2 s after a Format starts (`PROGRESS_BAR_REVEAL_MS`), or at once for a large document.
+6. **Cancel**, shown with the progress bar, and beside the spinner for Compare. Esc anywhere in the window also cancels, except in the Output options popover.
+7. **Convert from Python** button (#195 B9), shown after a Format whose problems include a Python value (`True`, `False`, `None`), a tuple, or single quotes. The label is text beside the `</>` icon, never icon-only, with no `…`, because it runs Convert from Python at once. Tooltip `Convert this Python dictionary to JSON or YAML`; its accessible name matches the label. It comes after Cancel in the Tab order and has no shortcut of its own. It goes away on the next Format, on an Input edit, or once Convert runs, whether that succeeds or fails. Minify and Validate never show it.
+8. **Direction**, on the right (#91 D4): the direction of the result on screen, set when a result arrives: `JSON → YAML` for Format, `Python → YAML` for Convert, `<Input> → JSON` for Escape as String, `JSON → <Output>` for Unescape String. While Output is empty it follows the pickers. Validate doesn't change it. Changing a picker after a result marks Output stale (§6a) instead.
+
+Decided copy (#91 D9, #195):
+- Format or Minify canceled: `Canceled. Showing the previous result.` for 3 s, and Output keeps the result it had. Validate canceled: `Validating canceled.`
+- Convert from Python: `Converted to JSON.` or `Converted to YAML.`, followed by any notes as sentences.
+- Convert from Python errors: one Problems row with a gutter marker (#91 D5). Text that isn't valid Python shows `This isn't valid Python, so it can't be converted.` in the status. Valid Python that can't be converted shows the count, `1 problem`. The 6l dialog is not built yet.
+- Convert from Python over its size limit: `This document is too large to convert from Python (3.3 MB). The limit is about 1 MB for JSON or about 192 KB for YAML.` Output stays unchanged (§10).
 
 ### 5.8 Splitter and rail
 `QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.
@@ -181,8 +219,22 @@ Anchored to the `Options` footer button. Header `Output options`, right `Output 
 App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`. There is no Window menu. Menu-bar placement is in §12.
 - Edit (3a): Undo ⌘Z, Redo ⇧⌘Z | Cut ⌘X, Copy ⌘C, Copy As ▸, Paste ⌘V, Select All ⌘A | Find… ⌘F, Find and Replace… ⌥⌘F | Escape as String ⇧⌘E, Unescape String ⌘K ⌘E.
 - Copy As ▸ (#66): `Original`, `Masked`, `Random fake`, with no shortcuts. `Masked` and `Random fake` show the masking help text as their tooltip and status tip. Each copies Output, or its selection, to the clipboard and leaves Output unchanged. Original copies the unmasked text, even when Output shows masked values. Masked replaces values under matched keys, and values that are an email or phone number, with `•••`. Random fake replaces the same values with new ones of the same type on every copy. The status bar names what was copied (`Copied original (unmasked)`, `Copied masked (N values hidden)`, `Copied random fake (N values replaced)`), or, on any failure, `Nothing copied. Galley couldn't start the copy. Try again.` (never the error itself). Disabled while Output is empty or a job is running. Masked and Random fake run on the worker unless the text is tiny, and show the status-bar spinner and then Cancel on Format's timings. Cancel or Esc stops the copy and shows `Copy canceled. Nothing copied.`
-- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8 | Enter Full Screen ^⌘F.
+- View (4a): Font ▸, Bigger ⌘+, Smaller ⌘−, Actual Size ⌘0 | Word Wrap ⌥Z (checked), Show Whitespace ⇧⌘8, Show Problems ⇧⌘M (checked, §5.14), Next Problem, Previous Problem | … | Appearance ▸ (`System`, `Light`, `Dark`; §2) | Enter Full Screen ^⌘F.
 - `File` includes `Open file…` (6c) and `Open Recent ▸` (#85: up to 10 files, newest first, file name only, with the parent folder when names match; a missing file stays listed, disabled, as `name.json (not found)` (after the folder when one shows) with the tooltip "File not found"; `Clear Menu` at the bottom). `Help` contents are not shown in the mocks (Open questions). Do not invent further File or Help items.
+
+### 5.14 Results panel (Problems)
+
+Not in the mocks; this section records it as built. The Changes tab comes from Compare (#65).
+
+- **Place:** docked to the left of the Input and Output panes, in its own splitter. No `QDockWidget`. It shows only while it has rows (or while Compare is on) and isn't closed, so it disappears after a good Format, Clear or Open.
+- **Width:** opens at 280 px; the user can drag it, down to 200 px. The width is saved while the panel is open. When the window is narrow, the panel shrinks toward 200 px before the pane tab strips give way (#91 D2), and the saved width doesn't change.
+- **Header:** the bold title `Problems`, a count badge (the count on an error-hue pill, with a label color that reads on it; accessible name `3 problems`), then `–` Minimize and `×` Close (24 px buttons, with those words as tooltip and accessible name). In Compare a second tab is added, and the header shows tabs instead (`Problems 2`, `Changes 5`).
+- **States, saved between sessions:** open, minimized and closed. Minimized, it is a 28 px strip showing only the count, with the tooltip `Show problems` and the accessible name `3 problems. Expand.`; clicking it opens the panel. View › Show Problems (⇧⌘M) closes and reopens it. Clicking the status bar's count, a failed Minify and entering Compare open it.
+- **Problem rows:** at least 56 px tall. A `⊗` marker in the error hue, a bold place line `Error · Line 1, Col 13` (`Error · Line 1` when there is no column), and the message as one muted sentence that names the line at most, never the column (Bill, #195). A row found after an earlier repair guess ends with `(may be caused by an earlier error)`. The row's accessible name is `Line N: message`.
+- **Selection and focus:** the selected row gets the accent tint (native Highlight in dark) and a 3 px accent bar on its left edge; keyboard focus adds a 2 px outline, which a mouse click hides.
+- **Activation:** a click, Return or Enter puts the caret at the problem's line and column in Input, opens any fold around it, centers the line and focuses Input. Esc in the list returns focus to Input and leaves the panel open. Next Problem and Previous Problem (⌘' / ⇧⌘', F8 / Shift+F8) pick the problem after or before the caret, wrapping at both ends.
+- **Limit:** the list shows the first 100 problems, then the muted note `Showing the first 100 of 240 problems.`. The count everywhere is the full total. When the JSON check stops early, the muted note `Galley stopped checking after this point.` comes last. Notes can't be selected.
+- **Order:** problems in text order.
 
 ---
 
@@ -203,6 +255,7 @@ App menu `Galley` (mocks labeled it `Formatter`), `File`, `Edit`, `View`, `Help`
 | Stack Panes | ⌘\ (also ⇧⌘L) | Ctrl+\ (also Ctrl+Shift+L) |
 | Fold | ⌥⌘[ | Ctrl+Shift+[ |
 | Unfold | ⌥⌘] | Ctrl+Shift+] |
+| Show Problems | ⇧⌘M | Ctrl+Shift+M |
 | Next / Previous Problem | ⌘' / ⇧⌘' (also F8 / ⇧F8) | F8 / Shift+F8 |
 | Compare | ⇧⌘D | Ctrl+Shift+D |
 | Next / Previous Change | ⌥⌘↓ / ⌥⌘↑ (also F7 / ⇧F7) | F7 / Shift+F7 |
@@ -249,6 +302,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - Status bar: error link (icon + underline), `‹ 1 of 3 ›` navigation, `Repair…` button, `2 of 3 fixable`.
 - Input footer: `6 lines · 3 problems`.
 - Output keeps the last good result at full strength (not dimmed), tab shows `Stale` tag (icon + word), and a banner: `Showing the last good result, from 10:39. Fix the input and press Format to update it.` Output footer `Last good result`.
+- Stale as built (#91 D3, D2): Output is stale once it has a result and then Input's text changes (typing, Paste, Undo back included), or a picker, Sort keys or the indent setting no longer matches the result. The `Stale` tag (clock icon and word; tooltip `Output doesn't match the current input and settings. Press Format to update it.`, naming the command that made the result) and `Last good result` show at once, and a success status goes back to `Ready`. The banner shows only after a failed Format, and screen readers hear it once. The next good result, or emptying Output, clears all of it. Compare hides the cue while it is on.
 - YAML variant (`deploy.yaml`, Input as YAML): line 4 tab indentation, visible tab glyph `→` underlined; message `Tab character used for indentation; YAML requires spaces (line 4, column 1)` with inline `Repair` button; status bar repeats message with `Repair`; direction `YAML → JSON`; footer `8 lines · 1 problem`.
 - Keyboard: clicking/activating status error moves caret to line/column; ‹ › (and a shortcut, TBD) cycle errors.
 
@@ -278,7 +332,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - While output fills in: breadcrumb shows `Path  Available when formatting finishes` greyed; `Copy path` greyed; find works as plain text (`Kei Tanaka`, `1 so far`), `Path` scope greyed. Output footer `1,284 lines so far`, Copy greyed.
 - Status: spinner `Formatting… 4.8 MB · writing output`, progress bar (accent fill on `gutter.bg` track) + `62%`, `✕ Cancel`. **Progress bar appears only while writing.**
 - Format button in Working state.
-- **Cancel** (ref: 6d cancel crop): rolls Output back to the result it had before Format was pressed; a half-written output is never left behind. Status: `ⓘ Cancelled. Showing the previous result.` Footer `34 lines`, Copy enabled.
+- **Cancel** (ref: 6d cancel crop): rolls Output back to the result it had before Format was pressed; a half-written output is never left behind. Status: `ⓘ Canceled. Showing the previous result.` Footer `34 lines`, Copy enabled. If that result was already stale, the `Stale` tag stays.
 - Esc in the main window while working = Cancel (proposal; confirm).
 
 ### 6e — JSON to YAML (ref: 6e)
@@ -324,6 +378,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - `! This isn't valid Python, so it can't be converted.` Single row: `Line 4, column 15` `<Customer object at 0x10a3f2b50>` underlined — `Unexpected <. A printed object like this doesn't include its data.` `Show in input →`.
 - `Print the object's fields instead, then paste again, or edit the line in the input.`
 - Only `Close` (primary). Nothing to apply.
+- Until this dialog is built, a Convert from Python error is one Problems row with a gutter marker (§5.7, §5.14), in Bill's #195 wording: for example `Missing } for the { opened on line 1.`, `Remove "config =" on line 1. Convert from Python reads a value, not an assignment.`, `This looks like JSON, not Python. Use Format instead.`
 
 ### 6m — Formatting in progress: reading the input (ref: 6m)
 - Right after Format on the 4.8 MB file. Parse can't report a percentage: status shows **spinner only** + `Formatting… 4.8 MB` + `✕ Cancel`. **No progress bar, no percentage.**
@@ -338,7 +393,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 | Loading | 6m (spinner only), 6d (writing: spinner + progress bar + %) |
 | Error | 6a (input errors, stale output), 6l (not Python), 6j (needs you) |
 | Success | 4a/4b status `Valid JSON`, 6e `Converted · 1 note`, 6i/6k apply |
-| Cancelled | 6d crop (rolled back) |
+| Canceled | 6d crop (rolled back) |
 | Conflict | 6f (edited output) |
 
 ---
@@ -364,7 +419,8 @@ Architecture:
 
 - No hard file-size cap.
 - Large-file adaptations seen: wrap off for very long lines, syntax colors off with `Turn on anyway`, streamed output with `so far` counts, path features disabled until done.
-- Thresholds (performance bands) are TBD by benchmarks. Open.
+- Thresholds (performance bands) are TBD by benchmarks. Open. The thresholds tied to long lines (#93) stay out of this spec until #93 resumes.
+- Convert from Python runs on the UI thread, so it has size limits (#91 D6; ADR 0001 §6): 1 MB of Input when Output is JSON and 192 KB when it is YAML. Above the limit, Output stays unchanged and the status says `This document is too large to convert from Python (3.3 MB). The limit is about 1 MB for JSON or about 192 KB for YAML.`
 - Formatting runs off the UI thread (QThread / worker); UI stays responsive; Cancel always available.
 
 ---
@@ -405,7 +461,7 @@ Isolate behind a `platform` module for macOS and Windows:
 - No re-indentation or custom JSON writer for Convert from Python; no code execution.
 - No guessing missing data in Repair (cut-off input, missing comma stay in Needs you).
 - No hard file-size limit; don't invent numeric performance bands.
-- Don't add File or Help menu items, a Window menu or window commands, settings screens, onboarding, or themes (dark mode) beyond this spec.
+- Don't add File or Help menu items, a Window menu or window commands, settings screens, onboarding, or themes beyond this spec. Dark mode is allowed (Eric, #91 D10): View › Appearance offers System, Light and Dark, as in §2.
 - Don't rely on the older written summary (it is wrong about 6k, 6m, and docks).
 
 ---
@@ -427,3 +483,16 @@ Isolate behind a `platform` module for macOS and Windows:
 13. Performance bands and thresholds (wrap-off line length, colors-off size, when to show 6m) — TBD by benchmarks.
 14. Whether to commit reference PNGs alongside this spec (currently text only).
 15. Mock set count: the instructions list 18 PNGs including a separate 6d Cancel crop; in the received set the Cancel state appears inside the 6d image ("After Cancel while the output is filling in"). Confirm nothing is missing.
+16. **App differs from the mocks, undecided (Bill).** Found while refreshing this spec at `5aec22d`; none of these is changed here.
+    - Format success reads `Valid JSON` (or `Converted`) with no check icon, period or line count; only Validate shows the check, as `Valid JSON.` (§5.7, 4a, 6e, §2).
+    - The progress bar has no percentage. During Format, Cancel appears only with the bar; Compare also shows it beside the spinner (§5.7, 6d, 6m).
+    - The status bar shows the problem count, not the first error as a link with `‹ 1 of 3 ›`; Problems and Next/Previous Problem take that role. Repair is not built (6a, 6b).
+    - The Input footer count never includes problems (§5.6, 6a: `6 lines · 3 problems`).
+    - `Edited` and the 6f dialog are not built (§2, §5.6, 6f).
+    - The empty Input reads `Paste JSON, YAML, XML, or HTML, or drop a file here. ⌘O to open.` (6c).
+    - The toolbar adds `Convert from Python` after `Validate` and a `»` overflow; Find reads `Find…` (§5.1).
+    - Menus add items not listed in §5.13: File › Open Right Document…; Edit › Indent, Outdent, Find Next, Find Previous, Format, Convert from Python (no `…`); View › the Compare group, Expand all, Collapse all, Fold, Unfold, Stack Panes. On macOS, Enter Full Screen is the system's item, not Galley's.
+    - The line-number color role.
+    - The chevron icon.
+    - The ⓘ in 6d.
+    - Font ▸ holds Bigger, Smaller and Actual Size (§5.13).
