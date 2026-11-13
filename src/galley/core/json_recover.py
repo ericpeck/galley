@@ -80,6 +80,7 @@ _ESCAPES = frozenset('"\\/bfnrt')
 # reads it, or one bracket. A string ends at its quote, at a line end, or at
 # a backslash before a line end. A ``'`` with no closing quote and a ``//``
 # comment run to the line end; ``/*`` runs to ``*/`` or the end of the text.
+# A ``(`` counts only in value position, where the scanner reads a tuple.
 _LOOKAHEAD = re.compile(
     r"""
     "(?:[^"\\\n\r]|\\[^\n\r])*"?
@@ -87,12 +88,17 @@ _LOOKAHEAD = re.compile(
     | '[^\n\r]*
     | //[^\n\r]*
     | /\*[\s\S]*?(?:\*/|\Z)
-    | [][{}]
+    | [][{}()]
     """,
     re.VERBOSE,
 )
 # An array that never closes, in the closer column.
 NEVER_CLOSES = -1
+# An open tuple among the open brackets, where an open "[" holds its row
+# and an open "{" holds NEVER_CLOSES.
+_TUPLE = -2
+# Where a value can start, so a "(" right after one opens a tuple.
+_VALUE_START = frozenset("[(,:")
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
 _ITEM_START = frozenset("\"'{[-0123456789_$")
@@ -161,16 +167,35 @@ def array_closes_later(text: str, pos: int) -> bool:
     A ``"key":`` inside an array reads as the object's key only when the
     array never closes (#195 B6). Otherwise the colon is a missing comma.
     """
-    depth = 0
+    # True for each open tuple, False for each open "[" or "{".
+    tuples: list[bool] = []
     for match in _LOOKAHEAD.finditer(text, pos):
         token = match.group()
         if token == "[" or token == "{":
-            depth += 1
+            tuples.append(False)
+        elif token == "(":
+            if _value_position(text, match.start()):
+                tuples.append(True)
+        elif token == ")":
+            if tuples and tuples[-1]:
+                tuples.pop()
         elif token == "]" or token == "}":
-            if depth == 0:
+            if not tuples:
                 return token == "]"
-            depth -= 1
+            tuples.pop()
     return False
+
+
+def _value_position(text: str, index: int) -> bool:
+    """True when the last non-blank character before ``index`` starts a value.
+
+    The scanner reads a ``(`` there as a Python tuple (#195 B9). Junk such
+    as ``f(x`` opens nothing.
+    """
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] in " \t\n\r":
+        cursor -= 1
+    return cursor < 0 or text[cursor] in _VALUE_START
 
 
 def array_closers(text: str) -> tuple[array, array]:
@@ -178,13 +203,16 @@ def array_closers(text: str) -> tuple[array, array]:
 
     Two columns in text order: the ``[`` positions, and for each one the
     position of the ``]`` or ``}`` that closes it, or ``NEVER_CLOSES``.
-    Any closer closes the innermost open bracket. One pass over the text,
-    at most 16 bytes per ``[`` (#195, Erik): a dict of every bracket took
-    about 20 times the text's size.
+    A ``)`` closes only a tuple, and ``]`` or ``}`` closes the innermost
+    open bracket of any kind, so a tuple closed with ``]`` leaves its array
+    open (#212 B1). One pass over the text, at most 16 bytes per ``[``
+    (#195, Erik): a dict of every bracket took about 20 times the text's
+    size.
     """
     openers = array("l")
     closers = array("l")
-    # Open brackets: a row in the columns for ``[``, NEVER_CLOSES for ``{``.
+    # Open brackets: a row in the columns for ``[``, NEVER_CLOSES for ``{``,
+    # and _TUPLE for a tuple.
     open_rows = array("l")
     for match in _LOOKAHEAD.finditer(text):
         token = match.group()
@@ -194,9 +222,15 @@ def array_closers(text: str) -> tuple[array, array]:
             closers.append(NEVER_CLOSES)
         elif token == "{":
             open_rows.append(NEVER_CLOSES)
+        elif token == "(":
+            if _value_position(text, match.start()):
+                open_rows.append(_TUPLE)
+        elif token == ")":
+            if open_rows and open_rows[-1] == _TUPLE:
+                open_rows.pop()
         elif (token == "]" or token == "}") and open_rows:
             row = open_rows.pop()
-            if row != NEVER_CLOSES:
+            if row >= 0:
                 closers[row] = match.start()
     return openers, closers
 
