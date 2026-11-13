@@ -251,7 +251,7 @@ class _Scanner:
         if state == _AFTER:
             return self.after(index)
         if state == _VALUE or state == _FIRST_VALUE:
-            if state == _FIRST_VALUE and self.char(index) == _CLOSER[self.kinds[-1]]:
+            if state == _FIRST_VALUE and _closes(self.kinds[-1], self.char(index)):
                 return self.close(index)
             return self.value(index)
         if state == _COLON:
@@ -381,7 +381,7 @@ class _Scanner:
         implied, self.implied_comma = self.implied_comma, False
         char = self.ensure_more(index, EXPECT_COMMA)
         kind = self.kinds[-1]
-        if char == _CLOSER[kind]:
+        if _closes(kind, char):
             return self.close(index)
         listed = _VALUE if kind != "{" else _KEY
         if char == ",":
@@ -627,6 +627,15 @@ class _Scanner:
             # A lone character such as "/" that starts nothing.
             return index + 1
         return match.end()
+
+
+def _closes(kind: str, char: str) -> bool:
+    """True when ``char`` closes a bracket of ``kind``.
+
+    A tuple closed with ``]`` is closed: its row already says to use
+    ``[`` and ``]``, so no "Missing )" row contradicts it (Bill, #195).
+    """
+    return char == _CLOSER[kind] or (kind == "(" and char == "]")
 
 
 def _starts_item(char: str) -> bool:
