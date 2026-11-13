@@ -276,7 +276,7 @@ def _statement_error(text: str) -> ConvertError | None:
     if assigned is not None:
         return assigned
     statement = next((item for item in body if not isinstance(item, ast.Expr)), None)
-    if statement is None:
+    if statement is None and len(body) > 1:
         # Two or more values: one row, at the first extra one (Bill, #195).
         extra = body[1]
         line = extra.lineno
@@ -285,6 +285,9 @@ def _statement_error(text: str) -> ConvertError | None:
             f"Remove the extra value on line {line}."
         )
         return ConvertError(message, line, extra.col_offset + 1)
+    if statement is None:
+        # One value and a ";", such as ``1;``: one statement (#212 B2).
+        statement = body[0]
     line = statement.lineno
     message = f"Convert from Python reads a value, not a statement, on line {line}."
     return ConvertError(message, line, statement.col_offset + 1)
