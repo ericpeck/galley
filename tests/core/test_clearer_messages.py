@@ -23,6 +23,8 @@ _B7 = '{\n"order": 7,\n"lines": [\n{"sku": "A-1", "qty": 2},\n{"sku": "B-7", "qt
 _B9 = '{"name": "Ada", "active": True, "manager": None, "scores": (1, 2, 3)}'
 _B10 = '{\n// the user\'s name\n"name": "Ada Example",\n"age": 36 /* years */\n}'
 _NOT_PYTHON = "This isn't valid Python, so it can't be converted."
+_ONLY_COMMENTS = "There's no value to convert. The text has only comments."
+_ENDS_EARLY = "The text ends on line 1 before the JSON document finishes."
 
 
 def _rows(text: str) -> list[tuple[str, int, int, str, bool]]:
@@ -94,6 +96,34 @@ def test_b7_text_cut_off_mid_value_is_one_text_ends_problem() -> None:
     assert _rows(_B7) == [("incomplete", 5, 22, "", False)]
 
 
+@pytest.mark.parametrize(
+    ("text", "column"), [('{"a"', 5), ('{"a": 1, "b"', 13)], ids=["first", "later"]
+)
+def test_b7_text_cut_off_right_after_a_key_is_one_text_ends_problem(
+    text: str, column: int
+) -> None:
+    """The colon and value are missing too, so ``}`` alone wouldn't fix it."""
+    assert _rows(text) == [("incomplete", 1, column, "", False)]
+    found = collect_problems(text, "JSON", _decode_error(text))
+    assert message_for(found[0]) == _ENDS_EARLY
+
+
+@pytest.mark.parametrize(
+    ("text", "row"),
+    [
+        ('{"a": [1, 2,', ("missing_close", 1, 7, "[", False)),
+        ('{"a": 1,', ("missing_close", 1, 1, "{", False)),
+        ('{"a": "Ad', ("unclosed_quote", 1, 7, "", False)),
+    ],
+    ids=["after a comma in an array", "after a comma in an object", "in a string"],
+)
+def test_other_early_endings_keep_their_bracket_or_quote_row(
+    text: str, row: tuple[str, int, int, str, bool]
+) -> None:
+    """There the named bracket or quote is the fix (Bill, #195)."""
+    assert _rows(text) == [row]
+
+
 def test_b9_python_values_each_get_a_row_and_none_reads_as_a_key() -> None:
     assert _rows(_B9) == [
         ("python_literal", 1, 27, "True", False),
@@ -118,6 +148,19 @@ def test_b10_each_comment_gets_a_row_and_no_comma_row() -> None:
 def test_a_closer_with_no_tuple_open_is_read_past(text: str) -> None:
     """A stray ")" is junk. Reading it as a tuple's end stopped the scan."""
     assert [row[0] for row in _rows(text)] == ["json_other"]
+
+
+@pytest.mark.parametrize(
+    "text", ['{"a": (1, 2]}', "(1, 2]"], ids=["in an object", "alone"]
+)
+def test_a_tuple_closed_with_a_square_bracket_is_one_row(text: str) -> None:
+    """Following the tuple row fixes both ends, so no "Missing )" row."""
+    rows = _rows(text)
+    assert [row[0] for row in rows] == ["python_tuple"]
+    found = collect_problems(text, "JSON", _decode_error(text))
+    assert (
+        message_for(found[0]) == "Use [ and ] instead of ( and ) for a list on line 1."
+    )
 
 
 def test_a_tuple_left_open_names_its_closer() -> None:
@@ -160,8 +203,23 @@ def test_e8_an_assignment_names_what_to_remove() -> None:
 
 @pytest.mark.parametrize(
     ("source", "line"),
-    [("import os", 1), ("x = 1; y = 2", 1), ("a.b = 1", 1), ("{'a': 1}\n{'b': 2}", 2)],
-    ids=["import", "two statements", "attribute", "two values"],
+    [
+        ("import os", 1),
+        ("x = 1; y = 2", 1),
+        ("a.b = 1", 1),
+        ("1\nimport os", 2),
+        # One value and a ";" is one statement, not two values (#212 B2).
+        ("{'a': 1};", 1),
+        ("1;", 1),
+    ],
+    ids=[
+        "import",
+        "two statements",
+        "attribute",
+        "a value then a statement",
+        "a dict and a semicolon",
+        "a number and a semicolon",
+    ],
 )
 def test_e8_other_valid_python_says_it_is_a_statement(source: str, line: int) -> None:
     error = _error(source)
@@ -169,6 +227,36 @@ def test_e8_other_valid_python_says_it_is_a_statement(source: str, line: int) ->
         f"Convert from Python reads a value, not a statement, on line {line}."
     )
     assert (error.lineno, error.colno) == (line, 1)
+    assert not error.syntax
+
+
+@pytest.mark.parametrize(
+    ("source", "column"),
+    [
+        ("{'a': 1}\n{'b': 2}", 1),
+        ("{'a': 1}\n{'b': 2}\n{'c': 3}", 1),
+        ("[1]\n[2]  # two lists", 1),
+    ],
+    ids=["two", "three", "with a comment"],
+)
+def test_extra_values_name_the_first_extra_one(source: str, column: int) -> None:
+    """One row, at the start of the second value (Bill, #195)."""
+    error = _error(source)
+    assert error.message == (
+        "Convert from Python reads one value. Remove the extra value on line 2."
+    )
+    assert (error.lineno, error.colno) == (2, column)
+    assert not error.syntax
+
+
+@pytest.mark.parametrize(
+    "source", ["# just a comment", "\n  # first\n# second\n"], ids=["one", "several"]
+)
+def test_comment_only_text_has_no_value_to_convert(source: str) -> None:
+    error = _error(source)
+    assert error.message == _ONLY_COMMENTS
+    assert (error.lineno, error.colno) == (1, 1)
+    # The text is valid Python, so the status keeps the problem count.
     assert not error.syntax
 
 

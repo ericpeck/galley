@@ -340,6 +340,10 @@ def _json_problem(
         return Problem(
             "missing_comma", line, "", _comma_column(lines, pos, line), uncertain
         )
+    if message == "Expecting ':' delimiter" and _at_end(text, pos):
+        # Cut off right after a key: the colon and value are missing too,
+        # so a closing bracket alone wouldn't fix it (Bill, #195 B7).
+        return _missing_close(lines, pos, lambda: None, uncertain)
     if _at_end(text, pos):
         return _missing_close(lines, pos, innermost, uncertain)
     comma_at = _comma_before(text, pos)

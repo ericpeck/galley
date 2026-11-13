@@ -128,6 +128,7 @@ _UNKNOWN = "This expression can't be converted"
 _VALUE = "This value can't be converted"
 # 6l's sentence, for text that isn't Python at all (Bill, D5).
 NOT_PYTHON = "This isn't valid Python, so it can't be converted."
+ONLY_COMMENTS = "There's no value to convert. The text has only comments."
 _LOOKS_LIKE_JSON = "This looks like JSON, not Python. Use Format instead"
 _JSON_NAMES = frozenset({"true", "false", "null"})
 # How Python prints a float that isn't finite, and what float() reads.
@@ -269,15 +270,24 @@ def _statement_error(text: str) -> ConvertError | None:
         return None
     body = module.body
     if not body:
-        return None
+        # Valid Python with nothing in it but comments (Bill, #195).
+        return ConvertError(ONLY_COMMENTS, 1, 1)
     assigned = _assignment(body)
     if assigned is not None:
         return assigned
-    # The first statement that isn't a value, else the second value.
-    statement = next(
-        (item for item in body if not isinstance(item, ast.Expr)),
-        body[1] if len(body) > 1 else body[0],
-    )
+    statement = next((item for item in body if not isinstance(item, ast.Expr)), None)
+    if statement is None and len(body) > 1:
+        # Two or more values: one row, at the first extra one (Bill, #195).
+        extra = body[1]
+        line = extra.lineno
+        message = (
+            "Convert from Python reads one value. "
+            f"Remove the extra value on line {line}."
+        )
+        return ConvertError(message, line, extra.col_offset + 1)
+    if statement is None:
+        # One value and a ";", such as ``1;``: one statement (#212 B2).
+        statement = body[0]
     line = statement.lineno
     message = f"Convert from Python reads a value, not a statement, on line {line}."
     return ConvertError(message, line, statement.col_offset + 1)
