@@ -21,6 +21,8 @@ time.
 
 import json
 import re
+from array import array
+from bisect import bisect_left
 from dataclasses import dataclass
 
 # The scan stops once it has found this many errors and repeated keys.
@@ -74,9 +76,23 @@ _LINE_END = re.compile(r"[^\n\r]*")
 # as object keys (#195 B9).
 _CLOSER = {"[": "]", "{": "}", "(": ")"}
 _ESCAPES = frozenset('"\\/bfnrt')
-# A string, even one cut off at a line end, or one bracket. Used to find
-# where an array closes.
-_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\\n\r]|\\.)*"?|[][{}]')
+# What the B6 lookahead reads: a string or comment, read the way the scanner
+# reads it, or one bracket. A string ends at its quote, at a line end, or at
+# a backslash before a line end. A ``'`` with no closing quote and a ``//``
+# comment run to the line end; ``/*`` runs to ``*/`` or the end of the text.
+_LOOKAHEAD = re.compile(
+    r"""
+    "(?:[^"\\\n\r]|\\[^\n\r])*"?
+    | '(?:[^'\\\n\r]|\\[^\n\r])*'
+    | '[^\n\r]*
+    | //[^\n\r]*
+    | /\*[\s\S]*?(?:\*/|\Z)
+    | [][{}]
+    """,
+    re.VERBOSE,
+)
+# An array that never closes, in the closer column.
+NEVER_CLOSES = -1
 # Characters that can start the next value or key, so a missing comma is
 # the likeliest repair.
 _ITEM_START = frozenset("\"'{[-0123456789_$")
@@ -145,28 +161,44 @@ def array_closes_later(text: str, pos: int) -> bool:
     A ``"key":`` inside an array reads as the object's key only when the
     array never closes (#195 B6). Otherwise the colon is a missing comma.
     """
-    return _closer_after(text, pos, {}) == "]"
-
-
-def _closer_after(text: str, pos: int, closers: dict[int, str]) -> str:
-    """The first ``]`` or ``}`` after ``pos`` that closes nothing opened
-    after ``pos``, or "" when the text ends first.
-
-    Each bracket opened on the way goes into ``closers`` with the closer
-    that ends it, or "" if none does, so the scan never reads it again.
-    """
-    opened: list[int] = []
-    for match in _STRING_OR_BRACKET.finditer(text, pos):
+    depth = 0
+    for match in _LOOKAHEAD.finditer(text, pos):
         token = match.group()
         if token == "[" or token == "{":
-            opened.append(match.start())
+            depth += 1
         elif token == "]" or token == "}":
-            if not opened:
-                return token
-            closers.setdefault(opened.pop(), token)
-    for start in opened:
-        closers.setdefault(start, "")
-    return ""
+            if depth == 0:
+                return token == "]"
+            depth -= 1
+    return False
+
+
+def array_closers(text: str) -> tuple[array, array]:
+    """Every ``[`` the lookahead reads, and where each one closes.
+
+    Two columns in text order: the ``[`` positions, and for each one the
+    position of the ``]`` or ``}`` that closes it, or ``NEVER_CLOSES``.
+    Any closer closes the innermost open bracket. One pass over the text,
+    at most 16 bytes per ``[`` (#195, Erik): a dict of every bracket took
+    about 20 times the text's size.
+    """
+    openers = array("l")
+    closers = array("l")
+    # Open brackets: a row in the columns for ``[``, NEVER_CLOSES for ``{``.
+    open_rows = array("l")
+    for match in _LOOKAHEAD.finditer(text):
+        token = match.group()
+        if token == "[":
+            open_rows.append(len(openers))
+            openers.append(match.start())
+            closers.append(NEVER_CLOSES)
+        elif token == "{":
+            open_rows.append(NEVER_CLOSES)
+        elif (token == "]" or token == "}") and open_rows:
+            row = open_rows.pop()
+            if row != NEVER_CLOSES:
+                closers[row] = match.start()
+    return openers, closers
 
 
 def scan_json(text: str, limit: int = MAX_FINDINGS) -> Scan:
@@ -195,9 +227,12 @@ class _Scanner:
         self.extra_seen = False
         # The last value read was a string, so a colon after it makes it a key.
         self.after_string = False
-        # Where each open bracket closes, "]" or "}", or "" if it never
-        # does. B6 looks ahead once per array, not once per key (#210).
-        self.closers: dict[int, str] = {}
+        # Where each ``[`` closes, read once at the first B6 colon, so B6
+        # looks ahead once for the whole text, not once per key (#210).
+        self.closers: tuple[array, array] | None = None
+        # The answer for a "[" the table doesn't have, by where it opened,
+        # so its lookahead runs once for the array, not once per key.
+        self.missing: dict[int, bool] = {}
 
     def run(self) -> None:
         index = 0
@@ -394,12 +429,19 @@ class _Scanner:
 
     def closes_later(self, index: int) -> bool:
         """True when a ``]`` after ``index`` closes the innermost array."""
+        if self.closers is None:
+            self.closers = array_closers(self.text)
+        openers, closers = self.closers
         opened = self.opens[-1]
-        closer = self.closers.get(opened)
-        if closer is None:
-            closer = _closer_after(self.text, index, self.closers)
-            self.closers[opened] = closer
-        return closer == "]"
+        row = bisect_left(openers, opened)
+        if row == len(openers) or openers[row] != opened:
+            # The lookahead read this "[" as part of a string or comment.
+            found = self.missing.get(opened)
+            if found is None:
+                found = self.missing[opened] = array_closes_later(self.text, index)
+            return found
+        closer = closers[row]
+        return closer != NEVER_CLOSES and self.text[closer] == "]"
 
     def key(self, index: int, state: int) -> tuple[int, int]:
         char = self.ensure_more(index, EXPECT_KEY)
