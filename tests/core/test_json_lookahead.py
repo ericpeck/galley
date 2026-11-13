@@ -18,7 +18,8 @@ from galley.core.problems import collect_problems
 
 # Pieces the generated inputs are built from: brackets, closed and cut-off
 # strings in both quotes, escapes, both comment kinds, line ends, and
-# tuples, with junk such as f( that opens none (#212 B1).
+# tuples, with junk such as f( that opens none (#212 B1), and a ( where an
+# object's key goes, which opens none either (#212 B3).
 _PIECES = (
     "[",
     "]",
@@ -48,6 +49,8 @@ _PIECES = (
     "f(",
     "[(",
     ", (",
+    '[{"k": 1, (',
+    "}]",
     ", ",
     "1",
     ":",
@@ -55,8 +58,10 @@ _PIECES = (
 )
 _SEED = 195
 _INPUTS = 500
-# The seeded inputs close 48 tuples with "]" or "}"; at least this many.
+# The seeded inputs close 70 tuples with "]" or "}" and put 127 "(" where
+# an object's key goes; at least this many of each.
 _TUPLES_CLOSED = 40
+_KEYS_SKIPPED = 100
 
 
 def _rows(text: str) -> list[tuple[str, int, int, str, bool]]:
@@ -119,16 +124,20 @@ def _skip(text: str, index: int) -> int | None:
     return None
 
 
-def _value_position(text: str, index: int) -> bool:
+def _value_position(text: str, index: int, in_object: bool) -> bool:
     """True when the last non-blank character before ``index`` starts a value.
 
-    That is ``[``, ``(``, ``,`` or ``:``, or there is none, so a ``(`` there
-    opens a Python tuple and junk such as ``f(x`` opens nothing.
+    That is ``:``, or there is none, or ``[``, ``(`` or ``,`` outside an
+    object. A ``(`` there opens a Python tuple. After a comma inside an
+    object a key comes next, so a ``(`` there is junk (#212 B3), and so is
+    ``f(x``.
     """
     cursor = index - 1
     while cursor >= 0 and text[cursor] in " \t\n\r":
         cursor -= 1
-    return cursor < 0 or text[cursor] in "[(,:"
+    if cursor < 0 or text[cursor] == ":":
+        return True
+    return not in_object and text[cursor] in "[(,"
 
 
 # An open "{" and an open tuple, where an open "[" holds its row.
@@ -137,7 +146,9 @@ _TUPLE = -2
 
 
 def _reference_closers(
-    text: str, tuples_closed: list[int] | None = None
+    text: str,
+    tuples_closed: list[int] | None = None,
+    keys_skipped: list[int] | None = None,
 ) -> list[tuple[int, int]]:
     """A slow walk, one character at a time, of what the lookahead records.
 
@@ -145,7 +156,8 @@ def _reference_closers(
     closes it, or -1. A ``(`` in value position opens a tuple, which only
     ``)`` or a closer of its own closes. ``)`` closes only a tuple, and
     ``]`` or ``}`` closes the innermost open bracket of any kind (#212 B1).
-    Each tuple a ``]`` or ``}`` closes is added to ``tuples_closed``.
+    Each tuple a ``]`` or ``}`` closes is added to ``tuples_closed``, and
+    each ``(`` after a comma inside an object to ``keys_skipped``.
     """
     found: list[list[int]] = []
     opened: list[int] = []
@@ -162,8 +174,15 @@ def _reference_closers(
         elif char == "{":
             opened.append(_OBJECT)
         elif char == "(":
-            if _value_position(text, index):
+            in_object = bool(opened) and opened[-1] == _OBJECT
+            if _value_position(text, index, in_object):
                 opened.append(_TUPLE)
+            elif (
+                in_object
+                and keys_skipped is not None
+                and _value_position(text, index, in_object=False)
+            ):
+                keys_skipped.append(index)
         elif char == ")":
             if opened and opened[-1] == _TUPLE:
                 opened.pop()
@@ -194,17 +213,23 @@ def test_the_reference_walker_reads_strings_and_comments() -> None:
     assert _reference_closers("[(1, 2], 3]") == [(0, 10)]
     assert _reference_closers("[f(x], 3]") == [(0, 4)]
     assert _reference_closers("[(1)]") == [(0, 4)]
+    # A "(" where an object's key goes opens nothing (#212 B3).
+    assert _reference_closers('[{"b": 1, (x}, 2]') == [(0, 16)]
+    assert _reference_closers('[{"b": (1)}, 2]') == [(0, 14)]
 
 
 def test_recorded_closers_match_a_slow_walk_of_the_text() -> None:
     """About 500 seeded inputs: the recorded closers equal the slow walk's."""
     tuples_closed: list[int] = []
+    keys_skipped: list[int] = []
     for text in _generated():
         openers, closers = json_recover.array_closers(text)
-        expected = _reference_closers(text, tuples_closed)
+        expected = _reference_closers(text, tuples_closed, keys_skipped)
         assert list(zip(openers, closers, strict=True)) == expected, repr(text)
-    # The inputs include tuples closed with "]" or "}" (#212 B1).
+    # The inputs include tuples closed with "]" or "}" (#212 B1), and a "("
+    # where an object's key goes (#212 B3).
     assert len(tuples_closed) >= _TUPLES_CLOSED
+    assert len(keys_skipped) >= _KEYS_SKIPPED
 
 
 # Erik's two examples (#210): a "]" inside a string or a comment doesn't
@@ -259,6 +284,35 @@ def test_a_closer_in_a_string_or_comment_does_not_close_the_array(
     ids=["tuple in the array", "tuple after the key"],
 )
 def test_a_tuple_closed_with_a_square_bracket_does_not_close_the_array(
+    text: str, rows: list[tuple[str, int, int, str, bool]]
+) -> None:
+    assert _rows(text) == rows
+
+
+# Erik's B3 (#212): a "(" where an object's key goes is junk to the
+# scanner, so it opens no tuple and the "}" closes the object. The rows
+# are main's: the array closes later, so B6 doesn't apply.
+@pytest.mark.parametrize(
+    ("text", "rows"),
+    [
+        (
+            '{"a": [{"b": 1, (x}, "k": 2]}',
+            [
+                ("trailing_comma", 1, 15, "", False),
+                ("missing_comma", 1, 25, "", False),
+            ],
+        ),
+        (
+            '{"a": [{"b": 1, (}, "k": 2]}',
+            [
+                ("trailing_comma", 1, 15, "", False),
+                ("missing_comma", 1, 24, "", False),
+            ],
+        ),
+    ],
+    ids=["junk after the paren", "paren alone"],
+)
+def test_a_paren_in_key_position_opens_no_tuple(
     text: str, rows: list[tuple[str, int, int, str, bool]]
 ) -> None:
     assert _rows(text) == rows
