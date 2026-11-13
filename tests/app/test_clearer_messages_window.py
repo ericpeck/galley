@@ -45,6 +45,16 @@ _JSON_CASES = {
         [1, 1, 1],
     ),
     "B9 False": ('{"done": False}', ["Use false instead of False on line 1."], [1]),
+    "B9 tuple closed with ]": (
+        '{"a": (1, 2]}',
+        ["Use [ and ] instead of ( and ) for a list on line 1."],
+        [1],
+    ),
+    "B7 after a key": (
+        '{"a"',
+        ["The text ends on line 1 before the JSON document finishes."],
+        [1],
+    ),
     "B10": (
         '{\n// the user\'s name\n"name": "Ada Example",\n"age": 36 /* years */\n}',
         [
@@ -85,6 +95,18 @@ _CONVERT_CASES = {
     "E8 attribute": (
         "a.b = 1",
         "Convert from Python reads a value, not a statement, on line 1.",
+        "Line 1, Col 1",
+        "1 problem",
+    ),
+    "E8 two values": (
+        "{'a': 1}\n{'b': 2}",
+        "Convert from Python reads one value. Remove the extra value on line 2.",
+        "Line 2, Col 1",
+        "1 problem",
+    ),
+    "E8 only comments": (
+        "# just a comment",
+        "There's no value to convert. The text has only comments.",
         "Line 1, Col 1",
         "1 problem",
     ),
@@ -198,6 +220,38 @@ def test_broken_json_gets_one_correct_row_per_problem(
     assert _input(window).problem_lines() == set(lines)
     noun = "problem" if len(messages) == 1 else "problems"
     assert _state(window) == f"{len(messages)} {noun}"
+
+
+# Erik's two examples (#195 C3): a "]" inside a string or a comment doesn't
+# close the array. Two sure rows, and no stale missing-comma row after them.
+_CLOSER_IN_TEXT = {
+    "single quotes": (
+        '{"a": ["x" : 1, \']\', "y" : 2}',
+        "Use double quotes instead of single quotes on line 1.",
+    ),
+    "comment": (
+        '{"a": ["x" : 1, // ]\n"y" : 2}',
+        "JSON doesn't allow comments. Remove the comment on line 1.",
+    ),
+}
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+@pytest.mark.parametrize("case", list(_CLOSER_IN_TEXT))
+def test_a_closer_in_a_string_or_comment_gives_two_sure_rows(
+    qtbot, install_scheme, scheme: str, case: str
+) -> None:
+    text, second = _CLOSER_IN_TEXT[case]
+    window = _show(qtbot)
+    install_scheme(scheme)
+    _format(qtbot, window, text)
+    rows = _pane(window).shown()
+    messages = ["Missing ] for the [ opened on line 1.", second]
+    # No row has the uncertain marker.
+    assert [row.full_message() for row in rows] == messages
+    assert [row.uncertain for row in rows] == [False, False]
+    assert [row.lineno for row in rows] == [1, 1]
+    assert _state(window) == "2 problems"
 
 
 # --- The Convert from Python offer (B9) ---------------------------------------
@@ -336,7 +390,7 @@ def test_a_convert_error_is_a_problems_row_with_a_marker(
     assert pane.messages() == [message]
     (row,) = pane.shown()
     assert place_text(row.lineno, row.colno) == place
-    assert _input(window).problem_lines() == {1}
+    assert _input(window).problem_lines() == {row.lineno}
     assert _state(window) == status
     assert _output(window).toPlainText() == "previous\n"
 
