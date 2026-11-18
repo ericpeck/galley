@@ -250,7 +250,12 @@ def test_extra_values_name_the_first_extra_one(source: str, column: int) -> None
 
 
 @pytest.mark.parametrize(
-    "source", ["# just a comment", "\n  # first\n# second\n"], ids=["one", "several"]
+    "source",
+    # Blank text gets the same row in core. The window never converts blank
+    # Input (_is_blank in main_window.py), so this pins the core's answer
+    # only (#213 F3).
+    ["# just a comment", "\n  # first\n# second\n", "", " \n\t "],
+    ids=["one", "several", "empty", "blank"],
 )
 def test_comment_only_text_has_no_value_to_convert(source: str) -> None:
     error = _error(source)
