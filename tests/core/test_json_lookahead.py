@@ -388,13 +388,18 @@ class _CountingScanner(json_recover._Scanner):
 def test_every_scanner_array_is_in_the_table() -> None:
     """The scanner never needs the fallback on generated inputs (Erik, N3).
 
-    Every "[" the scanner asks about is one the table recorded.
+    Every "[" the scanner asks about is one the table recorded, and the
+    table's answer for it matches the slow walk of the whole text.
     """
     queries = 0
     for text in _b6_generated():
         scanner = _CountingScanner(text)
         scanner.run()
         assert scanner.missing == {}, repr(text)
+        closes = dict(_reference_closers(text))
+        for opened, _index, answer in scanner.asked:
+            closer = closes[opened]
+            assert answer == (closer != -1 and text[closer] == "]"), repr(text)
         queries += scanner.queries
     assert queries >= _B6_QUERIES
 
