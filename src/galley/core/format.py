@@ -1604,6 +1604,18 @@ def _not_json_value(value: object) -> object:
 # ``InputError.kind`` they are names, and ``galley.app`` chooses the words.
 NOT_JSON_KEY = "not_json_key"
 SELF_REFERENCE = "self_reference"
+ALIAS_EXPANSION = "alias_expansion"
+# JSON writes every alias out in full, so a few hundred bytes of YAML can
+# name millions of values (#223). Format to JSON and Escape as String refuse
+# YAML whose aliases would add more than ALIAS_EXPANSION_LIMIT values, or
+# ALIAS_EXPANSION_RATIO times the document's own distinct values when that is
+# more. A small document can't grow past about 10 MB of JSON at #223's
+# example's indentation, and a large one, such as many rows that each merge
+# a shared default, grows at most in proportion to its own size.
+ALIAS_EXPANSION_LIMIT = 100_000
+ALIAS_EXPANSION_RATIO = 10
+# Counts stop growing here, so a chain of thousands of aliases stays cheap.
+_COUNT_CEILING = 1 << 62
 # The key types ``json.dumps`` writes; it turns numbers, bools and null into
 # strings.
 _JSON_KEY_TYPES = (str, int, float, bool, type(None))
@@ -1615,6 +1627,15 @@ class NotJSONKeyError(NotJSONValueError):
 
 class SelfReferenceError(NotJSONValueError):
     """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
+
+
+class AliasExpansionError(NotJSONValueError):
+    """YAML whose aliases, written out in full, add too many values.
+
+    More than ``ALIAS_EXPANSION_LIMIT``, or ``ALIAS_EXPANSION_RATIO`` times
+    the document's own distinct values when that is more, as in a chain of
+    lists that each repeat the one before ten times (#223).
+    """
 
 
 def _dump_yaml_value(value: object, indent: str = DEFAULT_INDENT) -> str:
@@ -1640,23 +1661,27 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     so a value ``prepare`` replaced can't come back. A key JSON can't hold
     raises ``NotJSONKeyError`` and an alias that contains itself raises
     ``SelfReferenceError``, because ``json.dumps`` rejects both before its
-    ``default`` hook can.
+    ``default`` hook can. Aliases that, written out in full, add too many
+    values raise ``AliasExpansionError`` (#223).
     """
     rendered = format_yaml(text, prepare=prepare)
     value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
-    _check_json_shape(value)
+    if _check_json_shape(value):
+        _check_alias_expansion(value)
     return value
 
 
-def _check_json_shape(value: object) -> None:
+def _check_json_shape(value: object) -> bool:
     """Raise for a key JSON can't hold, or a mapping or list inside itself.
 
     Each mapping and list is walked once, with an explicit stack, so an
     alias shared many times costs no more than one copy. A list or mapping
-    still being walked when it is reached again contains itself.
+    still being walked when it is reached again contains itself. Return
+    True when a mapping or list is reached more than once, as an alias does.
     """
+    shared = False
     walking: set[int] = set()
     walked: set[int] = set()
     stack: list[tuple[object, bool]] = [(value, False)]
@@ -1666,7 +1691,10 @@ def _check_json_shape(value: object) -> None:
             walking.discard(id(node))
             walked.add(id(node))
             continue
-        if not isinstance(node, (dict, list)) or id(node) in walked:
+        if not isinstance(node, (dict, list)):
+            continue
+        if id(node) in walked:
+            shared = True
             continue
         if id(node) in walking:
             raise SelfReferenceError(SELF_REFERENCE)
@@ -1679,6 +1707,48 @@ def _check_json_shape(value: object) -> None:
         else:
             children = node
         stack.extend((child, False) for child in children)
+    return shared
+
+
+def _check_alias_expansion(value: object) -> None:
+    """Raise ``AliasExpansionError`` when aliases add too many values.
+
+    JSON writes a shared mapping or list out again at each alias. A value is
+    a mapping, a list, or an item in one; keys don't count. ``value`` passed
+    ``_check_json_shape``, so nothing contains itself. Each mapping and list
+    is counted once, with an explicit stack, and its written-out count is
+    kept, so a chain of aliases costs no more than its own size.
+    """
+    written: dict[int, int] = {}
+    distinct = 0
+    stack: list[tuple[object, bool]] = [(value, False)]
+    while stack:
+        node, leaving = stack.pop()
+        children = node.values() if isinstance(node, dict) else node
+        if leaving:
+            total = 1
+            for child in children:
+                if isinstance(child, (dict, list)):
+                    total += written[id(child)]
+                else:
+                    total += 1
+            written[id(node)] = min(total, _COUNT_CEILING)
+            continue
+        if id(node) in written:
+            continue
+        # Counted before its children finish, so a second path to it is
+        # skipped above. Its own count replaces this when it is left.
+        written[id(node)] = 0
+        distinct += 1
+        stack.append((node, True))
+        for child in children:
+            if isinstance(child, (dict, list)):
+                stack.append((child, False))
+            else:
+                distinct += 1
+    allowed = max(ALIAS_EXPANSION_LIMIT, ALIAS_EXPANSION_RATIO * distinct)
+    if written[id(value)] - distinct > allowed:
+        raise AliasExpansionError(ALIAS_EXPANSION)
 
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:

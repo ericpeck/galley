@@ -24,6 +24,7 @@ from galley.core.errors import (
     NotJSONValueError,
 )
 from galley.core.format import (
+    AliasExpansionError,
     NotJSONKeyError,
     SelfReferenceError,
     _value_format,
@@ -41,9 +42,10 @@ class EscapeError(NotJSONValueError):
 
     YAML can load a date, binary data, a set, a non-scalar key, or an alias
     that contains itself. Format to JSON fails on those as well. For a key
-    JSON can't hold or an alias inside itself, the error's text is the kind
-    ``yaml_json_value`` names: ``format.NOT_JSON_KEY`` or
-    ``format.SELF_REFERENCE``.
+    JSON can't hold, an alias inside itself, or aliases that add too many
+    values, the error's text is the kind ``yaml_json_value`` names:
+    ``format.NOT_JSON_KEY``, ``format.SELF_REFERENCE`` or
+    ``format.ALIAS_EXPANSION``.
     """
 
 
@@ -79,7 +81,7 @@ def escape_document(text: str | bytes, source: str) -> str:
     else:
         try:
             value = yaml_json_value(text)
-        except (NotJSONKeyError, SelfReferenceError) as exc:
+        except (NotJSONKeyError, SelfReferenceError, AliasExpansionError) as exc:
             raise EscapeError(str(exc)) from None
     return escape_value(value)
 
