@@ -125,6 +125,33 @@ def test_sniff_tries_formats_in_table_order(
     assert sniff_format(text) is expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param("<!-- a --><!-- b --><html>", HTML, id="two on one line"),
+        pytest.param(
+            "<!-- a --> <!-- b -->\n<!DOCTYPE html>", HTML, id="two, then a line"
+        ),
+        pytest.param("<!-- a\n--><!-- b --><body>", HTML, id="after a long one"),
+        pytest.param("<!-- a --><!-- b\n  c -->\n<html>", HTML, id="second runs on"),
+        pytest.param("<!-- a --><!-- b --><feed/>", XML, id="then XML"),
+        pytest.param("<!-- a --><!-- b -->", None, id="only comments"),
+        pytest.param("<!-->\n<html>", HTML, id="empty, closed at once"),
+        pytest.param("<!--->\n<html>", HTML, id="empty, one dash"),
+        pytest.param("<!--><body>", HTML, id="empty, then a tag"),
+    ],
+)
+def test_sniff_skips_every_comment_before_the_first_value(
+    text: str, expected: DocumentFormat | None
+) -> None:
+    """Each ``<!-- -->`` on a line is skipped, not just the first (#201).
+
+    ``<!-->`` and ``<!--->`` are empty comments that close at once, as HTML
+    parsers read them.
+    """
+    assert sniff_format(text) is expected
+
+
 def test_detect_format_reports_the_label() -> None:
     assert detect_format(Path("a.yml"), "{}") == "YAML"
     assert detect_format(Path("a.txt"), "{}") == "JSON"

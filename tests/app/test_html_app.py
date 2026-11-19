@@ -5,6 +5,7 @@ Erik's slice 5 prompt, Bill's slice 5 UI criteria, and the slice 5
 checklist on #63. Fake data only.
 """
 
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -343,8 +344,12 @@ def test_compare_format_states_the_limit_as_a_whole_number(
         window.shutdown_parse_worker()
 
 
+@cache
 def _at_the_limit() -> str:
-    """Fake HTML of exactly 2 MB, in short lines so the editor stays fast."""
+    """Fake HTML of exactly 2 MB, in short lines so the editor stays fast.
+
+    Built once for the module (#201).
+    """
     head = "<!DOCTYPE html>\n"
     line = "<p>Fake text</p>\n"
     count = (MARKUP_FORMAT_LIMIT_BYTES - len(head)) // len(line) - 1
@@ -364,6 +369,26 @@ def test_markup_at_the_limit_still_formats_after_the_size_prompt(qtbot) -> None:
     # At the limit, the usual size prompt asks, as for any large document.
     qtbot.waitUntil(lambda: window.findChild(QMessageBox, "sizeWarning") is not None)
     assert "too large" not in _status(window).text()
+
+
+def test_markup_one_byte_over_the_limit_is_refused(qtbot) -> None:
+    """2 MB runs and 2 MB plus 1 byte is refused, as for Escape (#201)."""
+    window = _show(qtbot)
+    source = _pane(window, "input")
+    _choose(source, "HTML")
+    text = _at_the_limit() + "x"
+    assert len(text.encode("utf-8")) == MARKUP_FORMAT_LIMIT_BYTES + 1
+    source.editor.setPlainText(text)
+    output = _pane(window, "output").editor
+    output.setPlainText("kept\n")
+
+    window._actions.format.trigger()
+
+    assert _status(window).text() == (
+        "This document is too large to format (2.1 MB). The limit is 2 MB."
+    )
+    assert window.findChild(QMessageBox, "sizeWarning") is None
+    assert output.toPlainText() == "kept\n"
 
 
 @pytest.mark.parametrize(

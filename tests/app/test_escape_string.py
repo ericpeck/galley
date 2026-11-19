@@ -2,6 +2,7 @@
 
 import sys
 from collections import Counter
+from functools import cache
 
 import pytest
 from PySide6.QtCore import Qt
@@ -19,6 +20,7 @@ from galley.app.escape_string import (
     escape_too_large_message,
     unescape_too_large_message,
 )
+from galley.app.limits import MARKUP_FORMAT_LIMIT_BYTES
 from galley.app.main import create_main_window
 from galley.app.parse_session import ParseSession
 from galley.app.problems_pane import ProblemsPane
@@ -312,6 +314,59 @@ def test_large_input_is_refused_with_its_size(
     _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
     _action(window, _ESCAPE).trigger()
     assert _status(window) == escape_too_large_message("205 B", "100 B")
+    assert output.toPlainText() == "previous\n"
+
+
+_TWO_MB = MARKUP_FORMAT_LIMIT_BYTES
+
+
+@cache
+def _two_megabytes_of_json() -> str:
+    """One fake JSON string of exactly 2 MB, built once for the module.
+
+    Short lines of spaces keep the editor fast. Escape reads it as a JSON
+    string, and Unescape finds ``[1]`` inside it.
+    """
+    line = " " * 99 + "\n"
+    head = '"[1]"'
+    count = (_TWO_MB - len(head)) // len(line)
+    text = head + line * count + " " * (_TWO_MB - len(head) - count * len(line))
+    assert len(text.encode("utf-8")) == _TWO_MB
+    return text
+
+
+@pytest.mark.parametrize(
+    ("command", "too_large"),
+    [
+        pytest.param(_ESCAPE, escape_too_large_message, id="escape"),
+        pytest.param(_UNESCAPE, unescape_too_large_message, id="unescape"),
+    ],
+)
+def test_two_megabytes_runs_and_one_byte_more_is_refused(
+    qtbot, monkeypatch, command: str, too_large
+) -> None:
+    """The limit is the largest Input that runs, as for Format's markup guard.
+
+    Format refuses XML and HTML only over 2 MB, and the status says "The
+    limit is 2 MB", so Escape and Unescape use the same boundary (#201).
+    Their own limit is Format's busy size for the format, so the test sets
+    it to 2 MB to check the boundary at the same size.
+    """
+    window = _show(qtbot)
+    source, output = _editors(window)
+    text = _two_megabytes_of_json()
+    monkeypatch.setattr(main_window_module, "JSON_BUSY_BYTES", _TWO_MB)
+
+    output.setPlainText("previous\n")
+    source.setPlainText(text)
+    _action(window, command).trigger()
+    assert "too large" not in _status(window)
+    assert output.toPlainText() != "previous\n"
+
+    output.setPlainText("previous\n")
+    source.setPlainText(text + " ")
+    _action(window, command).trigger()
+    assert _status(window) == too_large("2.1 MB", "2 MB")
     assert output.toPlainText() == "previous\n"
 
 
