@@ -85,6 +85,8 @@ Every freeze pull request lands the same way:
 
 To bring `main` into a branch, merge it with a merge commit. Nobody rebases, amends or force-pushes a branch under review, so every approval keeps pointing at a real commit.
 
+If a named reviewer wrote the pull request, they do not approve it. Chief names a substitute reviewer in the Engineering Team room.
+
 ### Which gate a pull request gets
 
 The changed files decide the gate, not the title or the description. The reviewer runs this and posts the output in the review:
@@ -109,7 +111,7 @@ Bug fixes and anything on the list above take the full gate. The first commit ad
 
 ### Lighter gate
 
-- **Docs only.** Devon approves the exact head. Bill also approves when the change touches the UI spec. An author never approves their own pull request. Erik stands in for an author who can't approve their own work. There is no fail-first check, because nothing can fail.
+- **Docs only.** Devon approves the exact head. Bill also approves when the change touches the UI spec. There is no fail-first check, because nothing can fail.
 - **Tests only.** Erik and Devon approve the exact head. The new or changed tests pass on `main` as it is, which shows they lock in current behavior. Isaac makes the timing call when the change touches CI, the performance tests, or the size of the suite.
 
 ### Nothing may loosen
