@@ -1350,8 +1350,9 @@ class MainWindow(QMainWindow):
     def _escape_string(self) -> None:
         """Write Input as one escaped JSON string to Output. Input is unchanged.
 
-        This runs on the UI thread, so Input must be smaller than the size
-        where Format shows its busy indicator for the Input format.
+        This runs on the UI thread, so Input may be at most the busy size for
+        the Input format, the size from which Format shows its busy
+        indicator. The limit itself runs, as with Format's markup guard (#201).
         """
         if self._formatting:
             return
@@ -1362,7 +1363,7 @@ class MainWindow(QMainWindow):
         settings = self._result_inputs()
         size = _utf8_size(text)
         limit = _busy_progress_bytes(source, text)[0]
-        if size >= limit:
+        if size > limit:
             self._status.set_state(
                 escape_too_large_message(si_size_up(size), si_limit(limit))
             )
@@ -1378,8 +1379,9 @@ class MainWindow(QMainWindow):
     def _unescape_string(self) -> None:
         """Format the JSON inside an escaped Input string into Output.
 
-        This runs on the UI thread, so Input must be smaller than the size
-        where Format shows its busy indicator for the Output format.
+        This runs on the UI thread, so Input may be at most the busy size for
+        the Output format, the size from which Format shows its busy
+        indicator. The limit itself runs, as with Format's markup guard (#201).
         """
         if self._formatting:
             return
@@ -1390,7 +1392,7 @@ class MainWindow(QMainWindow):
         settings = self._result_inputs()
         size = _utf8_size(text)
         limit = _busy_progress_bytes(target, text)[0]
-        if size >= limit:
+        if size > limit:
             self._status.set_state(
                 unescape_too_large_message(si_size_up(size), si_limit(limit))
             )

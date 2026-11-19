@@ -99,15 +99,30 @@ def sniff_format(text: str) -> DocumentFormat | None:
 
     Blank lines, ``#`` comment lines, and ``<!-- -->`` comments are skipped,
     so an HTML file that opens with a comment is read by what follows it.
-    Formats are tried in table order. None means that line settles nothing.
+    Every comment before the first value is skipped, however many share a
+    line. ``<!-->`` and ``<!--->`` close at once, and ``--!>`` closes a
+    comment too, as HTML parsers read them. Formats are tried in table order.
+    None means that line settles nothing.
     """
     in_comment = False
     for raw in text.splitlines():
         line = raw.strip()
-        if in_comment or line.startswith("<!--"):
-            end = line.find("-->", 0 if in_comment else 4)
-            in_comment = end < 0
-            line = "" if in_comment else line[end + 3 :].strip()
+        # An index, not a slice per comment, so a long line stays linear
+        # (Erik, #217).
+        start = 0
+        while in_comment or line.startswith("<!--", start):
+            if in_comment:
+                end = _comment_end(line, start, start)
+            else:
+                # "-->" may begin at the "--" of "<!--"; "--!>" comes after it.
+                end = _comment_end(line, start + 2, start + 4)
+            if end < 0:
+                in_comment, start = True, len(line)
+                break
+            in_comment, start = False, end
+            while start < len(line) and line[start].isspace():
+                start += 1
+        line = line[start:]
         if not line or line.startswith("#"):
             continue
         for fmt in FORMATS:
@@ -115,6 +130,25 @@ def sniff_format(text: str) -> DocumentFormat | None:
                 return fmt
         return None
     return None
+
+
+def _comment_end(line: str, dashes: int, text: int) -> int:
+    """The index just past the ``-->`` or ``--!>`` that closes a comment.
+
+    ``-->`` may start at ``dashes`` or later, and ``--!>`` at ``text`` or
+    later. Returns -1 when the comment doesn't close on this line. Each call
+    reads only as far as the close it returns, so skipping many comments on
+    one line stays linear.
+    """
+    at = line.find("--", dashes)
+    while at >= 0:
+        after = at + 2
+        if line.startswith(">", after):
+            return after + 1
+        if at >= text and line.startswith("!>", after):
+            return after + 2
+        at = line.find("--", at + 1)
+    return -1
 
 
 def targets_for(source: str) -> tuple[DocumentFormat, ...]:
