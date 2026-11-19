@@ -222,6 +222,56 @@ def test_aliases_that_add_the_most_allowed_still_convert(
     assert len(written["pad"]) == distinct - 104
 
 
+# Aliases may also add this many bytes of JSON, or ten times the input's
+# bytes when that is more. A string counts its UTF-8 bytes, any other value
+# 8, each list item or mapping entry 2, and each key its own length.
+_ALIAS_BYTES = 10_000_000
+# A shared list of ten 1,000-byte strings: each alias to it adds 10,020 bytes.
+_SHARED_LIST_BYTES = 10 * (2 + 1_000)
+
+
+def _long_string_aliased(times: int, length: int = 100_000) -> str:
+    """One ``length``-byte string aliased ``times`` times: few values, many bytes."""
+    refs = ", ".join(["*s"] * times)
+    return f"s: &s {'v' * length}\nrows: [{refs}]\n"
+
+
+def _shared_list_aliased(times: int) -> str:
+    """A list of ten 1,000-byte strings aliased ``times`` times."""
+    items = ", ".join([f"fake-note-{n}-" + "v" * 988 for n in range(10)])
+    refs = ", ".join(["*l"] * times)
+    return f"l: &l [{items}]\nrows: [{refs}]\n"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _long_string_aliased(_ALIAS_BYTES // 100_000 + 1),
+        _shared_list_aliased(_ALIAS_BYTES // _SHARED_LIST_BYTES + 1),
+    ],
+    ids=["long-string", "shared-list-of-long-strings"],
+)
+def test_aliases_that_add_too_many_bytes_raise_a_typed_error(
+    engine: str, text: str
+) -> None:
+    """Few values, but each alias writes a long string out again."""
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(text, "yaml", "json")
+    assert type(caught.value).__name__ == "AliasExpansionError"
+    assert str(caught.value) == "alias_expansion"
+
+
+def test_aliases_that_add_just_under_the_bytes_allowed_still_convert(
+    engine: str,
+) -> None:
+    times = _ALIAS_BYTES // _SHARED_LIST_BYTES
+    assert times * _SHARED_LIST_BYTES <= _ALIAS_BYTES
+    written = json.loads(format_document(_shared_list_aliased(times), "yaml", "json"))
+    assert len(written["rows"]) == times
+    assert written["rows"][-1] == written["l"]
+    assert written["l"][0] == "fake-note-0-" + "v" * 988
+
+
 @pytest.mark.parametrize("masked", [False, True], ids=["plain", "masked"])
 def test_the_worker_sends_alias_expansion_as_a_value_json_cant_hold(
     engine: str, masked: bool
