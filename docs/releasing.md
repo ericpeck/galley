@@ -69,3 +69,53 @@ The same flag works in a development checkout:
 ```sh
 uv run galley --self-check
 ```
+
+## V1 freeze
+
+The V1 freeze started at `f155b32` and lasts until the `v*` tag. During the freeze, `main` takes only bug fixes, test fixes, CI fixes and docs. No features and no new UI. Dependabot pull requests wait unless they fix a security issue, and PySide6 does not move.
+
+Every freeze pull request lands the same way:
+
+- All six checks are green at the head.
+- Chief posts the pre-merge check.
+- Eric gives the go.
+- It is squash-merged with `Closes #N.` and no trailers.
+- Only one freeze pull request is in flight at a time, so each nightly run maps to one change.
+
+To bring `main` into a branch, merge it with a merge commit. Nobody rebases, amends or force-pushes a branch under review, so every approval keeps pointing at a real commit.
+
+### Which gate a pull request gets
+
+The changed files decide the gate, not the title or the description. The reviewer runs this and posts the output in the review:
+
+```sh
+git diff --name-only origin/main...<head>
+```
+
+The pull request gets the full gate if any changed path is one of these:
+
+- anything under `src/`
+- anything under `packaging/`
+- `pyproject.toml` or `uv.lock`
+- anything under `.github/workflows/`
+- a golden file under `tests/**/data/`
+
+Otherwise a pull request that changes only docs, or only tests, takes the lighter gate.
+
+### Full gate
+
+Bug fixes and anything on the list above take the full gate. The first commit adds tests only, and those tests fail against the base, in light and dark for UI. Erik, Bill and Devon each approve the exact head, and Isaac makes the timing call.
+
+### Lighter gate
+
+- **Docs only.** Erik and Devon approve the exact head. Bill also approves when the change touches the UI spec. There is no fail-first check, because nothing can fail.
+- **Tests only.** Erik and Devon approve the exact head. The new or changed tests pass on `main` as it is, which shows they lock in current behavior. Isaac makes the timing call when the change touches CI, the performance tests, or the size of the suite.
+
+### Nothing may loosen
+
+The lighter gate never loosens a check. A pull request takes the full gate if it does any of these:
+
+- removes an assertion
+- adds a skip or an xfail
+- changes a timing budget or a golden file (Isaac rules on budgets)
+- changes a pinned user-facing string, an accessible name, or a light or dark UI assertion (Bill reviews these)
