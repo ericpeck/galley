@@ -318,6 +318,156 @@ def test_a_paren_in_key_position_opens_no_tuple(
     assert _rows(text) == rows
 
 
+# --- The table's size (#213 F2) ----------------------------------------------
+
+# 1 MB of "[": every "[" takes a row and stays open, the densest table.
+_DENSE_BRACKETS = 1_000_000
+
+
+def test_the_table_stays_under_25_times_dense_brackets(monkeypatch) -> None:
+    """All three arrays hold 4-byte items on every platform (Erik, #213 F2).
+
+    array("l") is 8 bytes on macOS and Linux and 4 on Windows. Text that is
+    all "[" peaks at about 12 times its size with 4-byte items.
+    """
+    made: list[array] = []
+
+    def recording(typecode: str, *args: object) -> array:
+        made.append(array(typecode, *args))
+        return made[-1]
+
+    monkeypatch.setattr(json_recover, "array", recording)
+    text = "[" * _DENSE_BRACKETS
+    tracemalloc.start()
+    try:
+        openers, closers = json_recover.array_closers(text)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(openers) == len(closers) == _DENSE_BRACKETS
+    # openers, closers and open_rows, in the order they're made.
+    assert len(made) == 3
+    assert [item.itemsize for item in made] == [4, 4, 4]
+    assert peak <= 25 * len(text), f"peak {peak / 1e6:.1f} MB"
+
+
+# --- The scanner's fallback (#213 F4) -----------------------------------------
+
+# Inputs that start inside an array in an object, with keys and colons among
+# the pieces, so the scanner asks B6 about the array often.
+_B6_PREFIX = '{"a": ['
+_B6_PIECES = (*_PIECES, '"k" :', '"k": ')
+_B6_INPUTS = 1_000
+_B6_QUERIES = 150
+
+
+def _b6_generated() -> list[str]:
+    pick = random.Random(_SEED)
+    return [
+        _B6_PREFIX
+        + "".join(pick.choice(_B6_PIECES) for _ in range(pick.randint(1, 30)))
+        for _ in range(_B6_INPUTS)
+    ]
+
+
+class _CountingScanner(json_recover._Scanner):
+    """The scanner, counting its B6 questions and which arrays they name."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text, json_recover.MAX_FINDINGS)
+        self.queries = 0
+        self.asked: list[tuple[int, int, bool]] = []
+
+    def closes_later(self, index: int) -> bool:
+        self.queries += 1
+        answer = super().closes_later(index)
+        self.asked.append((self.opens[-1], index, answer))
+        return answer
+
+
+def test_every_scanner_array_is_in_the_table() -> None:
+    """The scanner never needs the fallback on generated inputs (Erik, N3).
+
+    Every "[" the scanner asks about is one the table recorded, and the
+    table's answer for it matches the slow walk of the whole text.
+    """
+    queries = 0
+    for text in _b6_generated():
+        scanner = _CountingScanner(text)
+        scanner.run()
+        assert scanner.missing == {}, repr(text)
+        closes = dict(_reference_closers(text))
+        for opened, _index, answer in scanner.asked:
+            closer = closes[opened]
+            assert answer == (closer != -1 and text[closer] == "]"), repr(text)
+        queries += scanner.queries
+    assert queries >= _B6_QUERIES
+
+
+def _reference_closes_later(text: str, pos: int) -> bool:
+    """A slow walk from ``pos`` with array_closes_later's rules.
+
+    The first ``]`` or ``}`` that closes nothing opened after ``pos``
+    answers: True for ``]``. Strings and comments are skipped, and a ``(``
+    opens a tuple only in value position, as in the table's walker. This
+    walk starts at ``pos``, not at the start of the text.
+    """
+    kinds: list[str] = []
+    index = pos
+    while index < len(text):
+        past = _skip(text, index)
+        if past is not None:
+            index = past
+            continue
+        char = text[index]
+        if char in "[{":
+            kinds.append(char)
+        elif char == "(":
+            in_object = bool(kinds) and kinds[-1] == "{"
+            if _value_position(text, index, in_object):
+                kinds.append(char)
+        elif char == ")":
+            if kinds and kinds[-1] == "(":
+                kinds.pop()
+        elif char in "]}":
+            if not kinds:
+                return char == "]"
+            kinds.pop()
+        index += 1
+    return False
+
+
+def test_the_fallback_answers_like_a_slow_walk_once_per_array(monkeypatch) -> None:
+    """With an empty table, every B6 question goes to the fallback (Erik, N3).
+
+    Each answer it computes equals the slow walk from the same colon, and
+    it computes each array's answer once (#210).
+    """
+    monkeypatch.setattr(
+        json_recover, "array_closers", lambda _text: (array("i"), array("i"))
+    )
+    computed: list[tuple[int, bool]] = []
+    real = json_recover.array_closes_later
+
+    def recording(text: str, pos: int) -> bool:
+        answer = real(text, pos)
+        computed.append((pos, answer))
+        return answer
+
+    monkeypatch.setattr(json_recover, "array_closes_later", recording)
+    total = 0
+    for text in _b6_generated():
+        computed.clear()
+        scanner = _CountingScanner(text)
+        scanner.run()
+        for pos, answer in computed:
+            assert answer == _reference_closes_later(text, pos), (repr(text), pos)
+        # One computed answer per array the scanner asked about.
+        assert len(computed) == len({opened for opened, _, _ in scanner.asked})
+        total += len(computed)
+    assert total >= _B6_QUERIES // 2
+
+
 # --- Memory and speed (perf) --------------------------------------------------
 
 # About 4 MB of "[], {}, " pieces in one array, after one B6 colon.
@@ -394,7 +544,7 @@ def test_an_array_missing_from_the_table_is_read_once(perf_budget, monkeypatch) 
     monkeypatch.setattr(
         json_recover,
         "array_closers",
-        lambda _text: (array("l"), array("l")),
+        lambda _text: (array("i"), array("i")),
         raising=False,
     )
     text = '{"a": [' + '"x" : 1, ' * 15_000 + "0]}"

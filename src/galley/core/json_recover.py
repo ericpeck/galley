@@ -205,6 +205,10 @@ def _value_position(text: str, index: int, in_object: bool) -> bool:
     return not in_object and text[cursor] in _VALUE_START
 
 
+# The table doesn't copy _Scanner.mismatch: a ")" that closes no tuple, a
+# "}" over an open tuple, or "[...}" inside an array. Rows marked unsure
+# after a mismatched closer are a known approximation. Copying mismatch
+# changed sure rows and made the build quadratic (#213 F1, Erik).
 def array_closers(text: str) -> tuple[array, array]:
     """Every ``[`` the lookahead reads, and where each one closes.
 
@@ -212,15 +216,17 @@ def array_closers(text: str) -> tuple[array, array]:
     position of the ``]`` or ``}`` that closes it, or ``NEVER_CLOSES``.
     A ``)`` closes only a tuple, and ``]`` or ``}`` closes the innermost
     open bracket of any kind, so a tuple closed with ``]`` leaves its array
-    open (#212 B1). One pass over the text, at most 16 bytes per ``[``
-    (#195, Erik): a dict of every bracket took about 20 times the text's
-    size.
+    open (#212 B1). One pass over the text. Each ``[`` takes 8 bytes in the
+    two columns, and each open bracket 4 more while it stays open, so the
+    peak is at most about 12 times the text's size (text that is all ``[``)
+    and about 1 time for typical JSON.
     """
-    openers = array("l")
-    closers = array("l")
+    # 4-byte items on every platform; "l" is 8 bytes on macOS and Linux.
+    openers = array("i")
+    closers = array("i")
     # Open brackets: a row in the columns for ``[``, NEVER_CLOSES for ``{``,
     # and _TUPLE for a tuple.
-    open_rows = array("l")
+    open_rows = array("i")
     for match in _LOOKAHEAD.finditer(text):
         token = match.group()
         if token == "[":

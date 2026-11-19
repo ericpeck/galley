@@ -13,9 +13,11 @@ is never shown.
 """
 
 import ast
+import io
 import json
 import math
 import re
+import tokenize
 from dataclasses import dataclass
 from typing import assert_never
 
@@ -286,11 +288,40 @@ def _statement_error(text: str) -> ConvertError | None:
         )
         return ConvertError(message, line, extra.col_offset + 1)
     if statement is None:
-        # One value and a ";", such as ``1;``: one statement (#212 B2).
+        # One value and a ";", such as ``1;`` (Bill, #213 F5).
+        semicolon = _semicolon_after(text, body[0])
+        if semicolon is not None:
+            line, column = semicolon
+            return ConvertError(f'Remove the ";" on line {line}.', line, column)
         statement = body[0]
     line = statement.lineno
     message = f"Convert from Python reads a value, not a statement, on line {line}."
     return ConvertError(message, line, statement.col_offset + 1)
+
+
+def _semicolon_after(text: str, node: ast.stmt) -> tuple[int, int] | None:
+    """Line and 1-based column of the first ``;`` after ``node``, or None.
+
+    ``ast`` columns count UTF-8 bytes and ``tokenize`` columns count
+    characters, so the node's end is converted on its last line.
+    """
+    end_line = node.end_lineno or node.lineno
+    end_bytes = node.end_col_offset or 0
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type != tokenize.OP or token.string != ";":
+                continue
+            line, column = token.start
+            if line == end_line:
+                end = len(token.line.encode()[:end_bytes].decode(errors="ignore"))
+                if column < end:
+                    continue
+            elif line < end_line:
+                continue
+            return line, column + 1
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return None
 
 
 def _assignment(body: list[ast.stmt]) -> ConvertError | None:

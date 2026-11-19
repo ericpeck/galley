@@ -112,14 +112,14 @@ _CONVERT_CASES = {
     ),
     "E8 a dict and a semicolon": (
         "{'a': 1};",
-        "Convert from Python reads a value, not a statement, on line 1.",
-        "Line 1, Col 1",
+        'Remove the ";" on line 1.',
+        "Line 1, Col 9",
         "1 problem",
     ),
     "E8 a number and a semicolon": (
         "1;",
-        "Convert from Python reads a value, not a statement, on line 1.",
-        "Line 1, Col 1",
+        'Remove the ";" on line 1.',
+        "Line 1, Col 2",
         "1 problem",
     ),
     "E8 other": (

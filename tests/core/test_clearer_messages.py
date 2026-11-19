@@ -208,17 +208,12 @@ def test_e8_an_assignment_names_what_to_remove() -> None:
         ("x = 1; y = 2", 1),
         ("a.b = 1", 1),
         ("1\nimport os", 2),
-        # One value and a ";" is one statement, not two values (#212 B2).
-        ("{'a': 1};", 1),
-        ("1;", 1),
     ],
     ids=[
         "import",
         "two statements",
         "attribute",
         "a value then a statement",
-        "a dict and a semicolon",
-        "a number and a semicolon",
     ],
 )
 def test_e8_other_valid_python_says_it_is_a_statement(source: str, line: int) -> None:
@@ -250,7 +245,68 @@ def test_extra_values_name_the_first_extra_one(source: str, column: int) -> None
 
 
 @pytest.mark.parametrize(
-    "source", ["# just a comment", "\n  # first\n# second\n"], ids=["one", "several"]
+    ("source", "line", "column"),
+    [
+        ("1;", 1, 2),
+        ("{'a': 1};", 1, 9),
+        ("1 ;", 1, 3),
+        ("1;  # note", 1, 2),
+        ("1;\n", 1, 2),
+        ("(1);", 1, 4),
+        ("{\n    'a': 1,\n};", 3, 2),
+    ],
+    ids=[
+        "number",
+        "dict",
+        "space before",
+        "comment after",
+        "line end after",
+        "parentheses",
+        "on a later line",
+    ],
+)
+def test_one_value_and_a_semicolon_points_at_the_semicolon(
+    source: str, line: int, column: int
+) -> None:
+    """Bill's row for one value followed by ";" (#213 F5)."""
+    error = _error(source)
+    assert error.message == f'Remove the ";" on line {line}.'
+    assert (error.lineno, error.colno) == (line, column)
+    assert not error.syntax
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            "1; 2",
+            "Convert from Python reads one value. Remove the extra value on line 1.",
+        ),
+        ("import os", "Convert from Python reads a value, not a statement, on line 1."),
+        (
+            "x = 1; y = 2",
+            "Convert from Python reads a value, not a statement, on line 1.",
+        ),
+    ],
+    ids=["two values", "import", "two statements"],
+)
+def test_other_semicolon_text_keeps_its_row(source: str, message: str) -> None:
+    """Only one value and a ";" gets the new row (#213 F5)."""
+    assert _error(source).message == message
+
+
+def test_two_semicolons_keep_todays_row() -> None:
+    """``1;;`` isn't valid Python, so it keeps the 6l sentence (#213 F5)."""
+    assert _error("1;;").message == _NOT_PYTHON
+
+
+@pytest.mark.parametrize(
+    "source",
+    # Blank text gets the same row in core. The window never converts blank
+    # Input (_is_blank in main_window.py), so this pins the core's answer
+    # only (#213 F3).
+    ["# just a comment", "\n  # first\n# second\n", "", " \n\t "],
+    ids=["one", "several", "empty", "blank"],
 )
 def test_comment_only_text_has_no_value_to_convert(source: str) -> None:
     error = _error(source)
