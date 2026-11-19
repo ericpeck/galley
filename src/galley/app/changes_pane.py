@@ -93,7 +93,8 @@ EXPANDED_ROLE = Qt.ItemDataRole.UserRole + 3
 
 # A group's children sit this far right of the group row.
 _CHILD_INDENT = 20
-# The glyph column, the disclosure arrow box, and the gaps between columns.
+# The glyph column's least width, the disclosure arrow box, and the gaps
+# between columns. The column grows with the font (see ``glyph_width``).
 _GLYPH_WIDTH = 16
 _ARROW_BOX = 10
 _GAP = 8
@@ -222,6 +223,19 @@ class ChangesModel(QAbstractListModel):
     def row_at(self, row: int) -> ChangeRow | GroupRow | InfoRow | None:
         if 0 <= row < len(self._entries):
             return self._entries[row].row
+        return None
+
+    def first_focusable_child(self, row: int) -> int | None:
+        """The model row of the first child of the expanded group at ``row``
+        that isn't an info row, or ``None``."""
+        if not self.is_expanded(row):
+            return None
+        for child in range(row + 1, len(self._entries)):
+            entry = self._entries[child]
+            if entry.depth == 0:
+                return None
+            if not isinstance(entry.row, InfoRow):
+                return child
         return None
 
     def group_row_of(self, row: int) -> int | None:
@@ -359,6 +373,8 @@ class ChangesDelegate(QStyledItemDelegate):
         self._view = view
         # (line texts, font key, width) for the last report and font.
         self._line_column: tuple[tuple[str, ...], str, int] | None = None
+        # (font key, width) of the glyph column for the last font.
+        self._glyph_column: tuple[str, int] | None = None
 
     def sizeHint(
         self,
@@ -416,8 +432,9 @@ class ChangesDelegate(QStyledItemDelegate):
         x = rect.left()
         painter.setFont(bold)
         painter.setPen(colors.glyph)
-        _draw(painter, x, rect, _GLYPH_WIDTH, CHANGE_GLYPHS[row.kind], center=True)
-        x += _GLYPH_WIDTH + _GAP
+        glyph = self._glyph_width(font)
+        _draw(painter, x, rect, glyph, CHANGE_GLYPHS[row.kind], center=True)
+        x += glyph + _GAP
         label_width = max(
             bold_metrics.horizontalAdvance(label) for label in KIND_LABELS.values()
         )
@@ -444,6 +461,16 @@ class ChangesDelegate(QStyledItemDelegate):
         painter.setPen(colors.muted)
         _draw(painter, line_left, rect, line_width, line_text(row), right=True)
 
+    def _glyph_width(self, font: QFont) -> int:
+        """``glyph_width`` for ``font``, cached per font."""
+        key = font.key()
+        cached = self._glyph_column
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        width = glyph_width(font)
+        self._glyph_column = (key, width)
+        return width
+
     def _line_width(self, font: QFont) -> int:
         """The line column: the widest of the report's line texts in
         ``font``, measured, not counted, since "22 → 24" is wider than
@@ -468,8 +495,9 @@ class ChangesDelegate(QStyledItemDelegate):
         expanded: bool,
     ) -> None:
         metrics = QFontMetrics(font)
-        _paint_arrow(painter, rect, colors.text, expanded=expanded)
-        x = rect.left() + _GLYPH_WIDTH + _GAP
+        glyph = self._glyph_width(font)
+        _paint_arrow(painter, rect, glyph, colors.text, expanded=expanded)
+        x = rect.left() + glyph + _GAP
         line_width = self._line_width(font)
         line_left = rect.right() - line_width
         width = max(0, line_left - _GAP - x)
@@ -491,11 +519,23 @@ class ChangesDelegate(QStyledItemDelegate):
         metrics = QFontMetrics(font)
         painter.setFont(font)
         painter.setPen(colors.muted)
-        _draw(painter, rect.left(), rect, _GLYPH_WIDTH, _INFO_GLYPH, center=True)
-        x = rect.left() + _GLYPH_WIDTH + _GAP
+        glyph = self._glyph_width(font)
+        _draw(painter, rect.left(), rect, glyph, _INFO_GLYPH, center=True)
+        x = rect.left() + glyph + _GAP
         width = max(0, rect.right() - x)
         text = metrics.elidedText(row.text, Qt.TextElideMode.ElideRight, width)
         _draw(painter, x, rect, width, text)
+
+
+def glyph_width(font: QFont) -> int:
+    """The glyph column's width in ``font``: the widest change glyph or ⓘ,
+    drawn bold, and never less than 16 px, so no glyph clips at a large
+    font (#200)."""
+    bold = QFont(font)
+    bold.setBold(True)
+    metrics = QFontMetrics(bold)
+    glyphs = (*CHANGE_GLYPHS.values(), _INFO_GLYPH)
+    return max(_GLYPH_WIDTH, *(metrics.horizontalAdvance(glyph) for glyph in glyphs))
 
 
 def row_height(metrics: QFontMetrics) -> int:
@@ -588,7 +628,7 @@ def _draw(
 
 
 def _paint_arrow(
-    painter: QPainter, rect: QRect, color: QColor, *, expanded: bool
+    painter: QPainter, rect: QRect, column: int, color: QColor, *, expanded: bool
 ) -> None:
     """▾ open or ▸ closed, drawn as a triangle like the gutter's fold arrows,
     so it does not depend on the font."""
@@ -596,7 +636,7 @@ def _paint_arrow(
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(color)
     box = _ARROW_BOX
-    left = rect.left() + (_GLYPH_WIDTH - box) / 2
+    left = rect.left() + (column - box) / 2
     top = rect.top() + (rect.height() - box) / 2
     if expanded:
         points = ((1, 3), (9, 3), (5, 8))
@@ -675,7 +715,14 @@ class ChangesList(QListView):
             event.accept()
             return
         if key == Qt.Key.Key_Right and isinstance(self._model.row_at(row), GroupRow):
-            self._model.set_expanded(row, True)
+            # As in a tree view: expand, then step to the first child that
+            # takes focus. Info rows don't (#200).
+            if self._model.is_expanded(row):
+                child = self._model.first_focusable_child(row)
+                if child is not None:
+                    self.select_row(child)
+            else:
+                self._model.set_expanded(row, True)
             event.accept()
             return
         if key == Qt.Key.Key_Left:
