@@ -77,6 +77,7 @@ The V1 freeze started at `f155b32` and lasts until the `v*` tag. During the free
 Every freeze pull request lands the same way:
 
 - All six checks are green at the head.
+- The branch is 0 behind `main` at the head.
 - Chief posts the pre-merge check.
 - Eric gives the go.
 - It is squash-merged with `Closes #N.` and no trailers.
@@ -108,7 +109,7 @@ Bug fixes and anything on the list above take the full gate. The first commit ad
 
 ### Lighter gate
 
-- **Docs only.** Erik and Devon approve the exact head. Bill also approves when the change touches the UI spec. There is no fail-first check, because nothing can fail.
+- **Docs only.** Devon approves the exact head. Bill also approves when the change touches the UI spec. An author never approves their own pull request. Erik stands in for an author who can't approve their own work. There is no fail-first check, because nothing can fail.
 - **Tests only.** Erik and Devon approve the exact head. The new or changed tests pass on `main` as it is, which shows they lock in current behavior. Isaac makes the timing call when the change touches CI, the performance tests, or the size of the suite.
 
 ### Nothing may loosen
