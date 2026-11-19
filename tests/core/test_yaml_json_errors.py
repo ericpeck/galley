@@ -1,5 +1,7 @@
 """YAML to JSON: keys JSON can't hold and aliases that contain themselves (#116).
 
+Also aliases that, written out in full, would add too many values (#223).
+
 ``json.dumps`` rejects both before its ``default`` hook runs, so before
 this they reached the user as Python's own text. Each test runs on both
 YAML engines: ``c`` uses the C parser and skips without ``ruamel.yaml.clib``,
@@ -7,6 +9,7 @@ and ``pure`` hides it the way ``test_yaml_engine_parity.py`` does. Every
 value is fake.
 """
 
+import json
 import pickle
 
 import pytest
@@ -143,3 +146,103 @@ def test_the_kinds_are_the_format_modules_names() -> None:
     assert format_module.SELF_REFERENCE == "self_reference"
     assert issubclass(format_module.NotJSONKeyError, NotJSONValueError)
     assert issubclass(format_module.SelfReferenceError, NotJSONValueError)
+
+
+# JSON writes every alias out in full, so a few lines of YAML can name
+# millions of values (#223). Aliases may add this many values, or this many
+# times the document's own distinct values, whichever is more.
+_ALIAS_LIMIT = 100_000
+_ALIAS_RATIO = 10
+
+
+def _alias_chain(levels: int, fan: int) -> str:
+    """Each level lists the one below ``fan`` times: ``fan**levels`` leaves."""
+    lines = ['a0: &a0 ["fake-note"]']
+    for level in range(1, levels + 1):
+        refs = ", ".join([f"*a{level - 1}"] * fan)
+        lines.append(f"a{level}: &a{level} [{refs}]")
+    lines.append(f"root: *a{levels}")
+    return "\n".join(lines) + "\n"
+
+
+def _aliases_adding(values: int, distinct: int = 104) -> str:
+    """YAML whose aliases, written out in full, add exactly ``values`` values.
+
+    Each ``*h`` repeats a list and its 99 items, 100 values, and each ``*e``
+    repeats an empty list, one value. The document has ``distinct`` values
+    of its own, at least 104: the root, ``h`` and its items, ``e``,
+    ``rows``, and the ``pad`` list and its items. Mapping keys aren't values.
+    """
+    hundreds, ones = divmod(values, 100)
+    items = ", ".join(["fake-note"] * 99)
+    pad = ", ".join(["fake-pad"] * (distinct - 104))
+    refs = ", ".join(["*h"] * hundreds + ["*e"] * ones)
+    return f"h: &h [{items}]\ne: &e []\npad: [{pad}]\nrows: [{refs}]\n"
+
+
+# 20,000 distinct values, so ten times that is past the fixed limit.
+_LARGE = 20_000
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _alias_chain(levels=6, fan=10),
+        _aliases_adding(_ALIAS_LIMIT + 1),
+        _aliases_adding(_ALIAS_RATIO * _LARGE + 1, distinct=_LARGE),
+    ],
+    ids=["chain-from-223", "one-over", "one-over-ten-times-the-document"],
+)
+def test_aliases_that_add_too_many_values_raise_a_typed_error(
+    engine: str, text: str
+) -> None:
+    """The chain is #223's example: 378 bytes that wrote 117.6 MB of JSON."""
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(text, "yaml", "json")
+    assert type(caught.value).__name__ == "AliasExpansionError"
+    assert str(caught.value) == "alias_expansion"
+
+
+@pytest.mark.parametrize(
+    ("added", "distinct"),
+    [(_ALIAS_LIMIT, 104), (_ALIAS_RATIO * _LARGE, _LARGE)],
+    ids=["the-limit", "ten-times-the-document"],
+)
+def test_aliases_that_add_the_most_allowed_still_convert(
+    engine: str, added: int, distinct: int
+) -> None:
+    """A larger document may repeat more, as merge keys across many rows do."""
+    text = _aliases_adding(added, distinct=distinct)
+    written = json.loads(format_document(text, "yaml", "json"))
+    assert len(written["rows"]) == added // 100
+    assert written["rows"][0] == ["fake-note"] * 99
+    assert len(written["pad"]) == distinct - 104
+
+
+@pytest.mark.parametrize("masked", [False, True], ids=["plain", "masked"])
+def test_the_worker_sends_alias_expansion_as_a_value_json_cant_hold(
+    engine: str, masked: bool
+) -> None:
+    failure = _failure(
+        _aliases_adding(_ALIAS_LIMIT + 1), MaskRules() if masked else None
+    )
+    assert failure.not_json_value
+    assert failure.message == "alias_expansion"
+    assert failure.problems == ()
+    assert failure.error is None
+    copy = pickle.loads(pickle.dumps(failure))
+    assert copy == failure
+    assert b"fake-note" not in pickle.dumps(failure)
+
+
+def test_escape_as_string_refuses_the_same_aliases(engine: str) -> None:
+    with pytest.raises(NotJSONValueError) as caught:
+        escape_document(_aliases_adding(_ALIAS_LIMIT + 1), "yaml")
+    assert str(caught.value) == "alias_expansion"
+
+
+def test_the_alias_limit_and_kind_are_the_format_modules() -> None:
+    assert format_module.ALIAS_EXPANSION == "alias_expansion"
+    assert format_module.ALIAS_EXPANSION_LIMIT == _ALIAS_LIMIT
+    assert format_module.ALIAS_EXPANSION_RATIO == _ALIAS_RATIO
+    assert issubclass(format_module.AliasExpansionError, NotJSONValueError)

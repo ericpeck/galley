@@ -1,8 +1,9 @@
 """Format and Escape show plain sentences for YAML that JSON can't hold (#116).
 
 A key JSON can't hold, such as a date, and an alias that contains itself
-used to reach the status bar as Python's own error text. Every value is
-fake.
+used to reach the status bar as Python's own error text. So did aliases that,
+written out in full, add too many values to write as JSON (#223). Every value
+is fake.
 """
 
 import pytest
@@ -20,6 +21,15 @@ _KEY = (
 )
 _SELF = "This document refers to itself, so it can't be written as JSON."
 _VALUE = "This document has a value JSON can't hold, such as a date or binary data."
+# Proposed for #223; Bill approves or replaces it.
+_ALIAS = (
+    "This document's aliases repeat too many values, so it can't be written as JSON."
+)
+# 1,001 copies of a 100-value list add 100,100 values, past the 100,000 limit.
+_TOO_MANY_ALIASES = (
+    "h: &h [" + ", ".join(["fake-note"] * 99) + "]\n"
+    "rows: [" + ", ".join(["*h"] * 1001) + "]\n"
+)
 
 _CASES = pytest.mark.parametrize(
     ("text", "message"),
@@ -28,8 +38,15 @@ _CASES = pytest.mark.parametrize(
         ("events:\n  2020-01-01 12:30:00: fake-note\n", _KEY),
         ("a: &x [fake-note, *x]\n", _SELF),
         ("a: &x {b: *x}\n", _SELF),
+        (_TOO_MANY_ALIASES, _ALIAS),
     ],
-    ids=["date-key", "datetime-key", "self-reference-list", "self-reference-map"],
+    ids=[
+        "date-key",
+        "datetime-key",
+        "self-reference-list",
+        "self-reference-map",
+        "alias-expansion",
+    ],
 )
 
 
@@ -68,6 +85,10 @@ def test_the_sentences_live_in_escape_string() -> None:
     assert getattr(words, "NOT_JSON_KEY_MESSAGE", None) == _KEY
     assert getattr(words, "SELF_REFERENCE_MESSAGE", None) == _SELF
     assert words.NOT_JSON_VALUE_MESSAGE == _VALUE
+
+
+def test_the_alias_sentence_lives_in_escape_string() -> None:
+    assert getattr(words, "ALIAS_EXPANSION_MESSAGE", None) == _ALIAS
 
 
 @_CASES
