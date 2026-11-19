@@ -21,7 +21,6 @@ _KEY = (
 )
 _SELF = "This document refers to itself, so it can't be written as JSON."
 _VALUE = "This document has a value JSON can't hold, such as a date or binary data."
-# Proposed for #223; Bill approves or replaces it.
 _ALIAS = (
     "This document's aliases repeat too many values, so it can't be written as JSON."
 )
@@ -92,7 +91,9 @@ def test_the_alias_sentence_lives_in_escape_string() -> None:
 
 
 @_CASES
-def test_format_to_json_shows_the_sentence(qtbot, text: str, message: str) -> None:
+def test_format_to_json_shows_the_sentence(
+    scheme_palette, qtbot, text: str, message: str
+) -> None:
     window = _show(qtbot)
     source, output = _editors(window)
     _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
@@ -106,7 +107,9 @@ def test_format_to_json_shows_the_sentence(qtbot, text: str, message: str) -> No
 
 
 @_CASES
-def test_escape_as_string_shows_the_sentence(qtbot, text: str, message: str) -> None:
+def test_escape_as_string_shows_the_sentence(
+    scheme_palette, qtbot, text: str, message: str
+) -> None:
     window = _show(qtbot)
     source, output = _editors(window)
     _child(window, QComboBox, "inputFormat").setCurrentText("YAML")
