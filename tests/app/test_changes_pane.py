@@ -9,11 +9,12 @@ only at row edges and padding, where no text is drawn.
 import dataclasses
 import json
 import random
+from collections import Counter
 from collections.abc import Callable
 from unittest import mock
 
 import pytest
-from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtCore import QModelIndex, QPoint, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -22,7 +23,7 @@ from PySide6.QtGui import (
     QTextLayout,
     QTextOption,
 )
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from galley.app import changes_pane as changes_pane_module
 from galley.app.changes_pane import (
@@ -44,6 +45,7 @@ from galley.app.changes_pane import (
     row_colors,
 )
 from galley.app.results_panel import ResultRow
+from galley.app.style import muted_text_style
 from galley.app.theme import change_color, contrast_ratio
 from galley.core import diff as diff_module
 from galley.core.compare_report import (
@@ -751,6 +753,86 @@ def test_only_no_differences_shows_the_check(qtbot) -> None:
         assert pane.message_glyph() == ""
     pane.set_report(_report({"a": 1}, {"a": 1}))
     assert pane.message_glyph() == "✓"
+
+
+# Eric approved this line on 2026-10-28 (#146); Bill reviews it (#199).
+_KEY_ORDER = "Key order is ignored."
+
+
+def _message_labels(pane: ChangesPane) -> tuple[QLabel, QLabel]:
+    message = pane.findChild(QLabel, "changesMessage")
+    note = pane.findChild(QLabel, "changesMessageNote")
+    assert message is not None
+    assert note is not None, "no key order line"
+    return message, note
+
+
+def _top_left(widget: QWidget, ancestor: QWidget) -> QPoint:
+    return widget.mapTo(ancestor, QPoint(0, 0))
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_no_differences_says_key_order_is_ignored_under_it(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """A muted second line, no glyph, lined up with the message's text."""
+    palette = install_scheme(scheme)
+    pane = _pane(qtbot, _report({"a": 1, "b": 2}, {"b": 2, "a": 1}))
+    message, note = _message_labels(pane)
+    assert message.text() == "No differences." == pane.message()
+    assert pane.message_glyph() == "✓"
+    assert note.isVisible()
+    assert note.text() == _KEY_ORDER
+    below = _top_left(note, pane)
+    above = _top_left(message, pane)
+    assert below.y() >= above.y() + message.height()
+    assert below.x() == above.x()
+    assert note.styleSheet() == muted_text_style()
+    qtbot.wait(0)
+    image = note.grab().toImage()
+    pixels = [
+        QColor(image.pixel(x, y))
+        for x in range(image.width())
+        for y in range(image.height())
+    ]
+    fill = Counter(color.rgb() for color in pixels).most_common(1)[0][0]
+    assert QColor(fill).name() == palette.window().color().name()
+    assert max(contrast_ratio(color, QColor(fill)) for color in pixels) >= 4.5
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_message_is_spoken_with_both_sentences(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    install_scheme(scheme)
+    pane = _pane(qtbot, _report({"a": 1}, {"a": 1}))
+    message = pane.findChild(QLabel, "changesMessage")
+    assert message is not None
+    assert message.accessibleName() == "No differences. Key order is ignored."
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_only_no_differences_gets_the_key_order_line(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    install_scheme(scheme)
+    pane = _pane(qtbot, _report({"a": 1}, {"a": 1}))
+    message, note = _message_labels(pane)
+    assert note.isVisible()
+    for show, text in (
+        (pane.show_empty_right, ADD_SECOND_DOCUMENT),
+        (pane.show_errors, FIX_ERRORS),
+        (pane.show_canceled, COMPARISON_CANCELED),
+        (pane.show_stopped, COMPARISON_STOPPED),
+    ):
+        show()
+        assert not note.isVisible()
+        assert message.text() == text
+        assert message.accessibleName() == text
+    pane.set_report(_report({"a": 1}, {"a": 1}))
+    assert note.isVisible()
+    pane.set_report(_grouped())
+    assert not note.isVisible()
 
 
 def test_compare_again_shows_only_when_the_comparison_stopped(qtbot) -> None:

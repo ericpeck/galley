@@ -59,7 +59,7 @@ from galley.app.results_panel import (
     paint_row_state,
     readable_on,
 )
-from galley.app.style import secondary_button_style
+from galley.app.style import muted_text_style, secondary_button_style
 from galley.app.theme import change_color, selected_problem_palette, visible_edge
 from galley.core.compare_report import (
     KIND_LABELS,
@@ -73,6 +73,8 @@ from galley.core.diff import ChangeKind
 
 # Bill's #65 wording (3c UI criteria and the PR 3 addendum).
 NO_DIFFERENCES = "No differences."
+# Under "No differences." (Eric approved, 2026-10-28, #146; #199).
+KEY_ORDER_IGNORED = "Key order is ignored."
 FIX_ERRORS = "Fix errors to compare."
 ADD_SECOND_DOCUMENT = "Add a second document to compare."
 COMPARISON_CANCELED = "Comparison canceled."
@@ -781,9 +783,10 @@ class ChangesList(QListView):
 class ChangesPane(QWidget):
     """The Changes tab's page: the rows, or a message in their place.
 
-    Each message is Bill's wording verbatim. "No differences." shows a ✓.
-    The stopped message has a **Compare Again** button, which sends
-    ``compare_again_requested``.
+    Each message is Bill's wording verbatim. "No differences." shows a ✓,
+    with "Key order is ignored." under it in muted text, and is spoken as
+    both sentences (Eric, #146; #199). The stopped message has a **Compare
+    Again** button, which sends ``compare_again_requested``.
     """
 
     activated = Signal(object)
@@ -807,6 +810,14 @@ class ChangesPane(QWidget):
         self._message = QLabel()
         self._message.setObjectName("changesMessage")
         self._message.setWordWrap(True)
+        # Under "No differences." only: muted, no glyph. The message's
+        # spoken name carries both sentences, so the note has none of its
+        # own, like the ✓.
+        self._note = QLabel(KEY_ORDER_IGNORED)
+        self._note.setObjectName("changesMessageNote")
+        self._note.setAccessibleName("")
+        self._note.setStyleSheet(muted_text_style())
+        self._note.setWordWrap(True)
         self._again = QPushButton(COMPARE_AGAIN)
         self._again.setObjectName("changesCompareAgain")
         self._again.setAccessibleName(COMPARE_AGAIN)
@@ -817,7 +828,13 @@ class ChangesPane(QWidget):
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(_GAP)
         line.addWidget(self._glyph, 0, Qt.AlignmentFlag.AlignTop)
-        line.addWidget(self._message, 1)
+        # The note lines up with the message's text, not with the ✓.
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(_GAP // 2)
+        text.addWidget(self._message)
+        text.addWidget(self._note)
+        line.addLayout(text, 1)
 
         message_page = QWidget()
         message_page.setObjectName("changesMessagePage")
@@ -920,8 +937,11 @@ class ChangesPane(QWidget):
         self._model.set_report(None)
         self._state = state
         text = _MESSAGES[state]
+        no_differences = state == ChangesState.NO_DIFFERENCES
         self._message.setText(text)
-        self._message.setAccessibleName(text)
-        self._glyph.setVisible(state == ChangesState.NO_DIFFERENCES)
+        spoken = f"{text} {KEY_ORDER_IGNORED}" if no_differences else text
+        self._message.setAccessibleName(spoken)
+        self._glyph.setVisible(no_differences)
+        self._note.setVisible(no_differences)
         self._again.setVisible(state == ChangesState.STOPPED)
         self._stack.setCurrentWidget(self._message_page)
