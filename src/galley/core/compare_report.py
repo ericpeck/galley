@@ -47,6 +47,9 @@ GROUP_TEXT = "{path}: {count} items differ"
 # The same rows read aloud. A range says "to", not an en dash.
 UNALIGNED_SPOKEN = "{path}, items compared by position, too complex to align"
 GROUP_SPOKEN = "{path}, {first} to {last}, {count} items differ"
+# A group's spoken name ends with this. Its info row can't take focus,
+# so a keyboard user hears it here instead (#200).
+GROUP_SPOKEN_POSITION = ", items compared by position"
 
 # Most (left line, right line) pairs one report carries. Each pair packs to
 # two unsigned ints, so the payload stays under ``ANCHOR_LIMIT * 8`` bytes
@@ -104,9 +107,9 @@ class GroupRow:
     ``path_text`` reads like ``users[40–212]``, or ``Whole document
     [0–5,999]`` for the root, and ``text`` like ``users[40–212]: 173 items
     differ``. ``accessible_name`` says ``users, 40 to 212, 173 items
-    differ``. ``children`` holds the run's change rows in engine order, plus
-    the info row of any array inside the run that was also compared by
-    position.
+    differ, items compared by position``. ``children`` holds the run's
+    change rows in engine order, plus the info row of any array inside the
+    run that was also compared by position.
     """
 
     path_text: str
@@ -356,11 +359,14 @@ def _close(run: _Run | None, rows: list[ReportRow]) -> None:
     array_text = render_path(list(run.path)) or f"{ROOT_LABEL} "
     path_text = f"{array_text}[{run.first:,}–{run.last:,}]"
     count = f"{run.last - run.first + 1:,}"
-    spoken = GROUP_SPOKEN.format(
-        path=_spoken_path(run.path),
-        first=f"{run.first:,}",
-        last=f"{run.last:,}",
-        count=count,
+    spoken = (
+        GROUP_SPOKEN.format(
+            path=_spoken_path(run.path),
+            first=f"{run.first:,}",
+            last=f"{run.last:,}",
+            count=count,
+        )
+        + GROUP_SPOKEN_POSITION
     )
     rows.append(
         GroupRow(

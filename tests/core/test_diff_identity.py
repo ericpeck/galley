@@ -9,6 +9,9 @@ any #129 change: first at ``c13cd80``, then again at ``d31bad7``, because
 #130 changed the report wording (only the report and job digests moved).
 #146 regenerated it once more for Moved's spoken "now at"; only the report
 and job digests of the pairs with a move changed.
+#200 regenerated it for a group's spoken "items compared by position";
+only the report digest of ``perf/_large_pair``, the one pair with groups,
+changed.
 
 The corpus is generated here from fixed seeds: random nested documents with
 array inserts, deletes, replacements, and moves; repetitive arrays that fall

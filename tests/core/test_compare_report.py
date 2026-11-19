@@ -175,7 +175,9 @@ def test_runs_in_an_unaligned_array_fold_into_groups() -> None:
         "users[1–2]: 2 items differ",
     )
     assert [row.path_text for row in first.children] == ["users[1]", "users[2]"]
-    assert first.accessible_name == "users, 1 to 2, 2 items differ"
+    assert first.accessible_name == (
+        "users, 1 to 2, 2 items differ, items compared by position"
+    )
     assert second.text == "users[4–6]: 3 items differ"
     assert [(row.kind, row.path_text) for row in second.children] == [
         ("changed", "users[4]"),
@@ -215,7 +217,9 @@ def test_an_over_budget_array_is_one_group_counting_every_item() -> None:
     )
     assert isinstance(group, GroupRow)
     assert group.text == "data.items[0–5,999]: 6,000 items differ"
-    assert group.accessible_name == "data, items, 0 to 5,999, 6,000 items differ"
+    assert group.accessible_name == (
+        "data, items, 0 to 5,999, 6,000 items differ, items compared by position"
+    )
     assert group.count == 6000
     assert all(isinstance(row, ChangeRow) for row in rest)
     assert report.count == 6000 + len(rest)
@@ -331,7 +335,9 @@ def test_an_unaligned_root_array_uses_the_root_label() -> None:
     )
     assert group.path_text == "Whole document [0–5,999]"
     assert group.text == "Whole document [0–5,999]: 6,000 items differ"
-    assert group.accessible_name == ("Whole document, 0 to 5,999, 6,000 items differ")
+    assert group.accessible_name == (
+        "Whole document, 0 to 5,999, 6,000 items differ, items compared by position"
+    )
 
 
 @_SETTINGS
