@@ -1350,9 +1350,9 @@ class MainWindow(QMainWindow):
     def _escape_string(self) -> None:
         """Write Input as one escaped JSON string to Output. Input is unchanged.
 
-        This runs on the UI thread, so Input must be no larger than the size
-        where Format shows its busy indicator for the Input format. The
-        limit itself runs, as with Format's markup guard (#201).
+        This runs on the UI thread, so Input may be at most the busy size for
+        the Input format, the size from which Format shows its busy
+        indicator. The limit itself runs, as with Format's markup guard (#201).
         """
         if self._formatting:
             return
@@ -1379,9 +1379,9 @@ class MainWindow(QMainWindow):
     def _unescape_string(self) -> None:
         """Format the JSON inside an escaped Input string into Output.
 
-        This runs on the UI thread, so Input must be no larger than the size
-        where Format shows its busy indicator for the Output format. The
-        limit itself runs, as with Format's markup guard (#201).
+        This runs on the UI thread, so Input may be at most the busy size for
+        the Output format, the size from which Format shows its busy
+        indicator. The limit itself runs, as with Format's markup guard (#201).
         """
         if self._formatting:
             return
