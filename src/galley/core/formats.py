@@ -99,15 +99,20 @@ def sniff_format(text: str) -> DocumentFormat | None:
 
     Blank lines, ``#`` comment lines, and ``<!-- -->`` comments are skipped,
     so an HTML file that opens with a comment is read by what follows it.
+    Every comment before the first value is skipped, however many share a
+    line. ``<!-->`` and ``<!--->`` close at once, as HTML parsers read them.
     Formats are tried in table order. None means that line settles nothing.
     """
     in_comment = False
     for raw in text.splitlines():
         line = raw.strip()
-        if in_comment or line.startswith("<!--"):
-            end = line.find("-->", 0 if in_comment else 4)
-            in_comment = end < 0
-            line = "" if in_comment else line[end + 3 :].strip()
+        while in_comment or line.startswith("<!--"):
+            # From index 2, so the "--" of "<!--" can begin the "-->".
+            end = line.find("-->", 0 if in_comment else 2)
+            if end < 0:
+                in_comment, line = True, ""
+                break
+            in_comment, line = False, line[end + 3 :].lstrip()
         if not line or line.startswith("#"):
             continue
         for fmt in FORMATS:
