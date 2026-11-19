@@ -6,6 +6,7 @@ roles, colors through ``row_colors`` and contrast, and the painted state
 only at row edges and padding, where no text is drawn.
 """
 
+import dataclasses
 import json
 import random
 from collections.abc import Callable
@@ -46,6 +47,7 @@ from galley.app.results_panel import ResultRow
 from galley.app.theme import change_color, contrast_ratio
 from galley.core import diff as diff_module
 from galley.core.compare_report import (
+    KIND_GLYPHS,
     ChangeRow,
     CompareReport,
     GroupRow,
@@ -162,8 +164,8 @@ def test_display_and_accessible_text_are_the_spoken_name(qtbot) -> None:
     assert [model.index(row).data() for row in range(model.rowCount())] == [
         'Changed, name, "Ada" to "Bo"',
         "users, items compared by position, too complex to align",
-        "users, 1 to 2, 2 items differ, collapsed",
-        "users, 4 to 6, 3 items differ, collapsed",
+        "users, 1 to 2, 2 items differ, items compared by position, collapsed",
+        "users, 4 to 6, 3 items differ, items compared by position, collapsed",
         "Changed, zip, 1 to 2",
     ]
 
@@ -175,10 +177,14 @@ def test_a_group_says_whether_it_is_collapsed_or_expanded(qtbot) -> None:
     model.dataChanged.connect(lambda _top, _bottom, roles: changed.append(roles))
     spoken = Qt.ItemDataRole.AccessibleTextRole
     model.set_expanded(2, True)
-    assert model.index(2).data(spoken) == "users, 1 to 2, 2 items differ, expanded"
+    assert model.index(2).data(spoken) == (
+        "users, 1 to 2, 2 items differ, items compared by position, expanded"
+    )
     assert spoken in changed[-1]
     model.set_expanded(2, False)
-    assert model.index(2).data(spoken) == "users, 1 to 2, 2 items differ, collapsed"
+    assert model.index(2).data(spoken) == (
+        "users, 1 to 2, 2 items differ, items compared by position, collapsed"
+    )
 
 
 def test_every_row_has_its_whole_text_as_a_tooltip(qtbot) -> None:
@@ -525,6 +531,117 @@ def test_right_expands_and_left_collapses_a_group(qtbot) -> None:
     qtbot.keyClick(view, Qt.Key.Key_Left)
     assert not model.is_expanded(2) and model.rowCount() == 5
     assert view.current_row() == 2
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_right_on_an_expanded_group_moves_to_its_first_child(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """As in a tree view: Right expands a group, then steps into it (#200)."""
+    install_scheme(scheme)
+    pane = _pane(qtbot, _grouped())
+    view = pane.list_view()
+    model = pane.model()
+    jumps: list[object] = []
+    pane.activated.connect(jumps.append)
+    view.setFocus()
+    view.select_row(2)
+    qtbot.keyClick(view, Qt.Key.Key_Right)
+    assert model.is_expanded(2) and view.current_row() == 2
+    qtbot.keyClick(view, Qt.Key.Key_Right)
+    assert view.current_row() == 3
+    assert model.row_at(3) is model.row_at(2).children[0]
+    # Moving into the group selects the child; it doesn't jump the editors.
+    assert jumps == []
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_right_steps_past_an_info_row_to_the_first_change(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """A group's first child can be the info row of a nested array. Info rows
+    take no focus, so Right lands on the first change after it (#200)."""
+    install_scheme(scheme)
+    report = _grouped()
+    info, group = report.rows[1], report.rows[2]
+    assert isinstance(info, InfoRow) and isinstance(group, GroupRow)
+    nested = dataclasses.replace(group, children=(info, *group.children))
+    rows = (*report.rows[:2], nested, *report.rows[3:])
+    pane = _pane(qtbot, dataclasses.replace(report, rows=rows))
+    view = pane.list_view()
+    model = pane.model()
+    view.setFocus()
+    view.select_row(2)
+    qtbot.keyClick(view, Qt.Key.Key_Right)
+    qtbot.keyClick(view, Qt.Key.Key_Right)
+    assert isinstance(model.row_at(3), InfoRow)
+    assert view.current_row() == 4
+    assert model.row_at(4) is group.children[0]
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_info_rows_stay_unfocusable_and_navigation_skips_them(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    install_scheme(scheme)
+    pane = _pane(qtbot, _grouped())
+    view = pane.list_view()
+    model = pane.model()
+    assert isinstance(model.row_at(1), InfoRow)
+    assert model.flags(model.index(1)) == Qt.ItemFlag.NoItemFlags
+    view.setFocus()
+    view.select_row(0)
+    qtbot.keyClick(view, Qt.Key.Key_Down)
+    assert view.current_row() == 2
+    assert model.next_stop(0) == 2
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_group_is_spoken_as_compared_by_position(
+    qtbot, install_scheme, scheme: str
+) -> None:
+    """GROUP_SPOKEN plus "items compared by position"; the shown text and
+    the info row are unchanged (#200)."""
+    install_scheme(scheme)
+    pane = _pane(qtbot, _grouped())
+    model = pane.model()
+    spoken = model.index(2).data(Qt.ItemDataRole.AccessibleTextRole)
+    assert spoken == (
+        "users, 1 to 2, 2 items differ, items compared by position, collapsed"
+    )
+    assert model.row_at(2).text == "users[1–2]: 2 items differ"
+    assert model.row_at(1).text == (
+        "users: items compared by position (too complex to align)"
+    )
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_glyph_box_fits_its_glyph_at_large_fonts(
+    qtbot, monkeypatch, install_scheme, scheme: str
+) -> None:
+    """The glyph column is sized from the font, so glyphs don't clip (#200)."""
+    install_scheme(scheme)
+    drawn: list[tuple[str, int, int]] = []
+    draw = changes_pane_module._draw
+
+    def record(painter, x, rect, width, text, **kwargs) -> None:
+        advance = QFontMetrics(painter.font()).horizontalAdvance(text)
+        drawn.append((text, width, advance))
+        draw(painter, x, rect, width, text, **kwargs)
+
+    monkeypatch.setattr(changes_pane_module, "_draw", record)
+    glyphs = {*KIND_GLYPHS.values(), "ⓘ"}
+    for report in (_every_kind(), _grouped()):
+        pane = _pane(qtbot, report)
+        large = QFont(pane.list_view().font())
+        large.setPixelSize(40)
+        pane.list_view().setFont(large)
+        pane.resize(1200, 600)
+        pane.grab()
+    boxes = [(text, width, advance) for text, width, advance in drawn if text in glyphs]
+    assert {text for text, _width, _advance in boxes} == glyphs
+    clipped = [box for box in boxes if box[2] > box[1]]
+    assert clipped == []
 
 
 def test_a_click_toggles_a_group_and_jumps_to_a_change(qtbot) -> None:
