@@ -1,5 +1,8 @@
 """The format table: names, extensions, sniffing, and Output targets (#63)."""
 
+import subprocess
+import sys
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -123,6 +126,95 @@ def test_sniff_tries_formats_in_table_order(
     text: str, expected: DocumentFormat | None
 ) -> None:
     assert sniff_format(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param("<!-- a --><!-- b --><html>", HTML, id="two on one line"),
+        pytest.param(
+            "<!-- a --> <!-- b -->\n<!DOCTYPE html>", HTML, id="two, then a line"
+        ),
+        pytest.param("<!-- a\n--><!-- b --><body>", HTML, id="after a long one"),
+        pytest.param("<!-- a --><!-- b\n  c -->\n<html>", HTML, id="second runs on"),
+        pytest.param("<!-- a --><!-- b --><feed/>", XML, id="then XML"),
+        pytest.param("<!-- a --><!-- b -->", None, id="only comments"),
+        pytest.param("<!-->\n<html>", HTML, id="empty, closed at once"),
+        pytest.param("<!--->\n<html>", HTML, id="empty, one dash"),
+        pytest.param("<!--><body>", HTML, id="empty, then a tag"),
+        pytest.param("<!-- a --!><html>", HTML, id="closed by --!>"),
+        pytest.param("<!-- a\n--!>\n<body>", HTML, id="--!> on a later line"),
+        # "!>" right after "<!--" is comment text, not a close.
+        pytest.param("<!--!>\n<html>", None, id="<!--!> stays open"),
+    ],
+)
+def test_sniff_skips_every_comment_before_the_first_value(
+    text: str, expected: DocumentFormat | None
+) -> None:
+    """Each ``<!-- -->`` on a line is skipped, not just the first (#201).
+
+    ``<!-->`` and ``<!--->`` are empty comments that close at once, and
+    ``--!>`` closes a comment too, as HTML parsers read them.
+    """
+    assert sniff_format(text) is expected
+
+
+# The child sniffs the text from stdin and prints whether it found nothing,
+# and how long ``sniff_format`` took.
+_SNIFF_PROBE = """\
+import sys
+import time
+
+from galley.core.formats import sniff_format
+
+text = sys.stdin.read()
+start = time.perf_counter()
+found = sniff_format(text)
+sys.stdout.write(f"{found is None} {time.perf_counter() - start:.6f}")
+"""
+# Erik's index fix sniffs 2 MB of comments in about 0.05 s. Slicing the line
+# per comment took 3.5 to 17 s. One second is a hang guard, not a budget.
+_SNIFF_BOUND_S = 1.0
+# A child still running after this is killed, so the test fails, not hangs.
+_PROBE_TIMEOUT_S = 30.0
+_TWO_MB = 2_000_000
+
+
+@cache
+def _two_megabyte_comment_line(unit: str) -> str:
+    """One line of exactly 2 MB: ``unit`` repeated, padded with spaces.
+
+    Built once per unit for the module.
+    """
+    text = unit * (_TWO_MB // len(unit))
+    return text + " " * (_TWO_MB - len(text))
+
+
+@pytest.mark.parametrize("unit", ["<!---->", "<!-->"])
+def test_a_two_megabyte_line_of_comments_sniffs_quickly(unit: str) -> None:
+    """Skipping comments on one long line stays linear (Erik, #217).
+
+    Open sniffs a whole file whose extension isn't in the table, so a
+    quadratic loop would stall the window.
+    """
+    text = _two_megabyte_comment_line(unit)
+    assert len(text.encode("utf-8")) == _TWO_MB
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _SNIFF_PROBE],
+            input=text,
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"sniffing 2 MB of {unit} ran past {_PROBE_TIMEOUT_S:.0f} s")
+    found_none, elapsed = done.stdout.split()
+    seconds = float(elapsed)
+    print(f"sniff_format, 2 MB of {unit}: {seconds:.3f} s (bound {_SNIFF_BOUND_S} s)")
+    assert found_none == "True"
+    assert seconds <= _SNIFF_BOUND_S
 
 
 def test_detect_format_reports_the_label() -> None:
