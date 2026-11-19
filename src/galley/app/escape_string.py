@@ -35,7 +35,6 @@ NOT_JSON_KEY_MESSAGE = (
 SELF_REFERENCE_MESSAGE = (
     "This document refers to itself, so it can't be written as JSON."
 )
-# JSON writes every alias out in full (#223). Proposed; Bill approves.
 ALIAS_EXPANSION_MESSAGE = (
     "This document's aliases repeat too many values, so it can't be written as JSON."
 )
