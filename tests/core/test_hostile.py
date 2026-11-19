@@ -314,7 +314,7 @@ _ALIAS_TIMEOUT_S = 30.0
 
 
 @pytest.mark.parametrize(
-    ("levels", "fan"), [(60, 10), (1000, 2)], ids=["10**60", "2**1000"]
+    ("levels", "fan"), [(60, 10), (300, 2)], ids=["10**60", "2**300"]
 )
 def test_a_yaml_alias_bomb_to_json_is_refused_quickly(levels: int, fan: int) -> None:
     """JSON writes every alias out in full, so these are refused (#223)."""

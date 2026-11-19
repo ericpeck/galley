@@ -180,8 +180,10 @@ def _aliases_adding(values: int, distinct: int = 104) -> str:
     return f"h: &h [{items}]\ne: &e []\npad: [{pad}]\nrows: [{refs}]\n"
 
 
-# 20,000 distinct values, so ten times that is past the fixed limit.
-_LARGE = 20_000
+# 10,001 distinct values: ten times that, 100,010, is just past the fixed
+# limit, so only the ratio allows it. A small document keeps the pure-Python
+# parse fast on CI.
+_LARGE = 10_001
 
 
 @pytest.mark.parametrize(
@@ -214,7 +216,8 @@ def test_aliases_that_add_the_most_allowed_still_convert(
     """A larger document may repeat more, as merge keys across many rows do."""
     text = _aliases_adding(added, distinct=distinct)
     written = json.loads(format_document(text, "yaml", "json"))
-    assert len(written["rows"]) == added // 100
+    hundreds, ones = divmod(added, 100)
+    assert len(written["rows"]) == hundreds + ones
     assert written["rows"][0] == ["fake-note"] * 99
     assert len(written["pad"]) == distinct - 104
 
