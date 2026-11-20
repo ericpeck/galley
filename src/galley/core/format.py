@@ -45,6 +45,7 @@ slice 5.
 import datetime
 import functools
 import json
+import math
 import os
 import re
 import time
@@ -1659,19 +1660,32 @@ ALIAS_EXPANSION = "alias_expansion"
 # YAML whose aliases would add either more than ALIAS_EXPANSION_LIMIT
 # values or more than ALIAS_EXPANSION_BYTES bytes of JSON, or
 # ALIAS_EXPANSION_RATIO times the document's own values or input bytes
-# when that is more. Bytes are estimated with indentation counted: a string
-# is its UTF-8 bytes, any other value 8, each list item or mapping entry 2,
-# and each key its own bytes. Each item or entry also starts a line, a
-# newline and the indent once per level of depth, and a list or mapping
-# with items ends on a line of its own; an empty one is 2 bytes. So
-# aliases add at most about 10 MB of JSON to a small document, however
+# when that is more. Bytes are estimated with indentation counted.
+# - A string is its UTF-8 bytes. Any other value is the length JSON writes
+#   it at: true 4, false 5, null 4, a float its text, and an int its digits
+#   estimated from its bit length, never fewer.
+# - Each list item or mapping entry adds 2, and each key its own bytes. A
+#   key other than a string adds 2 more for the quotes JSON writes.
+# - Each key and value object counts once by id() as the document's own, so
+#   keys a merge key (<<) copies into a mapping count as added, like values
+#   an alias repeats.
+# - Each item or entry also starts a line, a newline and the indent once per
+#   level of depth, and a list or mapping with items ends on a line of its
+#   own. An empty one is 2 bytes.
+# So aliases add at most about 10 MB of JSON to a small document, however
 # deep they are, and a large one, such as many rows that each merge a
 # shared default, grows at most in proportion to its size.
 ALIAS_EXPANSION_LIMIT = 100_000
 ALIAS_EXPANSION_BYTES = 10_000_000
 ALIAS_EXPANSION_RATIO = 10
-# Bytes counted for a value other than a string, such as a number or null.
+# Bytes counted for a value other than a string, a number, a bool or null.
 _SCALAR_BYTES = 8
+# "Infinity", "-Infinity" and "NaN" are at most this long.
+_NONFINITE_BYTES = 9
+# Over log10(2), so digits estimated from a bit length are never too few.
+_DIGITS_PER_BIT = (30_103, 100_000)
+# The quotes JSON writes around a key that isn't a string.
+_KEY_QUOTE_BYTES = 2
 # Bytes counted for each list item or mapping entry, as for ", " or ": ".
 _ENTRY_BYTES = 2
 # Bytes counted for an empty list or mapping, "[]" or "{}".
@@ -1832,15 +1846,20 @@ def _check_alias_expansion(
         if not entries:
             size, lines = _EMPTY_BYTES, 0
         else:
-            if isinstance(node, dict):
-                size = sum(_ENTRY_BYTES + _value_bytes(key) for key in node)
-            else:
-                size = _ENTRY_BYTES * entries
+            size = _ENTRY_BYTES * entries
             # Each entry's newline and one level of indent, and the closing
             # line's newline. The indent for ``depth`` goes with ``lines``.
             size += entries * (1 + width) + 1
             lines = entries + 1
         own += size + lines * width * depth
+        if isinstance(node, dict):
+            # Once per key object, so a merge key's copies count as added.
+            for key in node:
+                key_size = _key_bytes(key)
+                size += key_size
+                if id(key) not in scalars:
+                    scalars.add(id(key))
+                    own += key_size
         values = 1
         stack.append((node, True, depth))
         for child in children:
@@ -1880,12 +1899,32 @@ def _json_indent_width(indent: str | None) -> int:
 
 
 def _value_bytes(value: object) -> int:
-    """A string's UTF-8 bytes, or ``_SCALAR_BYTES`` for any other value."""
-    if not isinstance(value, str):
-        return _SCALAR_BYTES
-    if value.isascii():
-        return len(value)
-    return len(value.encode("utf-8", "surrogatepass"))
+    """The bytes JSON writes ``value`` in, never fewer: see the alias constants.
+
+    A huge int is never turned into text: Python refuses past 4,300 digits.
+    """
+    if isinstance(value, str):
+        if value.isascii():
+            return len(value)
+        return len(value.encode("utf-8", "surrogatepass"))
+    if value is None:
+        return len("null")
+    # bool is an int, so it goes first.
+    if isinstance(value, bool):
+        return len("true") if value else len("false")
+    if isinstance(value, int):
+        per, scale = _DIGITS_PER_BIT
+        return value.bit_length() * per // scale + 1 + (value < 0)
+    if isinstance(value, float):
+        return len(repr(value)) if math.isfinite(value) else _NONFINITE_BYTES
+    return _SCALAR_BYTES
+
+
+def _key_bytes(key: object) -> int:
+    """A key's bytes: a key other than a string adds the quotes JSON writes."""
+    if isinstance(key, str):
+        return _value_bytes(key)
+    return _value_bytes(key) + _KEY_QUOTE_BYTES
 
 
 def _text_bytes(text: str | bytes) -> int:

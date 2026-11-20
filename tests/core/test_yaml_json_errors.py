@@ -464,6 +464,23 @@ def test_merge_keys_and_long_ints_just_under_the_bytes_allowed_still_convert(
     assert len(json.loads(written)["rows"]) == rows
 
 
+def _sample_ints() -> list[int]:
+    """0, the smallest and largest ints of each digit count, and powers of 2."""
+    counts = [*range(1, 41), 100, 309, 1_000, 2_000, 4_299, 4_300]
+    edges = [n for d in counts for n in (10 ** (d - 1), 10**d - 1)]
+    powers = [2**bits for bits in (0, 1, 31, 32, 63, 64, 1_000, 14_000)]
+    return [0, *edges, *powers]
+
+
+def test_an_ints_byte_estimate_is_never_below_its_digits() -> None:
+    """Python won't write an int past 4,300 digits as text, so it's estimated."""
+    for number in _sample_ints():
+        for signed in (number, -number):
+            written = len(str(signed))
+            estimate = format_module._value_bytes(signed)
+            assert written <= estimate <= written + 1, signed
+
+
 def test_the_widest_json_indent_is_the_indent_settings_widest() -> None:
     """An unknown indent must count the widest the indent setting writes."""
     widest = max(
