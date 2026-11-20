@@ -73,7 +73,7 @@ from galley.app.copy_as import (
     copied_text,
     copy_as_inline_limit,
 )
-from galley.app.editor import CodeEditor, fold_status_text
+from galley.app.editor import CodeEditor, fold_status_text, raw_text
 from galley.app.editor_font import (
     CHOOSE_FONT_NATIVE,
     CHOOSE_FONT_SETS_SIZE,
@@ -1151,7 +1151,7 @@ class MainWindow(QMainWindow):
             return
         if self._loading_path is not None:
             return
-        text = self._input_pane.editor.toPlainText()
+        text = self._input_pane.editor.raw_text()
         if _is_blank(text):
             return
         source = self._input_pane.format_name()
@@ -1300,7 +1300,7 @@ class MainWindow(QMainWindow):
         """
         if self._formatting:
             return
-        text = self._input_pane.editor.toPlainText()
+        text = self._input_pane.editor.raw_text()
         if _is_blank(text):
             return
         # The offer is spent once Convert runs, whatever the result (Bill).
@@ -1357,7 +1357,7 @@ class MainWindow(QMainWindow):
         """
         if self._formatting:
             return
-        text = self._input_pane.editor.toPlainText()
+        text = self._input_pane.editor.raw_text()
         if text == "":
             return
         source = self._input_pane.format_name()
@@ -1386,7 +1386,7 @@ class MainWindow(QMainWindow):
         """
         if self._formatting:
             return
-        text = self._input_pane.editor.toPlainText()
+        text = self._input_pane.editor.raw_text()
         if text == "":
             return
         target = self._output_pane.format_name()
@@ -2040,7 +2040,7 @@ class MainWindow(QMainWindow):
         if not self.can_open():
             return
         pane = self._source_pane()
-        if input_needs_replace(pane.editor.toPlainText(), pane.document):
+        if input_needs_replace(pane.editor.raw_text(), pane.document):
             self._ask_replace_input(path, of_files, loaded)
             return
         self._start_loading(path, of_files, loaded)
@@ -2217,7 +2217,7 @@ class MainWindow(QMainWindow):
         if loaded.fmt is not None:
             _set_format(pane, loaded.fmt)
         document = InputDocument(
-            path, editor.toPlainText(), loaded.had_bom, loaded.newline
+            path, editor.raw_text(), loaded.had_bom, loaded.newline
         )
         pane.set_document(document)
         self.setWindowTitle(input_window_title(path.name))
@@ -2257,7 +2257,8 @@ class MainWindow(QMainWindow):
             open_button.setToolTip(action.toolTip())
 
     def _copy_output(self) -> None:
-        QApplication.clipboard().setText(self._output_pane.editor.toPlainText())
+        text = self._output_pane.editor.raw_text()
+        QApplication.clipboard().setText(text)
 
     def _copy_as(self, mode: CopyAsMode) -> None:
         """Copy Output, or its selection, as ``mode``. Output is not changed.
@@ -2291,8 +2292,8 @@ class MainWindow(QMainWindow):
         editor = self._output_pane.editor
         cursor = editor.textCursor()
         if cursor.hasSelection():
-            return cursor.selection().toPlainText()
-        return editor.toPlainText()
+            return raw_text(cursor.selection())
+        return editor.raw_text()
 
     def _show_copying(self) -> None:
         """Show the spinner, then the bar with Cancel, on Format's timings."""

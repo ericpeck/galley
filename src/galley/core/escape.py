@@ -29,6 +29,7 @@ from galley.core.format import (
     SelfReferenceError,
     _value_format,
     compact_json,
+    escape_line_separators,
     format_document,
     load_document,
     yaml_json_value,
@@ -96,7 +97,7 @@ def escape_value(value: object) -> str:
         inner = compact_json(value)
     except (TypeError, ValueError, RecursionError) as exc:
         raise EscapeError(str(exc)) from None
-    return json.dumps(inner, ensure_ascii=False) + "\n"
+    return escape_line_separators(json.dumps(inner, ensure_ascii=False)) + "\n"
 
 
 def unescape_document(text: str, target: str) -> str:

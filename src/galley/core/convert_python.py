@@ -24,7 +24,12 @@ from typing import assert_never
 from ruamel.yaml.error import YAMLError
 
 from galley.core.errors import MAX_DEPTH
-from galley.core.format import _RUAMEL_SAFE_DEPTH, _dump_block, _dump_yaml_value
+from galley.core.format import (
+    _RUAMEL_SAFE_DEPTH,
+    _dump_block,
+    _dump_yaml_value,
+    escape_line_separators,
+)
 
 _TUPLE_ONE = "1 tuple was converted to a list."
 _KEY_ONE = "1 dictionary key was converted to a string."
@@ -348,7 +353,7 @@ def _assignment(body: list[ast.stmt]) -> ConvertError | None:
 def _render(value: object, target: str, depth: int) -> str:
     if target == "json":
         rendered = json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)
-        return rendered + "\n"
+        return escape_line_separators(rendered) + "\n"
     # ruamel recurses once per level. Past this depth format_yaml builds the
     # document with an explicit stack, and so does this dump.
     if depth > _RUAMEL_SAFE_DEPTH:

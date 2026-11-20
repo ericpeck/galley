@@ -334,14 +334,14 @@ def test_size_limit_shows_the_indicator_immediately(qtbot, monkeypatch) -> None:
 
     _as_json(window)
     editor.setPlainText("x")
-    editor.toPlainText = lambda: "x" * JSON_BUSY_BYTES  # type: ignore[method-assign]
+    editor.raw_text = lambda: "x" * JSON_BUSY_BYTES  # type: ignore[method-assign]
     window._actions.format.trigger()
     assert spinner.isVisible()
     assert not bar.isVisible()
     assert _visible_warning(window) is None
     window._cancel_format()
 
-    editor.toPlainText = lambda: "x" * JSON_PROGRESS_BYTES  # type: ignore[method-assign]
+    editor.raw_text = lambda: "x" * JSON_PROGRESS_BYTES  # type: ignore[method-assign]
     window._actions.format.trigger()
     assert bar.isVisible()
     assert cancel.isVisible()

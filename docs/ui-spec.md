@@ -464,6 +464,13 @@ Isolate behind a `platform` module for macOS and Windows:
 - Don't add File or Help menu items, a Window menu or window commands, settings screens, onboarding, or themes beyond this spec. Dark mode is allowed (Eric, #91 D10): View › Appearance offers System, Light and Dark, as in §2.
 - Don't rely on the older written summary (it is wrong about 6k, 6m, and docks).
 
+JSON output writes U+2028 and U+2029 as the escapes `\u2028` and `\u2029`, so a string keeps them without a line break in the file. YAML output keeps them as they are (#221).
+
+### Known limitations in v1
+
+- Galley reads a paragraph separator (U+2029) as a line break when you open or paste text, so one inside a JSON string is reported as an error. Use the escape `\u2029` instead.
+- When Compare looks for differences, it treats a no-break space (U+00A0) as a plain space and a line separator (U+2028) as a line break. The files themselves aren't changed.
+
 ---
 
 ## 14. Open questions
