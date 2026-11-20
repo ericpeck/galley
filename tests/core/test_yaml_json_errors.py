@@ -439,7 +439,7 @@ def test_merge_keys_and_long_ints_that_add_too_many_bytes_raise_a_typed_error(
     assert str(caught.value) == "alias_expansion"
 
 
-@pytest.mark.parametrize(
+_JUST_UNDER = pytest.mark.parametrize(
     ("text", "rows"),
     [
         (_merged_key(100_000, _MERGE_MOST), _MERGE_MOST),
@@ -447,21 +447,47 @@ def test_merge_keys_and_long_ints_that_add_too_many_bytes_raise_a_typed_error(
     ],
     ids=["merge-key", "long-int"],
 )
+
+
+def _assert_converts(text: str, rows: int) -> None:
+    written = format_document(text, "yaml", "json")
+    assert len(written.encode()) <= 15_000_000
+    assert len(json.loads(written)["rows"]) == rows
+
+
+@_JUST_UNDER
 def test_merge_keys_and_long_ints_just_under_the_bytes_allowed_still_convert(
-    engine: str, text: str, rows: int
+    engine: str, monkeypatch: pytest.MonkeyPatch, text: str, rows: int
 ) -> None:
     """About 10 MB of JSON each.
 
     The YAML render writes merged keys and repeated ints out in full, which
     takes seconds to parse again in pure Python. So the pure engine parses
-    and checks the text, and the C engine also writes the JSON.
+    the text and checks that the alias check returns, and the C engine also
+    writes the JSON. The full pure conversion is a perf test below.
     """
-    if engine == "pure":
-        format_module._run_yaml(text, check_only=True, alias_width=2)
+    if engine == "c":
+        _assert_converts(text, rows)
         return
-    written = format_document(text, "yaml", "json")
-    assert len(written.encode()) <= 15_000_000
-    assert len(json.loads(written)["rows"]) == rows
+    check = format_module._check_alias_expansion
+    returned: list[object] = []
+
+    def recording(*args: object) -> None:
+        returned.append(check(*args))
+
+    monkeypatch.setattr(format_module, "_check_alias_expansion", recording)
+    assert format_module._run_yaml(text, check_only=True, alias_width=2) == ""
+    assert returned == [None]
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("engine", ["pure"], indirect=True)
+@_JUST_UNDER
+def test_merge_keys_and_long_ints_just_under_the_bytes_allowed_convert_in_pure(
+    engine: str, text: str, rows: int
+) -> None:
+    """A full end-to-end conversion on the pure engine, with no time budget."""
+    _assert_converts(text, rows)
 
 
 def _sample_ints() -> list[int]:
