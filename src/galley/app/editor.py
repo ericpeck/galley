@@ -37,6 +37,7 @@ from PySide6.QtGui import (
     QTextBlock,
     QTextCursor,
     QTextDocument,
+    QTextDocumentFragment,
     QTextFormat,
     QTextLayout,
     QTextOption,
@@ -126,6 +127,17 @@ TAB_OUTDENT_SPACES = 4
 _QT_DEFAULT_TAB_STOP_PX = 80.0
 # QTextDocument.toRawText() puts this between blocks.
 _BLOCK_BREAK = "\u2029"
+
+
+def raw_text(source: QTextDocument | QTextDocumentFragment) -> str:
+    """The text of ``source`` as typed, with "\\n" between lines (#221).
+
+    ``toPlainText()`` turns a no-break space into a space and U+2028 into
+    "\\n". Format, Copy, Copy As, open and Convert read text through this
+    instead, so they keep every character.
+    """
+    return source.toRawText().replace(_BLOCK_BREAK, "\n")
+
 
 # Display gates for very long lines, in characters of one block (#91).
 #

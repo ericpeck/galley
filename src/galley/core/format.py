@@ -1606,6 +1606,19 @@ def _value_format(name: str) -> str:
     return fmt.name
 
 
+# JSON output writes these two as escapes (#221, ui-spec §13). Editors and
+# older JavaScript read them as line breaks. In JSON text from json.dumps
+# they can only stand inside a string, where the escape means the same.
+_JSON_LINE_SEPARATORS = str.maketrans({"\u2028": "\\u2028", "\u2029": "\\u2029"})
+
+
+def escape_line_separators(text: str) -> str:
+    """``text``, JSON from ``json.dumps``, with U+2028 and U+2029 escaped."""
+    if "\u2028" not in text and "\u2029" not in text:
+        return text
+    return text.translate(_JSON_LINE_SEPARATORS)
+
+
 def compact_json(value: object, *, sort_keys: bool = False) -> str:
     """``value`` as JSON with no spaces or line breaks between tokens.
 
@@ -1631,17 +1644,15 @@ def _dump_json(
     and ignores ``indent``.
     """
     if minify:
-        return compact_json(value, sort_keys=sort_keys)
-    return (
-        json.dumps(
-            value,
-            indent=indent,
-            ensure_ascii=False,
-            sort_keys=sort_keys,
-            default=default,
-        )
-        + "\n"
+        return escape_line_separators(compact_json(value, sort_keys=sort_keys))
+    written = json.dumps(
+        value,
+        indent=indent,
+        ensure_ascii=False,
+        sort_keys=sort_keys,
+        default=default,
     )
+    return escape_line_separators(written) + "\n"
 
 
 def _not_json_value(value: object) -> object:

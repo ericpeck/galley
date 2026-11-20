@@ -20,7 +20,7 @@ from galley.app.main import create_main_window
 
 _WAIT_MS = 10000
 # One JSON string with both characters toPlainText() changes.
-_MIXED = '{"name": "Pat Example", "note": "one two"}'
+_MIXED = '{"name": "Pat\u00a0Example", "note": "one\u2028two"}'
 _UNTOUCHED = "clipboard before the copy"
 
 
@@ -32,11 +32,11 @@ def _raw(source: QTextDocument | object) -> str:
     "text",
     [
         pytest.param(
-            '{\n  "name": "Pat Example",\n  "note": "one two"\n}\n',
+            '{\n  "name": "Pat\u00a0Example",\n  "note": "one\u2028two"\n}\n',
             id="json",
         ),
-        pytest.param('name: "Pat Example"\nnote: "one two"\n', id="yaml"),
-        pytest.param("<p>Pat Example</p>\n<p>one two</p>\n", id="html"),
+        pytest.param('name: "Pat\u00a0Example"\nnote: "one\u2028two"\n', id="yaml"),
+        pytest.param("<p>Pat\u00a0Example</p>\n<p>one\u2028two</p>\n", id="html"),
     ],
 )
 def test_raw_text_keeps_no_break_spaces_and_line_separators(qapp, text: str) -> None:
@@ -51,7 +51,7 @@ def test_raw_text_keeps_no_break_spaces_and_line_separators(qapp, text: str) -> 
 def test_a_paragraph_separator_becomes_a_line_break(qapp) -> None:
     # A known v1 limitation (ui-spec §13): Qt makes U+2029 a block break.
     document = QTextDocument()
-    document.setPlainText('{"note": "one two"}')
+    document.setPlainText('{"note": "one\u2029two"}')
     assert document.blockCount() == 2
     assert _raw(document) == '{"note": "one\ntwo"}'
 
@@ -85,8 +85,8 @@ def test_format_keeps_the_input_characters(qtbot) -> None:
     window._actions.format.trigger()
     qtbot.waitUntil(lambda: not window._formatting, timeout=_WAIT_MS)
     written = _editor(window, "outputEditor").document().toRawText()
-    assert json.loads(written.replace(" ", "\n")) == json.loads(_MIXED)
-    assert "Pat Example" in written
+    assert json.loads(written.replace("\u2029", "\n")) == json.loads(_MIXED)
+    assert "Pat\u00a0Example" in written
     assert "one\\u2028two" in written
 
 
@@ -128,8 +128,9 @@ def test_open_keeps_the_file_text_for_save(qtbot, tmp_path: Path) -> None:
     window = _show(qtbot)
     editor = _editor(window, "inputEditor")
     window.open_path(path)
+    shown = editor.document()
     qtbot.waitUntil(
-        lambda: window._loading_path is None and editor.document().toRawText() == _MIXED,
+        lambda: window._loading_path is None and shown.toRawText() == _MIXED,
         timeout=_WAIT_MS,
     )
     document = window._input_pane.document
