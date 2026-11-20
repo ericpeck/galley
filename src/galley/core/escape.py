@@ -80,7 +80,8 @@ def escape_document(text: str | bytes, source: str) -> str:
         value = load_document(text, "json")
     else:
         try:
-            value = yaml_json_value(text)
+            # Escape as String writes compact JSON.
+            value = yaml_json_value(text, indent="")
         except (NotJSONKeyError, SelfReferenceError, AliasExpansionError) as exc:
             raise EscapeError(str(exc)) from None
     return escape_value(value)

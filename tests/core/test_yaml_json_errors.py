@@ -226,8 +226,11 @@ def test_aliases_that_add_the_most_allowed_still_convert(
 # bytes when that is more. A string counts its UTF-8 bytes, any other value
 # 8, each list item or mapping entry 2, and each key its own length.
 _ALIAS_BYTES = 10_000_000
-# A shared list of ten 1,000-byte strings: each alias to it adds 10,020 bytes.
-_SHARED_LIST_BYTES = 10 * (2 + 1_000)
+# A shared list of ten 1,000-byte strings, aliased in ``rows`` two levels
+# deep: each alias to it adds 10,095 bytes. That is 10,020 for its items,
+# 31 for a newline and one indent per item and the closing newline, and
+# 44 for its 11 lines indented two more levels of two spaces.
+_SHARED_LIST_BYTES = 10 * (2 + 1_000) + 10 * (1 + 2) + 1 + 11 * 2 * 2
 
 
 def _long_string_aliased(times: int, length: int = 100_000) -> str:
