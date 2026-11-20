@@ -5,6 +5,7 @@ sentence names the line only; a pane row shows the column beside it.
 """
 
 import json
+import re
 from typing import assert_never
 
 from galley.app.banner import banner_text
@@ -160,17 +161,30 @@ def quoted_key(key: str) -> str:
     )
 
 
+def row_accessible_name(message: str, lineno: int | None) -> str:
+    """A row's screen-reader name: ``Line N: message``, said once (Bill, #229).
+
+    The message alone when it already names line ``lineno``, or when the
+    error has no line, so the line is never said twice or made up.
+    """
+    if lineno is None or _names_line(message, lineno):
+        return message
+    return f"Line {lineno}: {message}"
+
+
+def _names_line(message: str, lineno: int) -> bool:
+    return re.search(rf"\b[Ll]ine {lineno}\b", message) is not None
+
+
 def accessible_text(problem: Problem) -> str:
     """Return the screen-reader text for one problem row."""
     if problem.code == "yaml_tab":
-        return (
-            f"Line {problem.lineno}: Starts with a tab. "
-            "YAML needs spaces for indenting."
-        )
+        message = "Starts with a tab. YAML needs spaces for indenting."
+        return row_accessible_name(message, problem.lineno)
     message = message_for(problem)
     if problem.uncertain:
         message = f"{message} {UNCERTAIN_SUFFIX}"
-    return f"Line {problem.lineno}: {message}"
+    return row_accessible_name(message, problem.lineno)
 
 
 def problem_count_text(count: int) -> str:
@@ -246,10 +260,33 @@ def display_problem(problem: Problem) -> DisplayProblem:
 def display_input_error(error: InputError) -> DisplayProblem:
     """Build a pane row from a located input error.
 
-    Those banners were already approved, including a column where the
-    byte or the escape needs one.
+    The row's sentence names the line at most, never the column, which the
+    place line shows (#227). The banners keep their own sentences.
     """
-    message = banner_text(error)
+    message = input_error_row_text(error)
     line = error.lineno if error.lineno is not None else 1
     column = error.colno if error.colno is not None else 0
-    return DisplayProblem(line, message, f"Line {line}: {message}", error.kind, column)
+    accessible = row_accessible_name(message, error.lineno)
+    return DisplayProblem(line, message, accessible, error.kind, column)
+
+
+def input_error_row_text(error: InputError) -> str:
+    """The Problems row sentence for an input error (Bill, #227).
+
+    Invalid UTF-8 with a line and a bad escape drop the banner's column.
+    An offset-only invalid UTF-8 error and too_deep keep the banner's
+    sentence, which names no column.
+    """
+    if error.kind == "invalid_utf8" and error.lineno is not None:
+        return (
+            "This file isn't valid UTF-8, so Galley can't read it. "
+            f"The first bad byte is on line {error.lineno}. "
+            "Save the file as UTF-8 and open it again."
+        )
+    if error.kind == "bad_escape":
+        escape = error.details["escape"]
+        return (
+            f"Line {error.lineno} has an invalid character escape ({escape}) "
+            "that can't be saved as UTF-8."
+        )
+    return banner_text(error)

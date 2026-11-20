@@ -112,10 +112,7 @@ def test_duplicate_key_messages_quote_the_key() -> None:
         'Remove the repeated key "id" on line 3.',
         'Remove the repeated key "name" on line 4.',
     ]
-    assert (
-        accessible_text(problems[1])
-        == 'Line 4: Remove the repeated key "name" on line 4.'
-    )
+    assert accessible_text(problems[1]) == 'Remove the repeated key "name" on line 4.'
 
 
 def test_json_and_yaml_duplicates_share_the_wording() -> None:
@@ -176,7 +173,7 @@ def test_a_problem_after_a_guess_says_so_in_text_and_speech() -> None:
     assert row.full_message() == (
         "Trailing comma at the end of line 5. (may be caused by an earlier error)"
     )
-    assert accessible_text(problem) == f"Line 5: {row.full_message()}"
+    assert accessible_text(problem) == row.full_message()
     assert UNCERTAIN_SUFFIX == "(may be caused by an earlier error)"
 
 

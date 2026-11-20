@@ -1405,7 +1405,8 @@ def _is_blank(text: str) -> bool:
 
 
 def _line_label(count: int) -> str:
-    return f"{count} line" if count == 1 else f"{count} lines"
+    # The same as the main window's footer, thousands separator included.
+    return f"{count:,} line" if count == 1 else f"{count:,} lines"
 
 
 def _is_inside(widget: QWidget | None, ancestor: QWidget) -> bool:
