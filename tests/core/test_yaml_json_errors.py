@@ -16,6 +16,7 @@ import pytest
 import ruamel.yaml.main as ruamel_main
 
 import galley.core.format as format_module
+from galley.app.indent import INDENT_CHOICES, indent_unit
 from galley.core.errors import NotJSONValueError
 from galley.core.escape import escape_document
 from galley.core.format import format_document
@@ -385,6 +386,91 @@ def test_a_deep_document_just_under_the_bytes_allowed_still_converts(
         (inner,) = inner
     assert len(inner) == times
     assert inner[-1] == value["l"] == ["v" * 98] * 99
+
+
+def _merged_key(key_bytes: int, rows: int) -> str:
+    """One ``key_bytes``-byte key that ``rows`` mappings each merge (``<<``).
+
+    Each row is a new mapping, so the key is written out again in each one.
+    """
+    head = "m: &m\n  ? " + "k" * key_bytes + "\n  : 1\n"
+    return head + "rows:\n" + "- <<: *m\n" * rows
+
+
+def _long_int_aliased(times: int, digits: int = 4_300) -> str:
+    """One ``digits``-digit int aliased ``times`` times. 4,300 is Python's most."""
+    refs = [", ".join(["*n"] * min(100, times - n)) for n in range(0, times, 100)]
+    return "n: &n " + "9" * digits + "\nrows: [" + ",\n".join(refs) + "]\n"
+
+
+# The most rows that merge a 100,000-byte key, and the most aliases of a
+# 430-digit int, before the bytes they add pass the budget.
+_MERGE_MOST = 99
+_LONG_INT_MOST = 23_201
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _merged_key(100_000, 1_000),
+        _merged_key(1_000_000, 10_000),
+        _long_int_aliased(20_000),
+        _merged_key(100_000, _MERGE_MOST + 1),
+        _long_int_aliased(_LONG_INT_MOST + 1, digits=430),
+    ],
+    ids=[
+        "merge-key-109-kb",
+        "merge-key-1-mb",
+        "long-int",
+        "merge-key-one-over",
+        "long-int-one-over",
+    ],
+)
+def test_merge_keys_and_long_ints_that_add_too_many_bytes_raise_a_typed_error(
+    engine: str, no_render: None, text: str
+) -> None:
+    """109 KB of merge keys wrote 100.1 MB of JSON, and 84 KB of ints 86.1 MB.
+
+    The 1 MB merge-key file would write about 10 GB.
+    """
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(text, "yaml", "json")
+    assert type(caught.value).__name__ == "AliasExpansionError"
+    assert str(caught.value) == "alias_expansion"
+
+
+@pytest.mark.parametrize(
+    ("text", "rows"),
+    [
+        (_merged_key(100_000, _MERGE_MOST), _MERGE_MOST),
+        (_long_int_aliased(_LONG_INT_MOST, digits=430), _LONG_INT_MOST),
+    ],
+    ids=["merge-key", "long-int"],
+)
+def test_merge_keys_and_long_ints_just_under_the_bytes_allowed_still_convert(
+    engine: str, text: str, rows: int
+) -> None:
+    """About 10 MB of JSON each.
+
+    The YAML render writes merged keys and repeated ints out in full, which
+    takes seconds to parse again in pure Python. So the pure engine parses
+    and checks the text, and the C engine also writes the JSON.
+    """
+    if engine == "pure":
+        format_module._run_yaml(text, check_only=True, alias_width=2)
+        return
+    written = format_document(text, "yaml", "json")
+    assert len(written.encode()) <= 15_000_000
+    assert len(json.loads(written)["rows"]) == rows
+
+
+def test_the_widest_json_indent_is_the_indent_settings_widest() -> None:
+    """An unknown indent must count the widest the indent setting writes."""
+    widest = max(
+        format_module._json_indent_width(indent_unit(choice, "json"))
+        for choice in INDENT_CHOICES
+    )
+    assert format_module._WIDEST_JSON_INDENT_WIDTH == widest
 
 
 @pytest.mark.parametrize("masked", [False, True], ids=["plain", "masked"])
