@@ -272,6 +272,118 @@ def test_aliases_that_add_just_under_the_bytes_allowed_still_convert(
     assert written["l"][0] == "fake-note-0-" + "v" * 988
 
 
+# JSON indents each line by its depth, up to MAX_DEPTH levels, so a value
+# an alias writes deep in nested lists costs far more than its own bytes.
+# Format to JSON writes two spaces per level by default.
+
+
+def _deep_aliases(depth: int, times: int, chars: int = 98, pad: int = 0) -> str:
+    """A list of 99 strings of ``chars`` bytes aliased ``times`` times.
+
+    The aliases sit inside ``depth`` nested flow lists. ``pad`` adds that
+    many one-letter values of the document's own, so the value ratio
+    allows more. Lines stay short.
+    """
+    item = "v" * chars if chars else '""'
+    head = "l: &l [" + ", ".join([item] * 99) + "]\n"
+    padding = ""
+    if pad:
+        rows = [", ".join(["a"] * 100) for _ in range(pad // 100)]
+        padding = "pad: [" + ",\n".join(rows) + "]\n"
+    refs = [", ".join(["*l"] * min(100, times - n)) for n in range(0, times, 100)]
+    nested = "[" * depth + ",\n".join(refs) + "]" * depth
+    return head + padding + "deep: " + nested + "\n"
+
+
+# The most aliases each depth allows before the bytes they add, indentation
+# included, pass the budget. Below 256 levels Format uses ruamel's loader,
+# and above it an explicit stack. Converting at 240 levels hits the JSON
+# writer's own nesting limit under pytest, so the guard below uses 200.
+_DEEP_MOST = {200: 199, 240: 172, 500: 91}
+
+
+class _Rendered(Exception):
+    """Raised by the stand-in for a writer, so nothing large gets built."""
+
+
+@pytest.fixture
+def no_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if any YAML or JSON writer runs."""
+
+    def rendered(*_args: object, **_kwargs: object) -> str:
+        raise _Rendered("a refusal must come before the render")
+
+    for name in ("_dump_yaml", "_dump_parsed", "_dump_block", "_dump_json"):
+        monkeypatch.setattr(format_module, name, rendered)
+
+
+@pytest.mark.parametrize(
+    ("depth", "times"),
+    [
+        (500, 1_000),
+        (240, 1_000),
+        (500, _DEEP_MOST[500] + 1),
+        (240, _DEEP_MOST[240] + 1),
+    ],
+    ids=["depth-500", "depth-240", "depth-500-one-over", "depth-240-one-over"],
+)
+def test_deep_aliases_that_add_too_many_bytes_raise_a_typed_error(
+    engine: str, no_render: None, depth: int, times: int
+) -> None:
+    """Depth 500 is 14.9 KB that wrote 112.0 MB of JSON before this."""
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(_deep_aliases(depth, times), "yaml", "json")
+    assert type(caught.value).__name__ == "AliasExpansionError"
+    assert str(caught.value) == "alias_expansion"
+
+
+def test_deep_aliases_the_value_ratio_allows_are_refused_before_any_render(
+    engine: str, no_render: None
+) -> None:
+    """55,000 values of its own let 5,500 aliases add 550,000 values.
+
+    This is a tenth of a 1.87 MB document whose YAML render wrote 5.5 GB;
+    the next test checks that one's value without parsing it.
+    """
+    text = _deep_aliases(500, 5_500, chars=0, pad=55_000)
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(text, "yaml", "json")
+    assert str(caught.value) == "alias_expansion"
+
+
+def test_a_deep_document_the_value_ratio_allows_is_refused_by_the_check() -> None:
+    """The 1.87 MB document, built as its loaded value: nothing is parsed or written.
+
+    It adds 5.5 million values, under ten times its 550,000 of its own, and
+    10.9 MB before indentation, under ten times its input's bytes.
+    """
+    text = _deep_aliases(500, 55_000, chars=0, pad=550_000)
+    shared = [""] * 99
+    nested: list[object] = [shared] * 55_000
+    for _ in range(499):
+        nested = [nested]
+    value = {"l": shared, "pad": ["a"] * 550_000, "deep": nested}
+    with pytest.raises(NotJSONValueError) as caught:
+        format_module._check_alias_expansion(value, len(text.encode()))
+    assert str(caught.value) == "alias_expansion"
+
+
+@pytest.mark.parametrize("depth", [200, 500], ids=["depth-200", "depth-500"])
+def test_a_deep_document_just_under_the_bytes_allowed_still_converts(
+    engine: str, depth: int
+) -> None:
+    """About 10 MB of JSON, indentation included."""
+    times = _DEEP_MOST[depth]
+    written = format_document(_deep_aliases(depth, times), "yaml", "json")
+    assert len(written.encode()) <= 15_000_000
+    value = json.loads(written)
+    inner = value["deep"]
+    for _ in range(depth - 1):
+        (inner,) = inner
+    assert len(inner) == times
+    assert inner[-1] == value["l"] == ["v" * 98] * 99
+
+
 @pytest.mark.parametrize("masked", [False, True], ids=["plain", "masked"])
 def test_the_worker_sends_alias_expansion_as_a_value_json_cant_hold(
     engine: str, masked: bool
