@@ -230,7 +230,7 @@ Not in the mocks; this section records it as built. The Changes tab comes from C
 - **Width:** opens at 280 px; the user can drag it, down to 200 px. The width is saved while the panel is open. When the window is narrow, the panel shrinks toward 200 px before the pane tab strips give way (#91 D2), and the saved width doesn't change.
 - **Header:** the bold title `Problems`, a count badge (the count on an error-hue pill, with a label color that reads on it; accessible name `3 problems`), then `–` Minimize and `×` Close (24 px buttons, with those words as tooltip and accessible name). In Compare a second tab is added, and the header shows tabs instead (`Problems 2`, `Changes 5`).
 - **States, saved between sessions:** open, minimized and closed. Minimized, it is a 28 px strip showing only the count, with the tooltip `Show problems` and the accessible name `3 problems. Expand.`; clicking it opens the panel. View › Show Problems (⇧⌘M) closes and reopens it. Clicking the status bar's count, a failed Minify and entering Compare open it.
-- **Problem rows:** at least 56 px tall. A `⊗` marker in the error hue, a bold place line `Error · Line 1, Col 13` (`Error · Line 1` when there is no column), and the message as one muted sentence that names the line at most, never the column (Bill, #195). A row found after an earlier repair guess ends with `(may be caused by an earlier error)`. The row's accessible name is `Line N: message`.
+- **Problem rows:** at least 56 px tall. A `⊗` marker in the error hue, a bold place line `Error · Line 1, Col 13` (`Error · Line 1` when there is no column), and the message as one muted sentence that names the line at most, never the column (Bill, #195). A row found after an earlier repair guess ends with `(may be caused by an earlier error)`. The row's accessible name is `Line N: message`, or the message alone when the message already names its line or the error has no line.
 - **Selection and focus:** the selected row gets the accent tint (native Highlight in dark) and a 3 px accent bar on its left edge; keyboard focus adds a 2 px outline, which a mouse click hides.
 - **Activation:** a click, Return or Enter puts the caret at the problem's line and column in Input, opens any fold around it, centers the line and focuses Input. Esc in the list returns focus to Input and leaves the panel open. Next Problem and Previous Problem (⌘' / ⇧⌘', F8 / Shift+F8) pick the problem after or before the caret, wrapping at both ends.
 - **Limit:** the list shows the first 100 problems, then the muted note `Showing the first 100 of 240 problems.`. The count everywhere is the full total. When the JSON check stops early, the muted note `Galley stopped checking after this point.` comes last. Notes can't be selected.
@@ -452,7 +452,7 @@ Isolate behind a `platform` module for macOS and Windows:
 
 ## 13. What NOT to invent
 
-- No new brand elements: no logo, icon set, mascot, tagline, or extra colors beyond §2. The empty state (6c) has no download icon.
+- No new brand elements: no logo, icon set, mascot, tagline, or extra colors beyond §2. The one tagline is the About window's `Format and validate JSON, YAML, XML and HTML.` (Bill, #227). The empty state (6c) has no download icon.
 - Do not call the app macOS-native.
 - No `QDockWidget`. No tabs: each pane holds one document.
 - No percentage bar during the parse/read step (6m). Progress bar only while writing (6d).

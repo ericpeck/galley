@@ -18,7 +18,7 @@ import galley
 COPYRIGHT_NOTICE = "© 2026 Eric Mercury Peck"
 
 SOURCE_CODE_URL = "https://github.com/ericpeck/galley"
-TAGLINE = "Format and validate JSON and YAML."
+TAGLINE = "Format and validate JSON, YAML, XML and HTML."
 _LICENSE_NAME_MARKERS = ("license", "licence", "copying", "lgpl", "gpl")
 
 # src/galley/app/about.py is four parents below the repository root.

@@ -151,6 +151,7 @@ from galley.app.problem_text import (
     announcement_text,
     message_for,
     problem_count_text,
+    row_accessible_name,
 )
 from galley.app.problems_pane import SHOW_REPLACE_TABS_BUTTON, ProblemsPane
 from galley.app.problems_settings import (
@@ -1339,7 +1340,7 @@ class MainWindow(QMainWindow):
         row = DisplayProblem(
             error.lineno,
             message,
-            f"Line {error.lineno}: {message}",
+            row_accessible_name(message, error.lineno),
             CONVERT_PROBLEM_CODE,
             error.colno,
         )
@@ -2569,7 +2570,7 @@ class MainWindow(QMainWindow):
             self._input_pane.count_label.setText("Empty")
             return
         self._input_pane.count_label.setText(
-            f"{_line_label(editor.blockCount())} · {len(text)} characters"
+            f"{_line_label(editor.blockCount())} · {_character_label(len(text))}"
         )
 
     def _sync_output_state(self) -> None:
@@ -2970,4 +2971,9 @@ def _blocks(count: int) -> str:
 
 def _line_label(count: int) -> str:
     word = "line" if count == 1 else "lines"
-    return f"{count} {word}"
+    return f"{count:,} {word}"
+
+
+def _character_label(count: int) -> str:
+    word = "character" if count == 1 else "characters"
+    return f"{count:,} {word}"
