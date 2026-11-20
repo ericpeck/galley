@@ -490,6 +490,74 @@ def test_merge_keys_and_long_ints_just_under_the_bytes_allowed_convert_in_pure(
     _assert_converts(text, rows)
 
 
+def _aliased_pairs(times: int, strings: int = 1_000, length: int = 10) -> str:
+    """A list of ``strings`` strings of ``length`` bytes, reached ``times``
+    times through ``!!pairs``.
+
+    ``!!pairs`` loads as a list of tuples, and JSON writes each tuple as a
+    list, so each pair writes the shared list out again.
+    """
+    items = ", ".join(f"s{n:0{length - 1}d}" for n in range(strings))
+    return "l: &list [" + items + "]\np: !!pairs\n" + "- k: *list\n" * times
+
+
+# The most pairs that reach a list of ten 1,000-byte strings before the
+# bytes they add pass the budget. 989 add 10,000,000 bytes or more.
+_PAIRS_MOST = 988
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _aliased_pairs(3_000),
+        _aliased_pairs(10_000),
+        _aliased_pairs(_PAIRS_MOST + 1, strings=10, length=1_000),
+    ],
+    ids=["pairs-3000", "pairs-10000", "pairs-one-over"],
+)
+def test_aliases_through_pairs_that_add_too_many_bytes_raise_a_typed_error(
+    engine: str, no_render: None, text: str
+) -> None:
+    """Erik measured 42.9 KB of these writing 66.1 MB of JSON, and 120 KB 220 MB."""
+    with pytest.raises(NotJSONValueError) as caught:
+        format_document(text, "yaml", "json")
+    assert isinstance(caught.value, format_module.AliasExpansionError)
+    assert str(caught.value) == format_module.ALIAS_EXPANSION
+
+
+_PAIRS_UNDER = _aliased_pairs(_PAIRS_MOST, strings=10, length=1_000)
+
+
+def test_aliases_through_pairs_just_under_the_bytes_allowed_pass_the_check(
+    engine: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """About 10 MB of JSON. Only the parse and the alias check run here."""
+    check = format_module._check_alias_expansion
+    returned: list[object] = []
+
+    def recording(*args: object) -> None:
+        returned.append(check(*args))
+
+    monkeypatch.setattr(format_module, "_check_alias_expansion", recording)
+    width = format_module._json_indent_width(format_module.DEFAULT_INDENT)
+    checked = format_module._run_yaml(_PAIRS_UNDER, check_only=True, alias_width=width)
+    assert checked == ""
+    assert returned == [None]
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("engine", ["pure"], indirect=True)
+def test_aliases_through_pairs_just_under_the_bytes_allowed_convert_in_pure(
+    engine: str,
+) -> None:
+    """Full end-to-end conversion; no time budget."""
+    written = format_document(_PAIRS_UNDER, "yaml", "json")
+    assert len(written.encode()) <= 15_000_000
+    pairs = json.loads(written)["p"]
+    assert len(pairs) == _PAIRS_MOST
+    assert pairs[-1] == ["k", json.loads(written)["l"]]
+
+
 def _sample_ints() -> list[int]:
     """0, the smallest and largest ints of each digit count, and powers of 2."""
     counts = [*range(1, 41), 100, 309, 1_000, 2_000, 4_299, 4_300]
