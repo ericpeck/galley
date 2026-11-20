@@ -114,7 +114,7 @@ def test_input_error_is_shown_as_a_banner(qtbot) -> None:
         row = shown[0][0]
         assert row.lineno == 1
         assert row.message == (
-            "Line 1, column 8 has an invalid "
+            "Line 1 has an invalid "
             "character escape (\\uD800) that can't be saved as UTF-8."
         )
     finally:

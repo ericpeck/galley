@@ -433,7 +433,8 @@ def test_too_large_sizes_round_up(size: int, shown: str) -> None:
 )
 def test_html_problem_sentences(problem: Problem, sentence: str) -> None:
     assert message_for(problem) == sentence
-    assert display_problem(problem).accessible == f"Line {problem.lineno}: {sentence}"
+    # Each sentence names its line, so it is said once (#229).
+    assert display_problem(problem).accessible == sentence
 
 
 def test_every_html_code_has_a_sentence_and_an_unknown_one_raises() -> None:

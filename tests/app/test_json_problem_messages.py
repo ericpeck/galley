@@ -93,7 +93,9 @@ def test_missing_bracket_row_jumps_to_the_opener_line(qtbot, name: str) -> None:
     assert editor.textCursor().blockNumber() != line - 1
     row = pane.list_widget().itemWidget(pane.list_widget().item(0))
     assert row is not None
-    assert row.accessibleName().startswith(f"Line {line}: Missing ")
+    # The sentence names the opener's line, so it is said once (#229).
+    assert row.accessibleName().startswith("Missing ")
+    assert row.accessibleName().endswith(f"opened on line {line}.")
     qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
     assert editor.textCursor().blockNumber() == line - 1
     assert _marker_rows(editor) == {line}

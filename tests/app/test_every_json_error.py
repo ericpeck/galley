@@ -88,7 +88,7 @@ def test_every_error_gets_a_row_in_text_order(qtbot) -> None:
         "Error · Line 2, Col 19",
         "Missing comma at the end of line 2.",
     ]
-    assert _row(pane, 1).accessibleName() == "Line 4: Unclosed quote on line 4."
+    assert _row(pane, 1).accessibleName() == "Unclosed quote on line 4."
     assert pane.notes() == ()
     assert editor.problem_lines() == {2, 4, 5}
 
@@ -152,7 +152,7 @@ def test_a_row_after_a_guess_carries_the_muted_suffix(qtbot) -> None:
     assert _texts(first)[2] == "Unclosed quote on line 2."
     message = f"Trailing comma at the end of line 3. {UNCERTAIN_SUFFIX}"
     assert _texts(second)[1:] == ["Error · Line 3, Col 9", message]
-    assert second.accessibleName() == f"Line 3: {message}"
+    assert second.accessibleName() == message
     # The suffix is in the muted message label: no colour of its own.
     for selected, row, word in ((1, first, "Unclosed"), (0, second, "Trailing")):
         pane.list_widget().setCurrentRow(selected)

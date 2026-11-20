@@ -159,7 +159,7 @@ def test_missing_comma_pane_jumps_and_status_is_only_a_count(qtbot) -> None:
     assert _action(window, "Show Problems").isChecked()
     row = pane.list_widget().itemWidget(pane.list_widget().item(0))
     assert row is not None
-    assert row.accessibleName() == "Line 2: Missing comma at the end of line 2."
+    assert row.accessibleName() == "Missing comma at the end of line 2."
     qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
     assert _editor(window).textCursor().blockNumber() == 1
     origin = status.mapTo(

@@ -102,7 +102,7 @@ def test_about_dialog_shows_runtime_versions(qtbot) -> None:
         assert qVersion() in text
         assert PySide6.__version__
         assert PySide6.__version__ in text
-        assert "Format and validate JSON and YAML." in text
+        assert "Format and validate JSON, YAML, XML and HTML." in text
         assert COPYRIGHT_NOTICE in text
         assert "Built with Qt" in text
         assert "PySide6" in text

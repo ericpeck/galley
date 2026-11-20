@@ -433,6 +433,12 @@ def test_the_empty_state_names_every_format(qtbot) -> None:
 # --- Problem sentences (B4) -------------------------------------------------
 
 
+# These sentences don't name their line, so the accessible name adds it.
+_SENTENCES_WITHOUT_A_LINE = frozenset(
+    {"xml_duplicate_attribute", "xml_unbound_prefix", "xml_no_root"}
+)
+
+
 @pytest.mark.parametrize(
     ("problem", "sentence"),
     [
@@ -473,7 +479,11 @@ def test_the_empty_state_names_every_format(qtbot) -> None:
 def test_xml_problem_sentences(problem: Problem, sentence: str) -> None:
     assert message_for(problem) == sentence
     row = display_problem(problem)
-    assert row.accessible == f"Line {problem.lineno}: {sentence}"
+    # A sentence that names its line is said once (#229).
+    if problem.code in _SENTENCES_WITHOUT_A_LINE:
+        assert row.accessible == f"Line {problem.lineno}: {sentence}"
+    else:
+        assert row.accessible == sentence
 
 
 def test_every_xml_code_has_its_own_sentence() -> None:
