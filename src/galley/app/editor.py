@@ -512,6 +512,10 @@ class CodeEditor(QPlainTextEdit):
         # setDocumentMargin records an edit. Drop it so Undo starts disabled.
         self.document().clearUndoRedoStacks()
 
+    def raw_text(self) -> str:
+        """The whole text as typed: :func:`raw_text` of this document (#221)."""
+        return raw_text(self.document())
+
     def find_highlight_color(self) -> QColor:
         """Brand color for a find match. Not the text-selection role."""
         return brand_find_highlight()

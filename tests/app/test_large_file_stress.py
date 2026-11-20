@@ -285,12 +285,12 @@ def test_indicators_follow_the_json_size_thresholds(
     editor, status, spinner, progress, cancel = _chrome(window)
     _select_json(window)
     editor.set_syntax_colors_enabled(False)
-    original = editor.toPlainText
+    original = editor.raw_text
     try:
         for label in _BYTES:
             text = _document(label)
             assert len(text.encode()) == _BYTES[label]
-            editor.toPlainText = original  # type: ignore[method-assign]
+            editor.raw_text = original  # type: ignore[method-assign]
             editor.setPlainText(text)
             qtbot.waitUntil(lambda: editor.blockCount() > 2)
             _trigger_format(window)
@@ -344,7 +344,7 @@ def test_indicators_follow_the_json_size_thresholds(
         _assert_progress(window, status, spinner, progress, cancel)
         _stop(window, spinner, progress)
     finally:
-        editor.toPlainText = original  # type: ignore[method-assign]
+        editor.raw_text = original  # type: ignore[method-assign]
         window.shutdown_parse_worker()
 
 
@@ -831,10 +831,10 @@ def _run_size(window, editor: CodeEditor, original, size: int) -> None:
     """Point Format at ``size`` ASCII bytes without laying that text out."""
     assert not window._formatting
     assert _visible_warning(window) is None
-    editor.toPlainText = original  # type: ignore[method-assign]
+    editor.raw_text = original  # type: ignore[method-assign]
     gc.collect()
     payload = "x" * size
-    editor.toPlainText = lambda payload=payload: payload  # type: ignore[method-assign]
+    editor.raw_text = lambda payload=payload: payload  # type: ignore[method-assign]
     window._size_warning_accepted = False
     window._actions.format.trigger()
 
