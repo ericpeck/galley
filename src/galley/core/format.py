@@ -1815,9 +1815,10 @@ def _check_alias_expansion(
     reached again while it is still being walked is skipped, and that check
     then raises for it. ``input_bytes`` is the YAML text's size.
     """
-    if not isinstance(value, (dict, list)):
+    if not isinstance(value, (dict, list, tuple)):
         return
-    # Per mapping or list: its values, P and L written out in full.
+    # Per mapping, list or tuple (!!pairs loads as tuples, and JSON writes
+    # them as lists): its values, P and L written out in full.
     sizes: dict[int, tuple[int, int, int]] = {}
     scalars: set[int] = set()
     own_values = 0
@@ -1829,7 +1830,7 @@ def _check_alias_expansion(
         if leaving:
             values, size, lines = sizes[id(node)]
             for child in children:
-                if isinstance(child, (dict, list)):
+                if isinstance(child, (dict, list, tuple)):
                     child_values, child_size, child_lines = sizes[id(child)]
                     values += child_values
                     size += child_size + child_lines * width
@@ -1863,7 +1864,7 @@ def _check_alias_expansion(
         values = 1
         stack.append((node, True, depth))
         for child in children:
-            if isinstance(child, (dict, list)):
+            if isinstance(child, (dict, list, tuple)):
                 stack.append((child, False, depth + 1))
                 continue
             child_size = _value_bytes(child)
