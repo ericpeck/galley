@@ -72,6 +72,20 @@ def _digest(data: str | bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:_DIGEST_CHARS]
 
 
+# The one agreed change since the golden was written: JSON output writes
+# U+2028 and U+2029 as escapes (#221, ui-spec §13). The digest reads them
+# back as the characters. JSON output only; YAML bytes must match as before.
+_JSON_SEPARATOR_ESCAPES = (("\\u2028", "\u2028"), ("\\u2029", "\u2029"))
+
+
+def _as_golden_wrote(output: str, target: str) -> str:
+    if target != "json":
+        return output
+    for escape, char in _JSON_SEPARATOR_ESCAPES:
+        output = output.replace(escape, char)
+    return output
+
+
 def _outcome(text: str | bytes, source: str, target: str) -> str:
     try:
         output = format_document(text, source, target)
@@ -81,7 +95,7 @@ def _outcome(text: str | bytes, source: str, target: str) -> str:
         return f"InputError {exc.kind} {located} {details}"
     except Exception as exc:
         return f"{type(exc).__name__} {_digest(str(exc))}"
-    return f"output {_digest(output)}"
+    return f"output {_digest(_as_golden_wrote(output, target))}"
 
 
 def _sniffed(text: str | bytes) -> str | None:
