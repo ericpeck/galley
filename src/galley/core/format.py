@@ -45,6 +45,7 @@ slice 5.
 import datetime
 import functools
 import json
+import math
 import os
 import re
 import time
@@ -262,6 +263,7 @@ def _pure_python_yaml(
     prepare: Prepare | None = None,
     check_only: bool = False,
     indent: str = DEFAULT_INDENT,
+    alias_width: int | None = None,
 ) -> str:
     """Re-parse with pure Python and return that result, success or error."""
     _wait_for_pure_retry_gate()
@@ -272,6 +274,7 @@ def _pure_python_yaml(
         **_given(prepare),
         **_checking(check_only),
         **_indented(indent),
+        **_alias_checked(alias_width),
     )
 
 
@@ -312,9 +315,20 @@ def _run_yaml(
     prepare: Prepare | None = None,
     check_only: bool = False,
     indent: str = DEFAULT_INDENT,
+    alias_width: int | None = None,
 ) -> str:
-    """:func:`format_yaml`. ``check_only`` returns "" before the dump."""
-    given = {**_given(prepare), **_checking(check_only), **_indented(indent)}
+    """:func:`format_yaml`. ``check_only`` returns "" before the dump.
+
+    ``alias_width`` set runs ``_check_alias_expansion`` on the loaded value,
+    before ``prepare``, when the text uses an alias. It is the JSON indent
+    width the check assumes.
+    """
+    given = {
+        **_given(prepare),
+        **_checking(check_only),
+        **_indented(indent),
+        **_alias_checked(alias_width),
+    }
     retry = functools.partial(_pure_python_yaml, sort_keys=sort_keys, **given)
     if not _clib_available():
         # The spinner test forces the retry even on the pure-Python CI leg.
@@ -338,6 +352,9 @@ def _run_yaml(
         return retry(text)
     if reparse:
         return retry(text)
+    # Outside the retry, as is masking, so neither is retried in pure Python.
+    if alias_width is not None and _mentions_alias(text) and _has_alias(tokens):
+        _check_alias_expansion(loaded, _text_bytes(text), alias_width)
     if check_only:
         return ""
     # Outside the retry, so a masking failure is not retried in pure Python.
@@ -356,23 +373,38 @@ def _format_yaml_impl(
     prepare: Prepare | None = None,
     check_only: bool = False,
     indent: str = DEFAULT_INDENT,
+    alias_width: int | None = None,
 ) -> str:
     """Parse and dump ``text`` with safe YAML, optionally forcing pure Python.
 
     ``check_only`` returns "" once ``text`` has loaded, before the dump.
+    ``alias_width`` is :func:`_run_yaml`'s.
     """
     width = _yaml_indent_width(indent)
-    opened = _yaml_limits(text, pure=pure)
+    aliased = False
+    if alias_width is not None and _mentions_alias(text):
+        opened, aliases, _failed = _scan_yaml(
+            text, pure=pure, keep_tokens=True, keep_only=AliasToken
+        )
+        aliased = bool(aliases)
+    else:
+        opened = _yaml_limits(text, pure=pure)
     if opened[2] > _RUAMEL_SAFE_DEPTH:
         try:
-            parsed = _apply(prepare, _yaml_from_events(text, pure=pure))
+            parsed = _yaml_from_events(text, pure=pure)
+            if aliased:
+                _check_alias_expansion(parsed, _text_bytes(text), alias_width)
+            parsed = _apply(prepare, parsed)
             if check_only:
                 return ""
             return _dump_block(_ordered(parsed, sort_keys), width)
         except RecursionError:
             raise nesting_error(opened[0], opened[1], depth=opened[2]) from None
     try:
-        loaded = _apply(prepare, _load_parsed(text, opened, pure=pure))
+        loaded = _load_parsed(text, opened, pure=pure)
+        if aliased:
+            _check_alias_expansion(loaded, _text_bytes(text), alias_width)
+        loaded = _apply(prepare, loaded)
         if check_only:
             return ""
         return _dump_parsed(_ordered(loaded, sort_keys), pure=pure, **_widened(width))
@@ -395,6 +427,11 @@ def _indented(indent: str) -> dict[str, str]:
     return {} if indent == DEFAULT_INDENT else {"indent": indent}
 
 
+def _alias_checked(alias_width: int | None) -> dict[str, int]:
+    """``alias_width`` as a keyword only when set, like :func:`_given`."""
+    return {} if alias_width is None else {"alias_width": alias_width}
+
+
 def _widened(width: int) -> dict[str, int]:
     """A YAML ``width`` as a keyword only when not two, like :func:`_given`."""
     return {} if width == _YAML_DEFAULT_WIDTH else {"width": width}
@@ -409,6 +446,11 @@ def _yaml_indent_width(indent: str) -> int:
 
 def _has_alias(tokens: list[object]) -> bool:
     return any(isinstance(token, AliasToken) for token in tokens)
+
+
+def _mentions_alias(text: str | bytes) -> bool:
+    """False when ``text`` has no ``*``, so it can't use an alias."""
+    return (b"*" if isinstance(text, bytes) else "*") in text
 
 
 def _load_parsed(
@@ -1135,9 +1177,16 @@ def _yaml_limits(text: str | bytes, *, pure: bool = False) -> tuple[int, int, in
 
 
 def _scan_yaml(
-    text: str | bytes, *, pure: bool, keep_tokens: bool
+    text: str | bytes,
+    *,
+    pure: bool,
+    keep_tokens: bool,
+    keep_only: type | None = None,
 ) -> tuple[tuple[int, int, int], list[object], bool]:
-    """Scan ``text``. The bool is True when a YAML error ended the scan."""
+    """Scan ``text``. The bool is True when a YAML error ended the scan.
+
+    ``keep_only`` keeps only the tokens of that type.
+    """
     yaml = _safe_yaml(pure=pure)
     depth = 0
     deepest = 0
@@ -1145,7 +1194,7 @@ def _scan_yaml(
     tokens: list[object] = []
     try:
         for token in yaml.scan(text):
-            if keep_tokens:
+            if keep_tokens and (keep_only is None or isinstance(token, keep_only)):
                 tokens.append(token)
             if isinstance(token, _YAML_OPEN):
                 depth += 1
@@ -1411,7 +1460,7 @@ def format_document(
     if source_kind == "json":
         value = json.loads(format_json(text, sort_keys=sort_keys))
         return _dump_yaml_value(_apply(prepare, value), indent)
-    value = yaml_json_value(text, prepare=prepare)
+    value = yaml_json_value(text, prepare=prepare, indent=indent)
     opened = _yaml_limits(text)
     try:
         return _dump_json(
@@ -1604,6 +1653,53 @@ def _not_json_value(value: object) -> object:
 # ``InputError.kind`` they are names, and ``galley.app`` chooses the words.
 NOT_JSON_KEY = "not_json_key"
 SELF_REFERENCE = "self_reference"
+ALIAS_EXPANSION = "alias_expansion"
+# JSON writes every alias out in full, so a few hundred bytes of YAML can
+# name millions of values (#223), and one long string aliased many times
+# writes it again at each alias. Format to JSON and Escape as String refuse
+# YAML whose aliases would add either more than ALIAS_EXPANSION_LIMIT
+# values or more than ALIAS_EXPANSION_BYTES bytes of JSON, or
+# ALIAS_EXPANSION_RATIO times the document's own values or input bytes
+# when that is more. Bytes are estimated with indentation counted.
+# - A string is its UTF-8 bytes. Any other value is the length JSON writes
+#   it at: true 4, false 5, null 4, a float its text, and an int its digits
+#   estimated from its bit length, never fewer.
+# - Each list item or mapping entry adds 2, and each key its own bytes. A
+#   key other than a string adds 2 more for the quotes JSON writes.
+# - Each key and value object counts once by id() as the document's own, so
+#   keys a merge key (<<) copies into a mapping count as added, like values
+#   an alias repeats.
+# - Each item or entry also starts a line, a newline and the indent once per
+#   level of depth, and a list or mapping with items ends on a line of its
+#   own. An empty one is 2 bytes.
+# So aliases add at most about 10 MB of JSON to a small document, however
+# deep they are, and a large one, such as many rows that each merge a
+# shared default, grows at most in proportion to its size.
+ALIAS_EXPANSION_LIMIT = 100_000
+ALIAS_EXPANSION_BYTES = 10_000_000
+ALIAS_EXPANSION_RATIO = 10
+# Bytes counted for a value other than a string, a number, a bool or null.
+_SCALAR_BYTES = 8
+# "Infinity", "-Infinity" and "NaN" are at most this long.
+_NONFINITE_BYTES = 9
+# Over log10(2), so digits estimated from a bit length are never too few.
+_DIGITS_PER_BIT = (30_103, 100_000)
+# The quotes JSON writes around a key that isn't a string.
+_KEY_QUOTE_BYTES = 2
+# Bytes counted for each list item or mapping entry, as for ", " or ": ".
+_ENTRY_BYTES = 2
+# Bytes counted for an empty list or mapping, "[]" or "{}".
+_EMPTY_BYTES = 2
+# The JSON indent width the check assumes. It is deliberately conservative
+# and must never be narrower than what JSON writes: an indent the caller
+# names counts at least 2, a tab and compact JSON count 2, and an unknown
+# indent counts the widest the indent setting offers (galley.app.indent's
+# "4 spaces").
+_MIN_JSON_INDENT_WIDTH = 2
+_WIDEST_JSON_INDENT_WIDTH = 4
+# Counts and sizes stop growing here, so a chain of thousands of aliases
+# stays cheap.
+_COUNT_CEILING = 1 << 62
 # The key types ``json.dumps`` writes; it turns numbers, bools and null into
 # strings.
 _JSON_KEY_TYPES = (str, int, float, bool, type(None))
@@ -1617,6 +1713,16 @@ class SelfReferenceError(NotJSONValueError):
     """A YAML alias inside the mapping or list it names, as in ``a: &x [*x]``."""
 
 
+class AliasExpansionError(NotJSONValueError):
+    """YAML whose aliases, written out in full, add too many values or bytes.
+
+    More than ``ALIAS_EXPANSION_LIMIT`` values or ``ALIAS_EXPANSION_BYTES``
+    bytes, or ``ALIAS_EXPANSION_RATIO`` times the document's own values or
+    input bytes when that is more, as in a chain of lists that each repeat
+    the one before ten times, or one long string aliased many times (#223).
+    """
+
+
 def _dump_yaml_value(value: object, indent: str = DEFAULT_INDENT) -> str:
     """Dump ``value`` with ``_dump_yaml``, as ``format_yaml`` writes it."""
     try:
@@ -1628,7 +1734,9 @@ def _dump_yaml_value(value: object, indent: str = DEFAULT_INDENT) -> str:
     return dumped
 
 
-def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> object:
+def yaml_json_value(
+    text: str | bytes, *, prepare: Prepare | None = None, indent: str | None = None
+) -> object:
     """Return the value Format to JSON writes for YAML ``text``.
 
     The text passes ``format_yaml``'s checks and raises its errors. The
@@ -1640,9 +1748,14 @@ def yaml_json_value(text: str | bytes, *, prepare: Prepare | None = None) -> obj
     so a value ``prepare`` replaced can't come back. A key JSON can't hold
     raises ``NotJSONKeyError`` and an alias that contains itself raises
     ``SelfReferenceError``, because ``json.dumps`` rejects both before its
-    ``default`` hook can.
+    ``default`` hook can. Aliases that, written out in full, add too many
+    values or bytes raise ``AliasExpansionError`` (#223). That is checked
+    on the value loaded from ``text``, before ``prepare`` and the render,
+    because the render writes an alias to a string out in full. ``indent``
+    is the JSON indent the value will be written with: ``""`` for compact
+    JSON, or None when it isn't known.
     """
-    rendered = format_yaml(text, prepare=prepare)
+    rendered = _run_yaml(text, prepare=prepare, alias_width=_json_indent_width(indent))
     value = _load_rendered_yaml(text if prepare is None else rendered, rendered)
     if _RENDERED_SURROGATE_RE.search(rendered) and _value_has_surrogate(value):
         raise _yaml_surrogate_error(text)
@@ -1666,7 +1779,9 @@ def _check_json_shape(value: object) -> None:
             walking.discard(id(node))
             walked.add(id(node))
             continue
-        if not isinstance(node, (dict, list)) or id(node) in walked:
+        if not isinstance(node, (dict, list)):
+            continue
+        if id(node) in walked:
             continue
         if id(node) in walking:
             raise SelfReferenceError(SELF_REFERENCE)
@@ -1679,6 +1794,142 @@ def _check_json_shape(value: object) -> None:
         else:
             children = node
         stack.extend((child, False) for child in children)
+
+
+def _check_alias_expansion(
+    value: object, input_bytes: int, width: int = _WIDEST_JSON_INDENT_WIDTH
+) -> None:
+    """Raise ``AliasExpansionError`` when aliases add too many values or bytes.
+
+    JSON writes a shared mapping, list or string out again at each alias. A
+    value is a mapping, a list, or an item in one; keys don't count. Bytes
+    are the estimate the alias constants' comment gives, at ``width`` bytes
+    of indent per level. A mapping or list written at depth d costs
+    P + L * width * d bytes, where L is the lines it writes and P the rest,
+    so P and L are kept once per object however deep its aliases are.
+    ``written`` is P of the whole value, at depth 0. ``own`` counts each
+    object once by id(), at the depth the walk first reaches it, so
+    ``written - own`` is what aliases add. Each mapping and list is walked
+    once, with an explicit stack, so a chain of aliases costs no more than
+    its own size. This runs before ``_check_json_shape``: a mapping or list
+    reached again while it is still being walked is skipped, and that check
+    then raises for it. ``input_bytes`` is the YAML text's size.
+    """
+    if not isinstance(value, (dict, list, tuple)):
+        return
+    # Per mapping, list or tuple (!!pairs loads as tuples, and JSON writes
+    # them as lists): its values, P and L written out in full.
+    sizes: dict[int, tuple[int, int, int]] = {}
+    scalars: set[int] = set()
+    own_values = 0
+    own = 0
+    stack: list[tuple[object, bool, int]] = [(value, False, 0)]
+    while stack:
+        node, leaving, depth = stack.pop()
+        children = node.values() if isinstance(node, dict) else node
+        if leaving:
+            values, size, lines = sizes[id(node)]
+            for child in children:
+                if isinstance(child, (dict, list, tuple)):
+                    child_values, child_size, child_lines = sizes[id(child)]
+                    values += child_values
+                    size += child_size + child_lines * width
+                    lines += child_lines
+            sizes[id(node)] = (
+                min(values, _COUNT_CEILING),
+                min(size, _COUNT_CEILING),
+                min(lines, _COUNT_CEILING),
+            )
+            continue
+        if id(node) in sizes:
+            continue
+        entries = len(node)
+        if not entries:
+            size, lines = _EMPTY_BYTES, 0
+        else:
+            size = _ENTRY_BYTES * entries
+            # Each entry's newline and one level of indent, and the closing
+            # line's newline. The indent for ``depth`` goes with ``lines``.
+            size += entries * (1 + width) + 1
+            lines = entries + 1
+        own += size + lines * width * depth
+        if isinstance(node, dict):
+            # Once per key object, so a merge key's copies count as added.
+            for key in node:
+                key_size = _key_bytes(key)
+                size += key_size
+                if id(key) not in scalars:
+                    scalars.add(id(key))
+                    own += key_size
+        values = 1
+        stack.append((node, True, depth))
+        for child in children:
+            if isinstance(child, (dict, list, tuple)):
+                stack.append((child, False, depth + 1))
+                continue
+            child_size = _value_bytes(child)
+            values += 1
+            size += child_size
+            if id(child) not in scalars:
+                scalars.add(id(child))
+                own += child_size
+        own_values += values
+        # Its scalars so far. A second path to it is skipped above, and its
+        # mappings and lists are added when it is left.
+        sizes[id(node)] = (values, size, lines)
+    written_values, written, _lines = sizes[id(value)]
+    allowed = max(ALIAS_EXPANSION_LIMIT, ALIAS_EXPANSION_RATIO * own_values)
+    if written_values - own_values > allowed:
+        raise AliasExpansionError(ALIAS_EXPANSION)
+    allowed = max(ALIAS_EXPANSION_BYTES, ALIAS_EXPANSION_RATIO * input_bytes)
+    if written - own > allowed:
+        raise AliasExpansionError(ALIAS_EXPANSION)
+
+
+def _json_indent_width(indent: str | None) -> int:
+    """The indent width ``_check_alias_expansion`` assumes for ``indent``.
+
+    Deliberately conservative, so the estimate never undercounts: see
+    ``_WIDEST_JSON_INDENT_WIDTH``. ``""`` is compact JSON.
+    """
+    if indent is None:
+        return _WIDEST_JSON_INDENT_WIDTH
+    if "\t" in indent:
+        return _MIN_JSON_INDENT_WIDTH
+    return max(len(indent), _MIN_JSON_INDENT_WIDTH)
+
+
+def _value_bytes(value: object) -> int:
+    """The bytes JSON writes ``value`` in, never fewer: see the alias constants.
+
+    A huge int is never turned into text: Python refuses past 4,300 digits.
+    """
+    if isinstance(value, str):
+        if value.isascii():
+            return len(value)
+        return len(value.encode("utf-8", "surrogatepass"))
+    if value is None:
+        return len("null")
+    # bool is an int, so it goes first.
+    if isinstance(value, bool):
+        return len("true") if value else len("false")
+    if isinstance(value, int):
+        per, scale = _DIGITS_PER_BIT
+        return value.bit_length() * per // scale + 1 + (value < 0)
+    if isinstance(value, float):
+        return len(repr(value)) if math.isfinite(value) else _NONFINITE_BYTES
+    return _SCALAR_BYTES
+
+
+def _key_bytes(key: object) -> int:
+    """A key's bytes: a key other than a string adds the quotes JSON writes."""
+    if isinstance(key, str):
+        return _value_bytes(key)
+    return _value_bytes(key) + _KEY_QUOTE_BYTES
+
+
+def _text_bytes(text: str | bytes) -> int:
+    return len(text) if isinstance(text, bytes) else _value_bytes(text)
 
 
 def _load_rendered_yaml(original: str | bytes, rendered: str) -> object:

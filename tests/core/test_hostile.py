@@ -288,6 +288,54 @@ def test_yaml_recursive_alias_finishes() -> None:
     assert format_yaml(formatted) == formatted
 
 
+# The child converts the YAML on stdin as Format to JSON reads it, and prints
+# the error kind, or "converted", and how long that took (#223).
+_ALIAS_PROBE = """\
+import sys
+import time
+
+from galley.core.errors import NotJSONValueError
+from galley.core.format import yaml_json_value
+
+text = sys.stdin.read()
+start = time.perf_counter()
+try:
+    yaml_json_value(text)
+    kind = "converted"
+except NotJSONValueError as exc:
+    kind = str(exc)
+sys.stdout.write(f"{kind} {time.perf_counter() - start:.6f}")
+"""
+# Counting each shared list once refuses these in milliseconds. Counting
+# every path would never finish. One second is a hang guard, not a budget.
+_ALIAS_BOUND_S = 1.0
+# A child still running after this is killed, so the test fails, not hangs.
+_ALIAS_TIMEOUT_S = 30.0
+
+
+@pytest.mark.parametrize(
+    ("levels", "fan"), [(60, 10), (300, 2)], ids=["10**60", "2**300"]
+)
+def test_a_yaml_alias_bomb_to_json_is_refused_quickly(levels: int, fan: int) -> None:
+    """JSON writes every alias out in full, so these are refused (#223)."""
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _ALIAS_PROBE],
+            input=_alias_document(levels=levels, fan=fan),
+            capture_output=True,
+            text=True,
+            timeout=_ALIAS_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"{fan}**{levels} aliases ran past {_ALIAS_TIMEOUT_S:.0f} s")
+    kind, elapsed = done.stdout.split()
+    seconds = float(elapsed)
+    print(f"{fan}**{levels} aliases to JSON: {kind} in {seconds:.3f} s")
+    assert kind == "alias_expansion"
+    assert seconds <= _ALIAS_BOUND_S
+
+
 def test_long_json_string_and_key_round_trip() -> None:
     key = "k" * 100_000
     value = "v" * 100_000
