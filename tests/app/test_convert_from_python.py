@@ -21,6 +21,7 @@ from galley.app.main_window import si_size, si_size_up
 from galley.app.parse_session import ParseSession
 from galley.app.problems_pane import ProblemsPane
 from galley.core.convert_python import ConvertResult, convert_python
+from galley.core.errors import MAX_DEPTH
 
 # D6: Convert from Python runs on the UI thread, so at its limit the convert
 # itself must stay under about 0.5 s. macOS stays at 0.5 s: worst CI median
@@ -213,6 +214,27 @@ def test_convert_from_python_is_one_undo_step(qtbot, target: str) -> None:
     window._actions.redo.trigger()
     assert output.toPlainText() == result.text
     assert editor.toPlainText() == source
+
+
+@pytest.mark.parametrize("target", ["JSON", "YAML"])
+def test_convert_too_deep_for_the_parser_shows_the_depth_problem(
+    qtbot, target: str
+) -> None:
+    """CPython's parser runs out of stack on this input (#224)."""
+    window, editor, output, status = _convert_window(qtbot, target)
+    output.setPlainText("previous\n")
+    editor.setPlainText("-" * 10_000 + "1")
+
+    _action(window, "Convert from Python").trigger()
+
+    pane = window.findChild(ProblemsPane, "problemsPane")
+    assert isinstance(pane, ProblemsPane)
+    assert pane.messages() == [
+        f"This document is nested more than {MAX_DEPTH} levels deep."
+    ]
+    assert pane.lines() == [1]
+    assert status.text() == "1 problem"
+    assert output.toPlainText() == "previous\n"
 
 
 def _convert_window(qtbot, target: str):

@@ -542,6 +542,81 @@ def test_recursion_error_becomes_an_error_result(
     assert "nested more than" in rendered.message
 
 
+_DEPTH_SENTENCE = f"This document is nested more than {MAX_DEPTH} levels deep."
+# Well past where CPython's parser runs out of stack, about 6,000 levels on
+# 3.12, so a patch release that moves that limit still overflows (#224).
+_OVERFLOW = 10_000
+_DEEP_MINUS = "-" * _OVERFLOW + "1"
+_TARGETS = pytest.mark.parametrize("target", ["json", "yaml"])
+
+
+@_TARGETS
+@pytest.mark.parametrize(
+    "source",
+    [
+        _DEEP_MINUS,
+        "+" * _OVERFLOW + "1",
+        "~" * _OVERFLOW + "1",
+        "not " * _OVERFLOW + "1",
+        "1, " + _DEEP_MINUS,
+        "# c\n" + _DEEP_MINUS,
+        "[" + _DEEP_MINUS + "]",
+    ],
+    ids=["minus", "plus", "invert", "not", "two-values", "comment", "list"],
+)
+def test_a_parser_stack_overflow_is_the_depth_error(source: str, target: str) -> None:
+    assert _error(source, target) == ConvertError(_DEPTH_SENTENCE, 1, 1)
+
+
+@_TARGETS
+@pytest.mark.parametrize(
+    "source",
+    ["x = " + _DEEP_MINUS, "import os\n" + _DEEP_MINUS],
+    ids=["assignment", "import"],
+)
+def test_a_statement_too_deep_to_parse_is_the_depth_error(
+    source: str, target: str
+) -> None:
+    assert _error(source, target) == ConvertError(_DEPTH_SENTENCE, 1, 1)
+
+
+def test_memory_error_from_the_parser_becomes_the_depth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def overflow(*_args: object, **_kwargs: object) -> object:
+        raise MemoryError("Parser stack overflowed - Python source too complex")
+
+    # ``ast`` is the shared module, and pytest's own report reads with
+    # ast.parse, so the patch ends before anything can fail.
+    with monkeypatch.context() as patch:
+        patch.setattr(convert_python_module.ast, "parse", overflow)
+        result = convert_python("[1]", "json")
+    assert result == ConvertError(_DEPTH_SENTENCE, 1, 1)
+
+
+def test_memory_error_from_the_statement_check_becomes_the_depth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    modes: list[str] = []
+
+    def parse(_text: str, mode: str = "exec", **_kwargs: object) -> object:
+        modes.append(mode)
+        if mode == "eval":
+            raise SyntaxError("invalid syntax")
+        raise MemoryError("Parser stack overflowed - Python source too complex")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(convert_python_module.ast, "parse", parse)
+        result = convert_python("x = [1]", "json")
+    assert result == ConvertError(_DEPTH_SENTENCE, 1, 1)
+    assert modes == ["eval", "exec"]
+
+
+def test_a_deep_unary_chain_the_parser_reads_is_still_an_operator_error() -> None:
+    error = _error("-" * 5000 + "1")
+    assert error == ConvertError("This operator can't be converted.", 1, 1)
+
+
 def test_unsupported_target_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported format"):
         convert_python("1", "xml")
