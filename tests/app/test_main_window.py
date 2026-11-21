@@ -1212,6 +1212,95 @@ def test_clear_resets_status_problems_and_counts(qtbot) -> None:
     assert not counts.isVisible()
 
 
+def _cleared_input(qtbot, text: str):
+    """Show a window, put ``text`` in Input with no undo steps, and Clear it."""
+    window = _show(qtbot)
+    editor = window.findChild(CodeEditor, "inputEditor")
+    clear = window.findChild(QPushButton, "clearButton")
+    assert isinstance(editor, CodeEditor)
+    assert isinstance(clear, QPushButton)
+    editor.setPlainText(text)
+    assert not editor.document().isUndoAvailable()
+    window.activateWindow()
+    editor.setFocus()
+    qtbot.waitUntil(editor.hasFocus, timeout=2000)
+    clear.click()
+    assert editor.toPlainText() == ""
+    return window, editor
+
+
+def test_clear_is_one_undo_step_and_undo_brings_the_text_back(qtbot) -> None:
+    text = '{\n  "name": "Ada Example",\n  "id": 7\n}\n'
+    window, editor = _cleared_input(qtbot, text)
+    undo = window._actions.undo
+    assert undo.isEnabled()
+    undo.trigger()
+    assert editor.toPlainText() == text
+    assert not editor.document().isUndoAvailable()
+    assert not undo.isEnabled()
+
+
+def test_redo_after_undoing_clear_empties_input_again(qtbot) -> None:
+    text = "name: Ada Example\nid: 7\n"
+    window, editor = _cleared_input(qtbot, text)
+    window._actions.undo.trigger()
+    assert editor.toPlainText() == text
+    redo = window._actions.redo
+    assert redo.isEnabled()
+    redo.trigger()
+    assert editor.toPlainText() == ""
+    assert not redo.isEnabled()
+    window._actions.undo.trigger()
+    assert editor.toPlainText() == text
+
+
+# Writes that empty an editor's undo history. Cancel puts back the text Output
+# had, which nothing can change while Format runs, and Open clears Output
+# after replacing Input as one undo step. Anything else replaces text with
+# _replace_as_one_undo, so Undo brings the earlier text back (#222).
+_HISTORY_WIPES = {"_restore_output", "_apply_opened_file"}
+
+
+def _history_wipes(tree: ast.AST) -> list[tuple[str, int]]:
+    found: list[tuple[str, int]] = []
+
+    def visit(node: ast.AST, names: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, (*names, child.name))
+                continue
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+                attr = child.func.attr
+                bare_clear = attr == "clear" and not child.args and not child.keywords
+                if attr == "setPlainText" or bare_clear:
+                    found.append((".".join(names), child.lineno))
+            visit(child, names)
+
+    visit(tree, ())
+    return found
+
+
+def _main_window_tree() -> ast.Module:
+    source = (APP_ROOT / "main_window.py").read_text(encoding="utf-8")
+    return ast.parse(source)
+
+
+def test_main_window_never_wipes_undo_history() -> None:
+    wipes = _history_wipes(_main_window_tree())
+    assert wipes, "the guard found no setPlainText() or clear() calls at all"
+    outside = [(name, line) for name, line in wipes if name not in _HISTORY_WIPES]
+    assert outside == []
+
+
+def test_the_guard_allowlist_names_still_exist() -> None:
+    names = {
+        node.name
+        for node in ast.walk(_main_window_tree())
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert _HISTORY_WIPES <= names
+
+
 def test_whitespace_only_input_counts_as_empty(qtbot) -> None:
     window = _show(qtbot)
     editor = window.findChild(CodeEditor, "inputEditor")
