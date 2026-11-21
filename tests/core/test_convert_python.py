@@ -613,7 +613,10 @@ def test_memory_error_from_the_statement_check_becomes_the_depth_error(
 
 
 def test_a_deep_unary_chain_the_parser_reads_is_still_an_operator_error() -> None:
-    error = _error("-" * 5000 + "1")
+    # CPython 3.12 builds the AST only to Py_C_RECURSION_LIMIT levels: 3000 on
+    # Windows, 10000 elsewhere. The depth stays under the lower one and above
+    # MAX_DEPTH, so every platform reads the chain and the walker rejects it.
+    error = _error("-" * 2000 + "1")
     assert error == ConvertError("This operator can't be converted.", 1, 1)
 
 
