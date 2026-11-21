@@ -187,6 +187,34 @@ def test_convert_success_names_the_output_format(qtbot) -> None:
     assert status.text() == "Converted to YAML."
 
 
+@pytest.mark.parametrize("target", ["JSON", "YAML"])
+def test_convert_from_python_is_one_undo_step(qtbot, target: str) -> None:
+    window, editor, output, _status = _convert_window(qtbot, target)
+    output.setPlainText("previous\n")
+    source = "{'name': 'Ada Example', 'id': 7}"
+    editor.setPlainText(source)
+    editor.document().clearUndoRedoStacks()
+
+    _action(window, "Convert from Python").trigger()
+
+    result = convert_python(source, target)
+    assert isinstance(result, ConvertResult)
+    assert output.toPlainText() == result.text
+    assert editor.toPlainText() == source
+    assert not editor.document().isUndoAvailable()
+    window.activateWindow()
+    output.setFocus()
+    qtbot.waitUntil(output.hasFocus, timeout=2000)
+    undo = window._actions.undo
+    assert undo.isEnabled()
+    undo.trigger()
+    assert output.toPlainText() == "previous\n"
+    assert not output.document().isUndoAvailable()
+    window._actions.redo.trigger()
+    assert output.toPlainText() == result.text
+    assert editor.toPlainText() == source
+
+
 def _convert_window(qtbot, target: str):
     window = create_main_window()
     qtbot.addWidget(window)

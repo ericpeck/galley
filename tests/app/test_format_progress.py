@@ -1,6 +1,8 @@
 """Busy indicator, progress bar with Cancel, and the large-file warning."""
 
+import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
@@ -35,6 +37,7 @@ from galley.app.main_window import (
     si_size,
     si_size_up,
 )
+from galley.app.open_file import OPEN_WHILE_FORMATTING_TOOLTIP
 from galley.app.parse_session import ParseSession
 
 _FORMATTED = '{\n  "a": 1\n}\n'
@@ -404,6 +407,175 @@ def test_success_is_one_undo_step(qtbot) -> None:
         assert output.toPlainText() == _FORMATTED
     finally:
         window.shutdown_parse_worker()
+
+
+def test_clear_is_disabled_while_formatting(qtbot, monkeypatch) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    editor = _parts(window)[0]
+    clear = _clear_button(window)
+    editor.setPlainText('{"a": 1}')
+    assert clear.isEnabled()
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        assert not clear.isEnabled()
+        assert clear.toolTip() == OPEN_WHILE_FORMATTING_TOOLTIP
+        window._clear_input()
+        assert editor.toPlainText() == '{"a": 1}'
+    finally:
+        window.shutdown_parse_worker()
+
+
+@pytest.mark.parametrize("pane", ["input", "output"])
+def test_undo_and_redo_are_disabled_while_formatting(
+    qtbot, monkeypatch, pane: str
+) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    target = _undo_target(qtbot, window, pane)
+    undo, redo = window._actions.undo, window._actions.redo
+    assert undo.isEnabled() and redo.isEnabled()
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        assert not undo.isEnabled()
+        assert not redo.isEnabled()
+        assert undo.toolTip() == OPEN_WHILE_FORMATTING_TOOLTIP
+        assert redo.toolTip() == OPEN_WHILE_FORMATTING_TOOLTIP
+        assert target.document().isUndoAvailable()
+    finally:
+        window.shutdown_parse_worker()
+
+
+@pytest.mark.parametrize("pane", ["input", "output"])
+def test_undo_action_during_format_leaves_the_text_unchanged(
+    qtbot, monkeypatch, pane: str
+) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    _undo_target(qtbot, window, pane)
+    editor, output = _parts(window)[:2]
+    texts = (editor.toPlainText(), output.toPlainText())
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        # Checked after each step: an undo then a redo would cancel out.
+        for step in (
+            window._actions.undo.trigger,
+            window._actions.redo.trigger,
+            window._undo,
+            window._redo,
+        ):
+            step()
+            assert (editor.toPlainText(), output.toPlainText()) == texts
+    finally:
+        window.shutdown_parse_worker()
+
+
+@pytest.mark.parametrize("pane", ["input", "output"])
+def test_undo_shortcut_during_format_leaves_the_text_unchanged(
+    qtbot, monkeypatch, pane: str
+) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    target = _undo_target(qtbot, window, pane)
+    editor, output = _parts(window)[:2]
+    texts = (editor.toPlainText(), output.toPlainText())
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        for standard in (QKeySequence.StandardKey.Undo, QKeySequence.StandardKey.Redo):
+            # ⌘Z and ⇧⌘Z on macOS, Ctrl+Z and Ctrl+Y on Windows.
+            chord = QKeySequence.keyBindings(standard)[0][0]
+            qtbot.keyClick(target, chord.key(), chord.keyboardModifiers())
+            assert (editor.toPlainText(), output.toPlainText()) == texts
+    finally:
+        window.shutdown_parse_worker()
+
+
+def test_cancel_during_format_keeps_outputs_text_and_undo_stack(
+    qtbot, monkeypatch
+) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    output = _undo_target(qtbot, window, "output")
+    text = output.toPlainText()
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        window._cancel_format()
+        assert not window._formatting
+        assert output.toPlainText() == text
+        assert output.document().isUndoAvailable()
+        assert output.document().isRedoAvailable()
+    finally:
+        window.shutdown_parse_worker()
+
+
+def _end_with_result(window) -> None:
+    window._session.finished_job_id = window._accepted_job_id
+    window._on_format_succeeded(_FORMATTED)
+
+
+def _end_with_cancel(window) -> None:
+    window._cancel_format()
+
+
+def _end_with_failure(window) -> None:
+    window._on_format_failed("The formatter stopped.")
+
+
+@pytest.mark.parametrize(
+    "end",
+    [_end_with_result, _end_with_cancel, _end_with_failure],
+    ids=["result", "cancel", "fail"],
+)
+def test_undo_redo_and_clear_come_back_after_the_format_ends(
+    qtbot, monkeypatch, end
+) -> None:
+    window, _clock = _held(qtbot, monkeypatch)
+    editor = _undo_target(qtbot, window, "input")
+    undo, redo = window._actions.undo, window._actions.redo
+    clear = _clear_button(window)
+    try:
+        window._actions.format.trigger()
+        assert window._formatting
+        end(window)
+        assert not window._formatting
+        assert editor.document().isUndoAvailable()
+        assert editor.document().isRedoAvailable()
+        assert undo.isEnabled()
+        assert redo.isEnabled()
+        assert clear.isEnabled()
+        # With no tooltip set, a QAction reports its own text.
+        assert undo.toolTip() == undo.text() == "Undo"
+        assert redo.toolTip() == redo.text() == "Redo"
+        assert clear.toolTip() == ""
+    finally:
+        window.shutdown_parse_worker()
+
+
+def _undo_target(qtbot, window, pane: str) -> CodeEditor:
+    """Give one editor an undo step and a redo step, and focus it."""
+    editor, output = _parts(window)[:2]
+    editor.setPlainText('{"a": 1}')
+    output.setPlainText("old\n")
+    target = editor if pane == "input" else output
+    cursor = target.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.Start)
+    cursor.insertText(" ")
+    # Apart from the first edit, so Qt keeps them as two undo steps.
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    cursor.insertText("\n")
+    target.undo()
+    assert target.document().isUndoAvailable()
+    assert target.document().isRedoAvailable()
+    window.activateWindow()
+    target.setFocus()
+    qtbot.waitUntil(target.hasFocus, timeout=2000)
+    return target
+
+
+def _clear_button(window) -> QPushButton:
+    clear = window.findChild(QPushButton, "clearButton")
+    assert isinstance(clear, QPushButton)
+    return clear
 
 
 def test_older_result_does_not_overwrite_a_newer_one(qtbot, monkeypatch) -> None:

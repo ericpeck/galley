@@ -1317,7 +1317,7 @@ class MainWindow(QMainWindow):
         if isinstance(result, ConvertError):
             self._show_convert_error(result)
             return
-        self._output_pane.editor.setPlainText(result.text)
+        _replace_as_one_undo(self._output_pane.editor, result.text)
         self._show_result_direction(f"Python → {target}")
         self._clear_problems()
         # "Converted to YAML." then the notes (Bill, D9).
@@ -1633,6 +1633,9 @@ class MainWindow(QMainWindow):
     def _set_editors_locked(self, locked: bool) -> None:
         self._input_pane.editor.setReadOnly(locked)
         self._output_pane.editor.setReadOnly(locked)
+        # Undo, Redo and Clear follow _formatting (#222).
+        self._sync_undo_actions()
+        self._sync_clear_button()
 
     def _apply_problems(self, rows: tuple[DisplayProblem, ...]) -> None:
         """Fill the pane, mark the gutter, count, and tell screen readers.
@@ -1955,15 +1958,29 @@ class MainWindow(QMainWindow):
         return self._input_pane.editor, self._output_pane.editor
 
     def _sync_undo_actions(self, _available: bool = False) -> None:
-        """Enable Undo and Redo from the focused editor's own undo stack."""
+        """Enable Undo and Redo from the focused editor's own undo stack.
+
+        Both are greyed out, with the reason, while a Format runs: undo()
+        still changes a read-only editor (#222).
+        """
         document = self._target_editor().document()
-        self._actions.undo.setEnabled(document.isUndoAvailable())
-        self._actions.redo.setEnabled(document.isRedoAvailable())
+        idle = not self._formatting
+        tip = "" if idle else OPEN_WHILE_FORMATTING_TOOLTIP
+        for action, available in (
+            (self._actions.undo, document.isUndoAvailable()),
+            (self._actions.redo, document.isRedoAvailable()),
+        ):
+            action.setEnabled(idle and available)
+            action.setToolTip(tip)
 
     def _undo(self) -> None:
+        if self._formatting:
+            return
         self._target_editor().undo()
 
     def _redo(self) -> None:
+        if self._formatting:
+            return
         self._target_editor().redo()
 
     def _cut(self) -> None:
@@ -2001,13 +2018,30 @@ class MainWindow(QMainWindow):
                 action.setEnabled(enabled)
 
     def _clear_input(self) -> None:
-        """Empty Input and put the status bar back to its empty state (#91)."""
-        self._input_pane.editor.clear()
+        """Empty Input and put the status bar back to its empty state (#91).
+
+        One undo step, so Undo brings the text back. Never while a Format
+        runs (#222).
+        """
+        if self._formatting:
+            return
+        _replace_as_one_undo(self._input_pane.editor, "")
         self._input_pane.editor.setFocus()
         self._clear_problems()
         self._status.set_counts("")
-        if not self._formatting:
-            self._status.set_state("Ready")
+        self._status.set_state("Ready")
+
+    def _sync_clear_button(self) -> None:
+        """Clear needs text in Input and no Format running (#222)."""
+        clear_button = self._input_pane.clear_button
+        if clear_button is None:
+            return
+        # Whitespace still needs clearing, so Clear follows the raw text.
+        has_text = not self._input_pane.editor.document().isEmpty()
+        clear_button.setEnabled(has_text and not self._formatting)
+        clear_button.setToolTip(
+            OPEN_WHILE_FORMATTING_TOOLTIP if self._formatting else ""
+        )
 
     def can_open(self) -> bool:
         """True when a file may replace the source pane's text now.
@@ -2562,10 +2596,7 @@ class MainWindow(QMainWindow):
         if empty:
             self._size_warning_accepted = False
         self._sync_format_button(text)
-        clear_button = self._input_pane.clear_button
-        if clear_button is not None:
-            # Whitespace still needs clearing, so Clear follows the raw text.
-            clear_button.setEnabled(text != "")
+        self._sync_clear_button()
         self._input_pane.set_empty_visible(empty)
         if empty:
             self._input_pane.count_label.setText("Empty")

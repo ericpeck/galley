@@ -10,7 +10,7 @@ adds the 6a banner. The next successful run clears all of it.
 import pytest
 from PySide6.QtCore import QDate, QDateTime, QLocale, QTime
 from PySide6.QtGui import QAction, QPalette
-from PySide6.QtWidgets import QComboBox, QLabel
+from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
 from tests.app.compare_inline import inline_compare as inline_compare
 
 from galley.app.main import create_main_window
@@ -156,6 +156,29 @@ def test_output_stays_stale_after_undo_until_the_next_run(qtbot) -> None:
     _input(window).undo()
     assert _input(window).toPlainText() == _JSON
     _assert_stale(window)
+
+
+def test_clearing_input_after_format_marks_output_stale(qtbot) -> None:
+    window = _show(qtbot)
+    shown = _format_json(qtbot, window)
+    _child(window, QPushButton, "clearButton").click()
+    assert _input(window).toPlainText() == ""
+    _assert_stale(window)
+    assert _output_text(window) == shown
+
+
+def test_undoing_a_clear_marks_output_stale_and_restores_input(qtbot) -> None:
+    """Undo back to the text Format read still shows Stale (Bill's Q2)."""
+    window = _show(qtbot)
+    shown = _format_json(qtbot, window)
+    _child(window, QPushButton, "clearButton").click()
+    undo = _action(window, "Undo")
+    assert _input(window).hasFocus()
+    assert undo.isEnabled()
+    undo.trigger()
+    assert _input(window).toPlainText() == _JSON
+    _assert_stale(window)
+    assert _output_text(window) == shown
 
 
 def test_typing_in_output_does_not_mark_it_stale(qtbot) -> None:
