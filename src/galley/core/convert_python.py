@@ -172,6 +172,9 @@ def convert_python(text: str, target: str = "json") -> ConvertResult | ConvertEr
         parsed = ast.parse(text, mode="eval")
     except RecursionError:
         return _depth_error(1, 1)
+    except MemoryError:
+        # CPython's parser raises this when it runs out of stack (#224).
+        return _depth_error(1, 1)
     except SyntaxError as exc:
         return _syntax_error(exc, text)
     walker = _Walker(kind)
@@ -273,6 +276,9 @@ def _statement_error(text: str) -> ConvertError | None:
     """
     try:
         module = ast.parse(text, mode="exec")
+    except MemoryError:
+        # CPython's parser raises this when it runs out of stack (#224).
+        return _depth_error(1, 1)
     except (SyntaxError, RecursionError, ValueError):
         return None
     body = module.body
