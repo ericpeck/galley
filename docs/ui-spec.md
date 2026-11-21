@@ -173,7 +173,7 @@ Caption below: `Editing Input` / `Editing Output` (bold pane name).
 The gutter's accessible name is `Line numbers`, and its accessible description lists the problem messages. A marker's tooltip is its message. Info lines (6e): blue `i` icon, not built yet.
 
 ### 5.6 Pane footer
-- Input: `Paste`, `Clear` (accent links with icons; `Clear` disabled when empty) … right: count (`Empty`, `1 line · 318 characters`, `34 lines · 612 characters`, `6 lines · 3 problems`, `1 line · 4.8 MB`).
+- Input: `Paste`, `Clear` (accent links with icons; `Clear` disabled when empty or while formatting) … right: count (`Empty`, `1 line · 318 characters`, `34 lines · 612 characters`, `6 lines · 3 problems`, `1 line · 4.8 MB`).
 - Output: `Options` (opens popover 6h) … right: status (`34 lines`, `22 lines · 1 note`, `Edited`, `Last good result`, `1,284 lines so far`) then `Copy` (disabled when empty). `Last good result` shows whenever Output is stale (§6a), not only after a failed Format.
 
 ### 5.7 Status bar
@@ -331,6 +331,7 @@ Each entry: what is on screen, behavior, interactions, keyboard. Mock IDs in par
 - 4.8 MB minified file `orders-2026-10.json`, one line. Word wrap off; horizontal scrollbar. Input banner: `One 4.8 MB line. Word wrap is off for it so the editor stays fast.` + `{·} Pretty-print to edit`.
 - Output banner: `Large file: syntax colors are off to keep things fast.` + link `Turn on anyway`.
 - While output fills in: breadcrumb shows `Path  Available when formatting finishes` greyed; `Copy path` greyed; find works as plain text (`Kei Tanaka`, `1 so far`), `Path` scope greyed. Output footer `1,284 lines so far`, Copy greyed.
+- While formatting, `Undo`, `Redo` (toolbar, Edit menu and right-click menu) and Input's `Clear` are greyed, with the tooltip `Wait for formatting to finish`. They come back when the Format finishes or is canceled.
 - Status: spinner `Formatting… 4.8 MB · writing output`, progress bar (accent fill on `gutter.bg` track) + `62%`, `✕ Cancel`. **Progress bar appears only while writing.**
 - Format button in Working state.
 - **Cancel** (ref: 6d cancel crop): rolls Output back to the result it had before Format was pressed; a half-written output is never left behind. Status: `ⓘ Canceled. Showing the previous result.` Footer `34 lines`, Copy enabled. If that result was already stale, the `Stale` tag stays.
