@@ -34,7 +34,14 @@ from galley.core.diff import (
 )
 from galley.core.errors import InputError, JSONDuplicateKeyError, NotJSONValueError
 from galley.core.folds import fold_ranges, line_count, pack_ranges
-from galley.core.format import DEFAULT_INDENT, format_document, validate_document
+from galley.core.format import (
+    DEFAULT_INDENT,
+    _check_alias_expansion,
+    _mentions_alias,
+    _text_bytes,
+    format_document,
+    validate_document,
+)
 from galley.core.formats import format_named
 from galley.core.mask import (
     MASK,
@@ -602,6 +609,7 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
                 shown, doc = _reformatted(text, source)
             else:
                 shown, doc = text, load_document(text, source)
+            _check_compare_aliases(doc, text)
         except Exception as exc:
             return _compare_failure(job.job_id, side, text, source, exc)
         docs.append(doc)
@@ -617,6 +625,18 @@ def run_compare(job: CompareJob) -> CompareEvent | CompareFailureEvent:
     if not job.reformat:
         return CompareEvent(job.job_id, result, report)
     return CompareEvent(job.job_id, result, report, texts[0], texts[1])
+
+
+def _check_compare_aliases(doc: Doc, text: str) -> None:
+    """Refuse a YAML side whose aliases repeat too many values (#232).
+
+    ``diff`` walks every alias out in full, so a few hundred bytes could
+    list millions of changes. This is Format's check, with its limits and
+    its ``alias_expansion`` kind (#231). ``text`` is the side as sent, also
+    when Compare formats it first. JSON has no aliases.
+    """
+    if doc.format == "yaml" and _mentions_alias(text):
+        _check_alias_expansion(doc.value, _text_bytes(text))
 
 
 def _reformatted(text: str, source: str) -> tuple[str, Doc]:
