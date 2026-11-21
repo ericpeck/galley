@@ -7,7 +7,7 @@ from galley.app.limits import COMPARE_WARNING_BYTES
 from galley.app.parse_session import CompareFailure, ParseSession
 from galley.core.compare_report import CompareReport, SideMarks
 from galley.core.diff import DiffResult, diff, load_document
-from galley.core.format import format_json
+from galley.core.format import ALIAS_EXPANSION, format_json
 from galley.core.worker import CompareEvent, ProgressEvent
 
 _SPAWN_TIMEOUT_MS = 20000
@@ -100,6 +100,35 @@ def test_a_failure_names_the_side_that_did_not_load(qtbot) -> None:
         assert failure.side == "right"
         assert [row.lineno for row in failure.problems] == [1]
         assert session.active_job_id is None
+    finally:
+        session.shutdown()
+
+
+def _alias_chain(levels: int = 6, fan: int = 10) -> str:
+    """Each level lists the one below ``fan`` times: ``fan**levels`` leaves."""
+    lines = ['a0: &a0 ["fake-note"]']
+    for level in range(1, levels + 1):
+        refs = ", ".join([f"*a{level - 1}"] * fan)
+        lines.append(f"a{level}: &a{level} [{refs}]")
+    lines.append(f"root: *a{levels}")
+    return "\n".join(lines) + "\n"
+
+
+def test_an_alias_bomb_side_fails_with_its_kind_and_side(qtbot) -> None:
+    """The kind reaches the app; the words are chosen in Compare (#232)."""
+    session = _started(qtbot)
+    failed: list[CompareFailure] = []
+    finished: list[int] = []
+    session.compare_failed.connect(lambda _job, failure: failed.append(failure))
+    session.compare_finished.connect(lambda job, _result: finished.append(job))
+    try:
+        session.submit_compare("a0: [fake-note]\n", "yaml", _alias_chain(), "yaml")
+        qtbot.waitUntil(lambda: bool(failed or finished), timeout=_SPAWN_TIMEOUT_MS)
+        assert finished == []
+        [failure] = failed
+        assert failure.side == "right"
+        assert failure.message == ALIAS_EXPANSION
+        assert failure.problems == ()
     finally:
         session.shutdown()
 
