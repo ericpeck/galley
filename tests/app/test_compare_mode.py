@@ -626,6 +626,60 @@ def test_a_parse_error_in_right_goes_to_problems_on_right(
     assert problems.count() == 0
 
 
+def _alias_chain(levels: int = 6, fan: int = 10) -> str:
+    """Each level lists the one below ``fan`` times: ``fan**levels`` leaves."""
+    lines = ['a0: &a0 ["fake-note"]']
+    for level in range(1, levels + 1):
+        refs = ", ".join([f"*a{level - 1}"] * fan)
+        lines.append(f"a{level}: &a{level} [{refs}]")
+    lines.append(f"root: *a{levels}")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("side", "expected"),
+    [
+        (
+            "left",
+            "The Left side's aliases repeat too many values, so it can't be compared.",
+        ),
+        (
+            "right",
+            "The Right side's aliases repeat too many values, so it can't be compared.",
+        ),
+    ],
+)
+def test_an_alias_bomb_side_is_named_in_the_status(
+    qtbot, inline_compare, side: str, expected: str
+) -> None:
+    """Status only: no Problems row, gutter mark, line or column (#232)."""
+    window = _show(qtbot)
+    picker = window.findChild(QComboBox, "inputFormat")
+    assert isinstance(picker, QComboBox)
+    small = "a0: [fake-note]\n"
+    bomb = _alias_chain()
+    left, right = (bomb, small) if side == "left" else (small, bomb)
+    picker.setCurrentText("YAML")
+    _type_input(qtbot, window, left)
+    picker.setCurrentText("YAML")
+    _action(window, "Compare").trigger()
+    _paste_right(window, right)
+    qtbot.waitUntil(lambda: not window._compare.is_running(), timeout=_WAIT_MS)
+    assert window._input_pane.format_name() == "YAML"
+    assert window._output_pane.format_name() == "YAML"
+    assert _status_state(window) == expected
+    assert "alias_expansion" not in _status_state(window)
+    pane = _changes(window)
+    assert pane.state() == ChangesState.ERRORS
+    assert "alias_expansion" not in pane.message()
+    assert window._status.counts_text() == ""
+    problems = window.findChild(ProblemsPane)
+    assert isinstance(problems, ProblemsPane)
+    assert problems.count() == 0
+    assert not _left(window).problem_lines()
+    assert not _right(window).problem_lines()
+
+
 def test_a_new_compare_clears_the_last_problems(qtbot, inline_compare) -> None:
     window = _show(qtbot)
     _compare(qtbot, window, right=_BROKEN)

@@ -70,6 +70,7 @@ from galley.app.regex_session import RegexSession
 from galley.app.status_bar import Busy, StatusBar
 from galley.app.style import primary_button_style
 from galley.core.compare_report import ChangeRow, CompareReport, GroupRow, ReportRow
+from galley.core.format import ALIAS_EXPANSION
 from galley.core.formats import format_named
 from galley.core.load import LoadedDocument, LoadError
 from galley.core.worker import CompareEvent, CompareSide, not_comparable
@@ -99,6 +100,10 @@ OPEN_SIDE_TEXT = "Open “{name}” on the left or the right?"
 FORMATTED_BOTH = "Formatted both sides."
 FORMATTED_LEFT = "Formatted Left side."
 FIX_ERRORS_TO_FORMAT = "Fix errors to format."
+# A YAML side whose aliases repeat too many values (#232), in the status.
+ALIAS_EXPANSION_SIDE = (
+    "The {side} side's aliases repeat too many values, so it can't be compared."
+)
 
 
 def open_side_text(file_name: str) -> str:
@@ -675,7 +680,7 @@ class CompareMode(QObject):
         host.status.set_counts("")
         self._clear_problems()
         if not failure.problems:
-            host.status.set_state(failure.message)
+            host.status.set_state(_failure_status(failure))
             return
         if failure.side == "right":
             self._show_right_problems(failure.problems)
@@ -1420,3 +1425,15 @@ def _is_inside(widget: QWidget | None, ancestor: QWidget) -> bool:
 def _accent_fill(palette: QPalette) -> QColor:
     """The Changes badge: the accent, beside Problems' error fill."""
     return palette.color(QPalette.ColorRole.Accent)
+
+
+def _failure_status(failure: CompareFailure) -> str:
+    """The status for a failure with no Problems rows.
+
+    The worker names the alias refusal by its kind, ``alias_expansion``,
+    which never reaches the screen; the status names the side (#232).
+    """
+    if failure.message == ALIAS_EXPANSION:
+        title = RIGHT_TITLE if failure.side == "right" else LEFT_TITLE
+        return ALIAS_EXPANSION_SIDE.format(side=title)
+    return failure.message

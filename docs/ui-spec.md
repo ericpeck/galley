@@ -195,6 +195,7 @@ Decided copy (#91 D9, #195):
 - Convert from Python: `Converted to JSON.` or `Converted to YAML.`, followed by any notes as sentences.
 - Convert from Python errors: one Problems row with a gutter marker (#91 D5). Text that isn't valid Python shows `This isn't valid Python, so it can't be converted.` in the status. Valid Python that can't be converted shows the count, `1 problem`. The 6l dialog is not built yet.
 - Convert from Python over its size limit: `This document is too large to convert from Python (3.3 MB). The limit is about 1 MB for JSON or about 192 KB for YAML.` Output stays unchanged (§10).
+- Compare, YAML whose aliases repeat too many values (#232): `The Left side's aliases repeat too many values, so it can't be compared.` (or `Right`) in the status, with no Problems row, line or column. It uses Format's limits (#231).
 
 ### 5.8 Splitter and rail
 `QSplitter(Qt.Horizontal)` holding Input pane widget and Output pane widget. Custom handle (32 px) shows: reset button (`↔`, tooltip and accessible name `Reset split`, calls `PaneSplitter.apply_even_split()`, disabled while the readout is already 50/50) and ratio readout `50` / `50` at 11 px. The readout's accessible name stays `50 / 50`. Dragging updates the readout. Double-click handle → reset to 50/50. Layout is View › Stack Panes, not a rail button.

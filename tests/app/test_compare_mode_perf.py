@@ -17,6 +17,9 @@ asserted only under GALLEY_PERF_MODE=strict and printed otherwise. The
 42658869790) and 3.5 ms on Windows (nightly run 41482325043), each x 1.25,
 rounded up to the next 1 ms.
 
+The alias check Compare runs on each YAML side (#232) is timed on about
+1 MB of YAML with a few aliases, with no budget.
+
 All data is generated in memory from fixed seeds. Every test prints one
 ``perf:`` line per number.
 """
@@ -41,6 +44,7 @@ from galley.app.editor import CodeEditor
 from galley.app.main import create_main_window
 from galley.core.compare_report import build_report
 from galley.core.diff import diff, diff_with_pairs, load_document
+from galley.core.format import _check_alias_expansion, _mentions_alias, _text_bytes
 
 _BUDGET_S = 0.5
 # Both platforms, rounded up to the next 1 ms. macOS: worst median 3.6 ms
@@ -123,6 +127,38 @@ def _aligned(count: int) -> tuple[str, str]:
     return json.dumps(items, indent=2), json.dumps(edited, indent=2)
 
 
+def _aliased_yaml(target_bytes: int, seed: int = _SEED) -> str:
+    """About ``target_bytes`` of block YAML records with a few shared aliases.
+
+    Two anchors at the top, and every 1,000th record names both, well
+    under the alias limits.
+    """
+    rng = random.Random(seed)
+    lines = [
+        "tags: &tags [alpha, beta, gamma]",
+        "owner: &owner {name: fake-owner, team: fake-team}",
+        "records:",
+    ]
+    size = sum(len(line) + 1 for line in lines)
+    index = 0
+    while size < target_bytes:
+        record = [
+            f"- id: {index}",
+            f"  name: user-{index}",
+            f"  email: user{index}@example.com",
+            f"  city: {rng.choice(_CITIES)}",
+            f"  score: {rng.randint(0, 9_999)}",
+            f"  active: {'true' if rng.random() < 0.5 else 'false'}",
+            f"  note: note {rng.randint(0, 99_999)}",
+        ]
+        if index % 1_000 == 0:
+            record += ["  tags: *tags", "  owner: *owner"]
+        lines += record
+        size += sum(len(line) + 1 for line in record)
+        index += 1
+    return "\n".join(lines) + "\n"
+
+
 def _mb(text: str) -> float:
     return len(text.encode("utf-8")) / 1_000_000
 
@@ -198,6 +234,20 @@ def test_an_f7_jump_on_a_1_mb_diff(qtbot, perf_budget, inline_compare) -> None:
 
 
 # --- Timings, no budget ----------------------------------------------------
+
+
+@pytest.mark.perf
+def test_the_alias_check_on_a_1_mb_aliased_yaml_side_is_timed() -> None:
+    """The check Compare runs on each YAML side that has an alias (#232)."""
+    text = _aliased_yaml(1_000_000)
+    assert _mentions_alias(text)
+    doc = load_document(text, "yaml")
+    size = _text_bytes(text)
+    timing = time_runs(lambda: _check_alias_expansion(doc.value, size))
+    print(
+        f"perf: compare alias check {_mb(text):.0f} MB YAML [few aliases] "
+        f"median {timing.median * 1000:.1f} ms"
+    )
 
 
 @pytest.mark.perf

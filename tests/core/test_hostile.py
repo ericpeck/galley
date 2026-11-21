@@ -23,6 +23,7 @@ from ruamel.yaml import YAML
 from tests.text_compare import assert_same_text
 
 import galley.core as core
+import galley.core.format as format_module
 from galley.core import MAX_DEPTH
 from galley.core.errors import InputError, JSONDuplicateKeyError, XMLSyntaxError
 from galley.core.format import format_json, format_yaml
@@ -332,6 +333,73 @@ def test_a_yaml_alias_bomb_to_json_is_refused_quickly(levels: int, fan: int) -> 
     kind, elapsed = done.stdout.split()
     seconds = float(elapsed)
     print(f"{fan}**{levels} aliases to JSON: {kind} in {seconds:.3f} s")
+    assert kind == "alias_expansion"
+    assert seconds <= _ALIAS_BOUND_S
+
+
+# The child runs the worker's whole compare job, through the diff, on the
+# YAML on stdin against a small YAML document, and prints the failure kind,
+# or "compared", and how long the job took (#232). argv: engine, then
+# "reformat" or "plain". The small document adds a key the other side lacks,
+# so the diff looks for moved values among the removed ones and walks each
+# removed alias out in full; without an added key it stops early.
+_COMPARE_ALIAS_PROBE = """\
+import sys
+import time
+
+import ruamel.yaml.main as ruamel_main
+
+import galley.core.format as format_module
+from galley.core.worker import CompareFailureEvent, CompareJob, run_compare
+
+engine, mode = sys.argv[1], sys.argv[2]
+if engine == "pure":
+    ruamel_main.CParser = None
+    ruamel_main.CEmitter = None
+    format_module._CLIB_READY = False
+text = sys.stdin.read()
+job = CompareJob(
+    1, text, "yaml", "fake-added: 1\\n", "yaml", reformat=mode == "reformat"
+)
+start = time.perf_counter()
+event = run_compare(job)
+seconds = time.perf_counter() - start
+kind = event.message if isinstance(event, CompareFailureEvent) else "compared"
+sys.stdout.write(f"{kind} {seconds:.6f}")
+"""
+
+
+@pytest.mark.parametrize("engine", ["c", "pure"])
+@pytest.mark.parametrize("mode", ["plain", "reformat"])
+@pytest.mark.parametrize(
+    ("levels", "fan"),
+    [(60, 10), (300, 2), (6, 10)],
+    ids=["10**60", "2**300", "10**6"],
+)
+def test_a_yaml_alias_bomb_in_compare_is_refused_quickly(
+    levels: int, fan: int, mode: str, engine: str
+) -> None:
+    """Compare's diff walks every alias out in full, so these are refused (#232)."""
+    if engine == "c" and not format_module._clib_available():
+        pytest.skip("ruamel.yaml.clib is not installed")
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _COMPARE_ALIAS_PROBE, engine, mode],
+            input=_alias_document(levels=levels, fan=fan),
+            capture_output=True,
+            text=True,
+            timeout=_ALIAS_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"Compare of {fan}**{levels} aliases ran past {_ALIAS_TIMEOUT_S:.0f} s"
+        )
+    kind, elapsed = done.stdout.split()
+    seconds = float(elapsed)
+    print(
+        f"{fan}**{levels} aliases in Compare ({mode}, {engine}): {kind} {seconds:.3f} s"
+    )
     assert kind == "alias_expansion"
     assert seconds <= _ALIAS_BOUND_S
 
