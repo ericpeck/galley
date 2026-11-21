@@ -340,7 +340,9 @@ def test_a_yaml_alias_bomb_to_json_is_refused_quickly(levels: int, fan: int) -> 
 # The child runs the worker's whole compare job, through the diff, on the
 # YAML on stdin against a small YAML document, and prints the failure kind,
 # or "compared", and how long the job took (#232). argv: engine, then
-# "reformat" or "plain".
+# "reformat" or "plain". The small document adds a key the other side lacks,
+# so the diff looks for moved values among the removed ones and walks each
+# removed alias out in full; without an added key it stops early.
 _COMPARE_ALIAS_PROBE = """\
 import sys
 import time
@@ -357,7 +359,7 @@ if engine == "pure":
     format_module._CLIB_READY = False
 text = sys.stdin.read()
 job = CompareJob(
-    1, text, "yaml", "a0: [fake-note]\\n", "yaml", reformat=mode == "reformat"
+    1, text, "yaml", "fake-added: 1\\n", "yaml", reformat=mode == "reformat"
 )
 start = time.perf_counter()
 event = run_compare(job)
