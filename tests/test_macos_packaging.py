@@ -5,8 +5,16 @@ runs the spec, so this test must not execute that file.
 """
 
 import ast
+import os
+import re
+import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
+from ruamel.yaml import YAML
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "com.ericmercurypeck.galley"
@@ -343,3 +351,129 @@ def test_release_workflow_does_not_render_the_icon() -> None:
     assert "galley.svg" not in workflow
     assert "iconutil" not in workflow
     assert "rsvg-convert" not in workflow
+
+
+ATTACH_STEP = "Attach the disk image to the GitHub Release"
+GIT_REPO_ERROR = (
+    "failed to run git: fatal: not a git repository "
+    "(or any of the parent directories): .git"
+)
+
+
+def _workflow_data() -> dict:
+    return YAML(typ="safe", pure=True).load(_workflow())
+
+
+def _release_job() -> dict:
+    return _workflow_data()["jobs"]["release"]
+
+
+def _attach_script() -> str:
+    steps = [s for s in _release_job()["steps"] if s.get("name") == ATTACH_STEP]
+    assert len(steps) == 1, f"one {ATTACH_STEP!r} step"
+    script = steps[0]["run"]
+    assert "${{" not in script, "the run block reads only shell variables"
+    return script
+
+
+def test_release_job_names_its_repo() -> None:
+    # The release job has no checkout, so gh can't find the repo from .git.
+    job = _release_job()
+    env = job.get("env") or {}
+    checkout = any(
+        str(step.get("uses", "")).startswith("actions/checkout")
+        for step in job["steps"]
+    )
+    assert env.get("GH_REPO") == "${{ github.repository }}" or checkout
+
+
+def test_release_job_only_creates_on_not_found() -> None:
+    script = _attach_script()
+    assert not re.search(r"gh release view[^\n]*>/dev/null 2>&1", script), (
+        "a hidden gh error must not count as a missing release"
+    )
+    assert "release not found" in script
+    assert "exit 1" in script
+
+
+def _stub_gh(bin_dir: Path, view_error: str) -> None:
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >> "${GH_STUB_LOG}"\n'
+        'if [[ "$1 $2" == "release view" ]]; then\n'
+        '  echo "${GH_STUB_VIEW_ERROR}" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs the step with bash")
+@pytest.mark.parametrize(
+    ("view_error", "creates"),
+    [
+        pytest.param("release not found", True, id="release-not-found"),
+        pytest.param(GIT_REPO_ERROR, False, id="not-a-git-repository"),
+    ],
+)
+def test_release_step_creates_only_when_the_release_is_missing(
+    tmp_path: Path, view_error: str, creates: bool
+) -> None:
+    bash = shutil.which("bash")
+    assert bash is not None
+    work = tmp_path / "work"
+    (work / "dist").mkdir(parents=True)
+    (work / "dist" / "Galley-1.0.0-arm64.dmg").write_bytes(b"dmg")
+    (work / "dist" / "Galley-1.0.0-arm64.dmg.sha256").write_text(
+        "0" * 64 + "  Galley-1.0.0-arm64.dmg\n", encoding="utf-8"
+    )
+    script = tmp_path / "attach.sh"
+    script.write_text(_attach_script(), encoding="utf-8")
+    _stub_gh(tmp_path / "bin", view_error)
+    log = tmp_path / "gh.log"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_REF_NAME": "v1.0.0",
+        "GH_STUB_LOG": str(log),
+        "GH_STUB_VIEW_ERROR": view_error,
+        "GIT_CEILING_DIRECTORIES": str(tmp_path),
+    }
+    result = subprocess.run(
+        [bash, "-e", str(script)],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    calls = log.read_text(encoding="utf-8").splitlines()
+    created = any(call.startswith("release create v1.0.0") for call in calls)
+    if creates:
+        assert result.returncode == 0, result.stderr
+        assert created
+    else:
+        assert result.returncode == 1
+        assert "not a git repository" in result.stdout + result.stderr
+        assert not created
+
+
+def test_release_job_runs_after_dmg_on_tags_only() -> None:
+    data = _workflow_data()
+    job = data["jobs"]["release"]
+    assert job["needs"] == "dmg"
+    assert "github.event_name != 'pull_request'" in job["if"]
+    assert "startsWith(github.ref, 'refs/tags/v')" in job["if"]
+    assert data["on"]["push"]["tags"] == ["v*"]
+
+
+def test_release_job_can_write_releases() -> None:
+    data = _workflow_data()
+    job_permissions = data["jobs"]["release"].get("permissions")
+    permissions = job_permissions or data.get("permissions") or {}
+    assert permissions.get("contents") == "write"
