@@ -22,6 +22,7 @@ Before tagging, `galley.__version__` and the version in `pyproject.toml` must bo
 A tag build also runs three steps that a manual or pull request run skips: Check tag matches version, Check copyright notice and Check unbuilt actions. Run the last two locally before tagging with `python packaging/check_copyright_notice.py` and `python -m galley.app.actions`.
 
 Each ref has its own concurrency group. A new run on that ref cancels the run already in progress.
+
 Workflow artifacts expire after the repository's retention period. Record the run ID, head SHA and SHA-256 somewhere that lasts longer than the file.
 
 Check the checksum from the directory that contains the disk image:
@@ -59,7 +60,7 @@ The disk image copies `LICENSES/` to `Galley.app/Contents/Resources/LICENSES`. `
 
 The workflow installs `ruamel.yaml.clib==0.2.15`, the same pin as the project metadata, and packages that extension into `Galley.app`. `REQUIRE_RUAMEL_CLIB` is `true`, so the job fails when `_ruamel_yaml` is missing from the bundle.
 
-After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser. On the frozen app it also checks that `licenses_directory()` found a folder of license files inside the bundle. It also checks that the bundled expat is new enough for XML Format. Success on the frozen app prints three lines: `ruamel.yaml.clib self-check: ok`, `LICENSES self-check: ok` plus that folder, and `expat self-check: ok` plus the expat version. A development checkout prints the first and last of those lines. The process exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
+After that file check, the job runs the bundled executable with `--self-check`. The flag does not open a window. It imports `ruamel.yaml.clib` and parses a tiny YAML document with the C parser. On the frozen app it also checks that `licenses_directory()` found a folder of license files inside the bundle. On either build it also checks that expat is 2.6.0 or newer, which XML Format and Validate need. Success on the frozen app prints three lines: `ruamel.yaml.clib self-check: ok`, `LICENSES self-check: ok` plus that folder, and `expat self-check: ok` plus the expat version. A development checkout prints the first and last of those lines. The process exits 0 on success or 1 on failure. A failed step names the check, what broke, and this command:
 
 ```sh
 dist/Galley.app/Contents/MacOS/Galley --self-check
