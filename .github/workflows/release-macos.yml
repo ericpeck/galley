@@ -340,6 +340,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Download disk image
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -368,8 +370,11 @@ jobs:
           After that, Galley opens with a normal double-click.
           EOF
           )"
-          if gh release view "${tag}" >/dev/null 2>&1; then
+          if view_error="$(gh release view "${tag}" 2>&1 >/dev/null)"; then
             gh release upload "${tag}" "${files[@]}" --clobber
-          else
+          elif [[ "${view_error}" == *"release not found"* ]]; then
             gh release create "${tag}" "${files[@]}" --title "${tag}" --notes "${notes}"
+          else
+            echo "gh release view ${tag} failed: ${view_error}" >&2
+            exit 1
           fi

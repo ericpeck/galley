@@ -18,6 +18,8 @@ You can also run it by hand, or by pushing a tag:
    - `Galley-<version>-arm64.dmg.sha256`
 3. To publish those files on a GitHub Release, push a tag whose name starts with `v`, such as `v1.0.0`. The file name uses the tag without the leading `v`. The release job creates the release when one does not already exist, or uploads onto the existing release.
 
+If the disk image job passes but the release job fails, don't move or re-push the tag. Download the run's artifact, check it with `shasum -a 256 -c Galley-<version>-arm64.dmg.sha256`, then run `gh release create v<version> --repo ericpeck/galley --verify-tag --title v<version> --notes-file <notes file>` with the .dmg and .sha256 attached.
+
 Before tagging, `galley.__version__` and the version in `pyproject.toml` must both equal the tag without the `v`, and CI enforces it.
 A tag build also runs three steps that a manual or pull request run skips: Check tag matches version, Check copyright notice and Check unbuilt actions. Run the last two locally before tagging with `python packaging/check_copyright_notice.py` and `python -m galley.app.actions`.
 
