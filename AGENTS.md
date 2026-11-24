@@ -10,12 +10,12 @@ Python 3.12 (`requires-python` in `pyproject.toml`). Use uv.
 - `uv run ruff check`
 - `uv run ruff format --check`
 - `uv run pytest` — `tests/conftest.py` sets `QT_QPA_PLATFORM=offscreen`. Deselects `perf` tests.
-- `uv run pytest -m perf` — wall-clock budgets only, in gate mode (fails past 3× a budget). `GALLEY_PERF_MODE=strict uv run pytest -m perf` fails past the budget itself. `uv run pytest -m perf -k <test>` reruns one.
+- `uv run pytest -m perf` — wall-clock budgets only, in gate mode (fails past 3× a budget). `GALLEY_PERF_MODE=strict uv run pytest -m perf` fails past 1.1× a budget, which is 10% headroom for runner noise. `uv run pytest -m perf -k <test>` reruns one.
 - `GALLEY_PERF_MODE=strict uv run pytest -m nightly_budget` — the nightly-only budgets (`nightly_budget` marker). Without strict they print their timing and never fail.
 - `uv run galley`
 - `uv run python -m galley.app.actions` — release check
 
-A wall-clock budget goes only in a `@pytest.mark.perf` test that times through the `perf_budget` fixture (`tests/perf.py`): one warmup run, then the median of 5. A limit relative to a baseline uses `perf_budget.ratio_within`, which alternates the runs and is not multiplied in gate mode. Hang guards such as `waitUntil` timeouts stay in ordinary tests. `.github/workflows/perf-nightly.yml` runs strict mode on `main` each night on macOS and Windows and opens an issue on a miss.
+A wall-clock budget goes only in a `@pytest.mark.perf` test that times through the `perf_budget` fixture (`tests/perf.py`): one warmup run, then the median of 5. A limit relative to a baseline uses `perf_budget.ratio_within`, which alternates the runs and is not multiplied in either mode. Hang guards such as `waitUntil` timeouts stay in ordinary tests. `.github/workflows/perf-nightly.yml` runs strict mode on `main` each night on macOS and Windows and opens an issue on a miss. New budgets still need 2× headroom over measured times (Eric, 2026-11-23: strict allows 1.1×).
 
 The release check exits 0 only when `UNBUILT_ACTIONS` and `ShellActions._not_yet_actions` are both empty. `UNBUILT_ACTIONS` is the Coming soon list. `_not_yet_actions` is the Not yet list. While either list is non-empty, the check exits 1 and prints `Release blocked: these actions still show "Coming soon"` or `Release blocked: these actions still show "Not yet"`. A `v*` tag runs the same module as `uv run --frozen --no-dev --no-editable python -m galley.app.actions` in `.github/workflows/release-macos.yml` before the disk image is built.
 

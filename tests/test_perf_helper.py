@@ -89,11 +89,20 @@ def test_gate_passes_up_to_three_times_the_budget() -> None:
         check(_timing(0.3001), 0.1, test="t", fixture="f", mode="gate")
 
 
-def test_strict_fails_past_the_budget_itself() -> None:
-    check(_timing(0.1), 0.1, test="t", fixture="f", mode="strict")
+def test_strict_fails_past_1_1x_the_budget() -> None:
+    check(_timing(0.11), 0.1, test="t", fixture="f", mode="strict")
     with pytest.raises(_FAILED):
-        check(_timing(0.1001), 0.1, test="t", fixture="f", mode="strict")
+        check(_timing(0.1101), 0.1, test="t", fixture="f", mode="strict")
     check(_timing(0.2), 0.1, test="t", fixture="f", mode="gate")
+
+
+def test_the_strict_factor_is_1_1() -> None:
+    assert perf.mode_factor(perf.STRICT) == 1.1
+
+
+def test_the_gate_factor_is_3() -> None:
+    assert perf.GATE_FACTOR == 3.0
+    assert perf.mode_factor(perf.GATE) == 3.0
 
 
 def test_check_reads_the_mode_from_the_environment(monkeypatch) -> None:
@@ -131,7 +140,7 @@ def test_a_failed_check_reports_that_message() -> None:
         budget_s=0.1,
         mode="strict",
     )
-    assert "mode: strict, factor 1x, fails above 100.0 ms" in str(failed.value)
+    assert "mode: strict, factor 1.1x, fails above 110.0 ms" in str(failed.value)
     assert str(failed.value).endswith(
         "  rerun: GALLEY_PERF_MODE=strict uv run pytest -m perf -k test_scan"
     )
@@ -211,6 +220,16 @@ def test_the_ratio_failure_message_shows_both_sides() -> None:
         "  mode: gate, factor 1x (ratios are not multiplied), fails above 1.5x",
         "  rerun: uv run pytest -m perf -k test_dup",
     ]
+
+
+def test_the_ratio_message_is_unmultiplied_in_strict_mode() -> None:
+    message = ratio_failure_message(
+        test="test_dup", fixture="2 MB", timing=_ratio(2.0), limit=1.5, mode="strict"
+    )
+    assert (
+        "  mode: strict, factor 1x (ratios are not multiplied), fails above 1.5x"
+        in message.splitlines()
+    )
 
 
 def test_a_budget_checks_a_ratio_under_its_own_test_name(monkeypatch) -> None:
@@ -304,3 +323,14 @@ def test_report_or_check_passes_a_fast_timing_in_strict_mode(monkeypatch) -> Non
     perf.report_or_check(
         Timing((0.001, 0.002, 0.003)), 0.004, test="test_fake", fixture="fake"
     )
+
+
+def test_report_or_check_passes_1_05x_the_budget_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "strict")
+    perf.report_or_check(_timing(0.105), 0.1, test="test_fake", fixture="fake")
+
+
+def test_report_or_check_fails_1_15x_the_budget_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("GALLEY_PERF_MODE", "strict")
+    with pytest.raises(_FAILED, match="perf budget missed: test_fake"):
+        perf.report_or_check(_timing(0.115), 0.1, test="test_fake", fixture="fake")

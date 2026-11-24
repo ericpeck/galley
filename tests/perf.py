@@ -7,7 +7,8 @@ then the median of five timed runs against the test's budget.
 
 - ``gate`` (the default, and the ``perf`` CI job): fail only past 3x the
   budget, so a shared runner's noise does not fail a pull request.
-- ``strict`` (the nightly run on ``main``): fail past the budget itself.
+- ``strict`` (the nightly run on ``main``): fail past 1.1x the budget, which
+  is 10% headroom for runner noise.
 
 A budget on a tail (``perf_budget.within(..., runs=200, percentile=95)``)
 checks that percentile of many timed runs instead of the median of five.
@@ -32,6 +33,7 @@ MODE_VARIABLE = "GALLEY_PERF_MODE"
 GATE = "gate"
 STRICT = "strict"
 GATE_FACTOR = 3.0
+STRICT_FACTOR = 1.1
 WARMUP_RUNS = 1
 TIMED_RUNS = 5
 
@@ -146,7 +148,7 @@ def current_mode(environ: Mapping[str, str] = os.environ) -> str:
 
 def mode_factor(mode: str) -> float:
     """How many budgets a median may reach before the test fails."""
-    return GATE_FACTOR if mode == GATE else 1.0
+    return GATE_FACTOR if mode == GATE else STRICT_FACTOR
 
 
 def rerun_command(test: str, mode: str) -> str:
@@ -271,7 +273,7 @@ def report_or_check(
     mode: str | None = None,
 ) -> None:
     """For ``nightly_budget`` tests: print the median, and only under
-    ``strict`` fail when it is past ``budget_s`` (no 3x gate factor)."""
+    ``strict`` fail when it is past 1.1x ``budget_s`` (no 3x gate factor)."""
     mode = current_mode() if mode is None else mode
     if mode != STRICT:
         print(

@@ -60,7 +60,7 @@ jobs:
           GALLEY_PERF_MODE: strict
           # The log is read back for the issue body; keep it UTF-8 on Windows.
           PYTHONUTF8: "1"
-        # Strict mode fails when a median passes the budget itself.
+        # Strict mode fails when a median passes 1.1x its budget.
         run: |
           set -o pipefail
           uv run pytest -m perf -rfEP 2>&1 | tee "${RUNNER_TEMP}/perf.log"
@@ -94,7 +94,7 @@ jobs:
             echo
             echo "Run: ${RUN_URL}"
             echo
-            echo "Strict mode fails when a median passes its budget. The pull request perf jobs run gate mode, which allows 3x. Ratio budgets get no multiplier in either mode."
+            echo "Strict mode fails when a median passes 1.1x its budget. The pull request perf jobs run gate mode, which allows 3x. Ratio budgets get no multiplier in either mode."
             echo "Rerun one test locally with \`GALLEY_PERF_MODE=strict uv run pytest -m perf -k <test>\`."
             echo
             echo '```'
